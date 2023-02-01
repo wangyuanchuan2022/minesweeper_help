@@ -1,0 +1,1102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1035</width>
+    <height>783</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1035</width>
+    <height>0</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>1035</width>
+    <height>800</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>扫雷-帮助</string>
+  </property>
+  <property name="windowOpacity">
+   <double>1.000000000000000</double>
+  </property>
+  <property name="toolTipDuration">
+   <number>1</number>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QGridLayout" name="gridLayout">
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <item row="0" column="0">
+     <widget class="QFrame" name="frame">
+      <property name="minimumSize">
+       <size>
+        <width>200</width>
+        <height>0</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>200</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">QFrame {
+	background-image:url(:/icons/background_2.bmp);
+	border:none;
+}</string>
+      </property>
+      <property name="frameShape">
+       <enum>QFrame::StyledPanel</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Raised</enum>
+      </property>
+      <layout class="QVBoxLayout" name="verticalLayout">
+       <property name="spacing">
+        <number>6</number>
+       </property>
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QPushButton" name="setting_2">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>40</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <family>宋体</family>
+           <pointsize>12</pointsize>
+          </font>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QPushButton{
+border-radius: none;
+border: none;
+background-color:rgba(255, 255, 255, 0);
+color:rgb(0, 0, 0);
+}
+QPushButton:hover{
+border: none;
+background-color:rgba(255, 255, 255, 100);
+color: rgb(0, 0, 0);
+}
+QPushButton:disabled{
+border: none;
+background-color:rgba(0, 0, 0, 0);
+color:rgb(210, 210, 210);
+}</string>
+         </property>
+         <property name="text">
+          <string> 设置</string>
+         </property>
+         <property name="icon">
+          <iconset>
+           <normaloff>icons/settings.png</normaloff>icons/settings.png</iconset>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QPushButton" name="auto_play">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>45</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <family>楷体</family>
+           <pointsize>15</pointsize>
+          </font>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QPushButton{
+border-radius: none;
+border: none;
+background-color:rgba(255, 255, 255, 150);
+color:rgb(0, 0, 0);
+}
+QPushButton:hover{
+background-color:rgba(255, 255, 255, 200);
+color:rgb(84, 158, 255);
+}
+QPushButton:disabled{
+background-color:rgba(255, 255, 255, 150);
+color:rgba(255, 255, 255, 175);
+}</string>
+         </property>
+         <property name="text">
+          <string>自动</string>
+         </property>
+         <property name="icon">
+          <iconset>
+           <normaloff>icons/play.png</normaloff>
+           <activeoff>icons/play.png</activeoff>
+           <selectedon>icons/play.png</selectedon>icons/play.png</iconset>
+         </property>
+         <property name="shortcut">
+          <string>Ctrl+Shift+P</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="help_human">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>45</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <family>楷体</family>
+           <pointsize>15</pointsize>
+          </font>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QPushButton{
+border-radius: none;
+border: none;
+background-color:rgba(255, 255, 255, 150);
+color:rgb(0, 0, 0);
+}
+QPushButton:hover{
+background-color:rgba(255, 255, 255, 200);
+color:rgb(84, 158, 255);
+}
+QPushButton:disabled{
+background-color:rgba(255, 255, 255, 150);
+color:rgba(255, 255, 255, 175);
+}</string>
+         </property>
+         <property name="text">
+          <string>帮助人类</string>
+         </property>
+         <property name="icon">
+          <iconset>
+           <normaloff>icons/interrogation.png</normaloff>icons/interrogation.png</iconset>
+         </property>
+         <property name="shortcut">
+          <string>Ctrl+Shift+H</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="screenshot_help">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>45</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <family>楷体</family>
+           <pointsize>15</pointsize>
+          </font>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QPushButton{
+border-radius: none;
+border: none;
+background-color:rgba(255, 255, 255, 150);
+color:rgb(0, 0, 0);
+}
+QPushButton:hover{
+background-color:rgba(255, 255, 255, 200);
+color:rgb(84, 158, 255);
+}
+QPushButton:disabled{
+background-color:rgba(255, 255, 255, 150);
+color:rgba(255, 255, 255, 175);
+}</string>
+         </property>
+         <property name="text">
+          <string>截图帮助</string>
+         </property>
+         <property name="icon">
+          <iconset>
+           <normaloff>icons/screenshot.png</normaloff>icons/screenshot.png</iconset>
+         </property>
+         <property name="iconSize">
+          <size>
+           <width>30</width>
+           <height>30</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacer_3">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item row="0" column="1">
+     <widget class="QStackedWidget" name="stackedWidget">
+      <property name="minimumSize">
+       <size>
+        <width>622</width>
+        <height>500</height>
+       </size>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">QStackedWidget &gt; QWidget{
+background-image: url(:/icons/background_1.bmp);
+}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}</string>
+      </property>
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <widget class="QWidget" name="page_main">
+       <property name="styleSheet">
+        <string notr="true">QLabel{color:rgb(255, 255, 255);font: 10pt &quot;楷体&quot;;min-height:26px}
+</string>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_4">
+        <property name="spacing">
+         <number>12</number>
+        </property>
+        <item>
+         <widget class="QFrame" name="frame_4">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>200</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>160</height>
+           </size>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <widget class="QLabel" name="label_10">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>0</y>
+             <width>821</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>·这是一个帮助您扫雷的程序，当您不想自己玩的时候可以点击“自动”按钮，欣赏自动扫</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_11">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>30</y>
+             <width>791</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>雷。当您自己扫雷时，如果您不知道该点哪里，您可以点击“帮助人类”获得提示。</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_12">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>60</y>
+             <width>811</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>·您可以参照如下图片调整设置，以获得更好的效果。您应该在点击“设置”自动打开扫雷</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_13">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>120</y>
+             <width>811</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>·如果出现一些基础的判断都无法正确判断，那就是识别的问题，您需要先设置好设置，再</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_14">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>150</y>
+             <width>811</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>点击“截图帮助”按钮，重新截图。以“_1” “_2”结尾的名称是背景颜色深浅不同的图像</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_15">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>90</y>
+             <width>791</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>界面后再调整设置。之后就不要再调整窗口的大小了。</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_16">
+           <property name="geometry">
+            <rect>
+             <x>0</x>
+             <y>180</y>
+             <width>781</width>
+             <height>26</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>·将鼠标移到左上角强制结束自动扫雷。</string>
+           </property>
+          </widget>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="frame_5">
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <layout class="QHBoxLayout" name="horizontalLayout_2">
+           <item>
+            <widget class="QLabel" name="label">
+             <property name="text">
+              <string/>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="page_2">
+       <property name="styleSheet">
+        <string notr="true">QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);
+color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);
+color: rgb(0, 0, 0)}</string>
+       </property>
+       <layout class="QVBoxLayout" name="verticalLayout_2">
+        <item>
+         <widget class="QPushButton" name="end_quto_play_thread">
+          <property name="minimumSize">
+           <size>
+            <width>150</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>150</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <family>楷体</family>
+            <pointsize>12</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true"/>
+          </property>
+          <property name="text">
+           <string>终止计算</string>
+          </property>
+          <property name="icon">
+           <iconset>
+            <normaloff>icons/stop.png</normaloff>icons/stop.png</iconset>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="return_to_main_page">
+          <property name="minimumSize">
+           <size>
+            <width>150</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>150</width>
+            <height>41</height>
+           </size>
+          </property>
+          <property name="sizeIncrement">
+           <size>
+            <width>0</width>
+            <height>2</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <family>楷体</family>
+            <pointsize>12</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true"/>
+          </property>
+          <property name="text">
+           <string>返回主页面</string>
+          </property>
+          <property name="icon">
+           <iconset>
+            <normaloff>icons/house.png</normaloff>icons/house.png</iconset>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPlainTextEdit" name="plainTextEdit">
+          <property name="font">
+           <font>
+            <family>宋体</family>
+            <pointsize>13</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QPlainTextEdit{
+border: 3px solid rgb(225, 225, 225);background-color: rgba(44, 44, 44, 170);color:rgb(255, 255, 255);}</string>
+          </property>
+          <property name="plainText">
+           <string/>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QProgressBar" name="pgb">
+          <property name="minimumSize">
+           <size>
+            <width>580</width>
+            <height>35</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <family>楷体</family>
+            <pointsize>10</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QProgressBar {border: none;border-radius: 12px;text-align: center;}
+QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}</string>
+          </property>
+          <property name="value">
+           <number>24</number>
+          </property>
+          <property name="format">
+           <string>计算中%p%</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="page_3">
+       <layout class="QVBoxLayout" name="verticalLayout_3">
+        <item>
+         <widget class="QPushButton" name="return_to_main_p3">
+          <property name="minimumSize">
+           <size>
+            <width>150</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>150</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <family>楷体</family>
+            <pointsize>11</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);
+color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);
+color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}</string>
+          </property>
+          <property name="text">
+           <string>返回主页面</string>
+          </property>
+          <property name="icon">
+           <iconset>
+            <normaloff>icons/house.png</normaloff>icons/house.png</iconset>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="frame_explaination">
+          <property name="minimumSize">
+           <size>
+            <width>598</width>
+            <height>210</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>210</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QLabel{color: rgb(255, 255, 255);font: 10pt &quot;楷体&quot;;}
+</string>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <widget class="QLabel" name="label_2">
+           <property name="geometry">
+            <rect>
+             <x>10</x>
+             <y>0</y>
+             <width>541</width>
+             <height>31</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>541</width>
+             <height>31</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>541</width>
+             <height>31</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>当您不知道哪里不是雷的话，您可以点击“帮助人类”按钮。</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_3">
+           <property name="geometry">
+            <rect>
+             <x>10</x>
+             <y>30</y>
+             <width>431</width>
+             <height>31</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>31</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>·提示格上的颜色表示不是雷的概率。一定是雷</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_4">
+           <property name="geometry">
+            <rect>
+             <x>450</x>
+             <y>30</y>
+             <width>231</width>
+             <height>31</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>31</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>21</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">background-color:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 0, 0, 255), stop:1 rgba(0, 255, 0, 255))</string>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_5">
+           <property name="geometry">
+            <rect>
+             <x>690</x>
+             <y>30</y>
+             <width>101</width>
+             <height>31</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>31</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>一定不是雷</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_6">
+           <property name="geometry">
+            <rect>
+             <x>50</x>
+             <y>70</y>
+             <width>101</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>确定不是雷</string>
+           </property>
+          </widget>
+          <widget class="QPushButton" name="pushButton">
+           <property name="geometry">
+            <rect>
+             <x>20</x>
+             <y>70</y>
+             <width>24</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>24</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);background-color:rgba(0, 255, 0, 255);}QPushButton:disabled{border: none;background-color:rgba
+(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}</string>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+          </widget>
+          <widget class="QPushButton" name="pushButton_2">
+           <property name="geometry">
+            <rect>
+             <x>170</x>
+             <y>70</y>
+             <width>24</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>24</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);background-color:rgba(255, 0, 0, 255);}
+QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}</string>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_7">
+           <property name="geometry">
+            <rect>
+             <x>200</x>
+             <y>70</y>
+             <width>611</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>确定是雷 方格上的数字表示判断的次序，数字越小，越先判断</string>
+           </property>
+          </widget>
+          <widget class="QPushButton" name="pushButton_3">
+           <property name="geometry">
+            <rect>
+             <x>20</x>
+             <y>100</y>
+             <width>24</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>24</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">QPushButton{border-radius:0px; border: 3px solid rgb(255, 255, 82);background-color:rgba(30, 225, 0, 255);}
+QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}</string>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_8">
+           <property name="geometry">
+            <rect>
+             <x>50</x>
+             <y>100</y>
+             <width>601</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>推荐点击的方格，它有很高的概率不是雷，您可以从中选一个点击。</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_9">
+           <property name="geometry">
+            <rect>
+             <x>10</x>
+             <y>180</y>
+             <width>741</width>
+             <height>24</height>
+            </rect>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>·点击下方的已经被标记的方格，可以获得更多信息。</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_17">
+           <property name="geometry">
+            <rect>
+             <x>10</x>
+             <y>130</y>
+             <width>781</width>
+             <height>20</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>·如果提示框位置不正，请检查设置中bx，by是否输入正确。如果所示区域不全，请检查</string>
+           </property>
+          </widget>
+          <widget class="QLabel" name="label_18">
+           <property name="geometry">
+            <rect>
+             <x>10</x>
+             <y>160</y>
+             <width>781</width>
+             <height>17</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string>长宽是否输入正确。如果无法正确判断，请检查总雷数是否输入正确。</string>
+           </property>
+          </widget>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="frame_2">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>400</height>
+           </size>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <widget class="QLabel" name="label_p3">
+           <property name="geometry">
+            <rect>
+             <x>13</x>
+             <y>13</y>
+             <width>111</width>
+             <height>41</height>
+            </rect>
+           </property>
+           <property name="text">
+            <string/>
+           </property>
+          </widget>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="frame_3">
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>40</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);
+color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);
+color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}</string>
+          </property>
+          <property name="frameShape">
+           <enum>QFrame::StyledPanel</enum>
+          </property>
+          <property name="frameShadow">
+           <enum>QFrame::Raised</enum>
+          </property>
+          <layout class="QHBoxLayout" name="horizontalLayout">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <spacer name="horizontalSpacer">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="end_help_thread">
+             <property name="minimumSize">
+              <size>
+               <width>105</width>
+               <height>32</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>16777215</width>
+               <height>32</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <family>楷体</family>
+              </font>
+             </property>
+             <property name="text">
+              <string>终止计算</string>
+             </property>
+             <property name="icon">
+              <iconset>
+               <normaloff>icons/stop.png</normaloff>icons/stop.png</iconset>
+             </property>
+             <property name="iconSize">
+              <size>
+               <width>16</width>
+               <height>16</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="click_all">
+             <property name="minimumSize">
+              <size>
+               <width>200</width>
+               <height>32</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <family>楷体</family>
+              </font>
+             </property>
+             <property name="text">
+              <string>点击所有的确定方格</string>
+             </property>
+             <property name="icon">
+              <iconset>
+               <normaloff>icons/interactive.png</normaloff>icons/interactive.png</iconset>
+             </property>
+             <property name="iconSize">
+              <size>
+               <width>16</width>
+               <height>16</height>
+              </size>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QProgressBar" name="pgb_p3">
+          <property name="minimumSize">
+           <size>
+            <width>580</width>
+            <height>35</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>1666</width>
+            <height>35</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <family>楷体</family>
+            <pointsize>10</pointsize>
+           </font>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QProgressBar {border: none;border-radius: 12px;text-align: center;}
+QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}</string>
+          </property>
+          <property name="value">
+           <number>24</number>
+          </property>
+          <property name="format">
+           <string>计算中%p%</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <resources>
+  <include location="bg.qrc"/>
+ </resources>
+ <connections/>
+</ui>
