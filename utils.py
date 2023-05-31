@@ -239,7 +239,7 @@ class Solver(AutoPlayThread):
         self.load_img()
 
         self.lib = ctypes.CDLL(r"./main.dll")
-        self.part_solve_c = getattr(self.lib, 'part_solve', None)
+        self.part_solve_c = getattr(self.lib, 'part_solve', None)  # C++实现的算法，逻辑与self.part_solve_py相同。
 
         self.pos_dict_list = []
         self.appended_pos = set()
@@ -333,8 +333,6 @@ class Solver(AutoPlayThread):
 
     def play(self, limit):
         try:
-            self.checked = {}
-
             hwnd = win32gui.FindWindow(None, '扫雷')
             self.bx, self.by = ClientToScreen(hwnd, self._bx, self._by)
             hwndDC = win32gui.GetWindowDC(hwnd)
@@ -402,6 +400,8 @@ class Solver(AutoPlayThread):
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
                     pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    self.checked = {}  # 重置checked
+
                     time.sleep(0.1)
 
                 elif win32gui.FindWindow(None, '游戏失败') > 0:
@@ -422,6 +422,8 @@ class Solver(AutoPlayThread):
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
                     pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    self.checked = {}
+
                     time.sleep(0.1)
 
         except pyautogui.FailSafeException:
