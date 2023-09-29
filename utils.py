@@ -1,6 +1,5 @@
 # https://www.bilibili.com/video/BV1b44y1H71v?spm_id_from=333.999.0.0&vd_source=4a9c14092489228cb93dda72e43780cb
 # 10:51
-import ctypes
 import json
 import math
 import random
@@ -238,24 +237,9 @@ class Solver(AutoPlayThread):
         self.screenshot_w = int(self.cell_width * 5 / 9)
         self.load_img()
 
-        self.lib = ctypes.CDLL(r"./main.dll")
-        self.part_solve_c = getattr(self.lib, 'part_solve', None)  # C++实现的算法，逻辑与self.part_solve_py相同。
-
         self.pos_dict_list = []
         self.appended_pos = set()
-        self.part_solve_c.argtypes = [np.ctypeslib.ndpointer(ctypes.c_int, flags='C_CONTIGUOUS'),
-                                      ctypes.c_int,
-                                      np.ctypeslib.ndpointer(ctypes.c_int, flags='C_CONTIGUOUS'),
-                                      ctypes.c_int,
-                                      ctypes.c_int,
-                                      ctypes.c_int,
-                                      ctypes.c_int,
-                                      np.ctypeslib.ndpointer(ctypes.c_int, flags='C_CONTIGUOUS'),
-                                      ctypes.c_int,
-                                      ctypes.c_int,
-                                      np.ctypeslib.ndpointer(ctypes.c_int, flags='C_CONTIGUOUS'),
-                                      ctypes.c_uint64]
-
+        
         self.checked = {}
 
     def run(self):
@@ -1152,38 +1136,6 @@ class Solver(AutoPlayThread):
         return cell_value
 
     def part_solve(self, clicks, cell_value, num10, num9, cs):
-        list_getter = get_list(self.a - num10 - num9, self.a - num10, len(clicks))
-        _total = next(list_getter)
-        limit = 4000 if _total > 4000 else int(_total) + 1
-
-        len_clicks = len(clicks)
-        out = np.ones((limit, len_clicks), dtype=np.int32)
-        out *= 11
-        cs = np.array(list(cs), dtype=np.int32)
-        clicks = np.array(clicks, dtype=np.int32)
-        _cell_value = np.int32(cell_value)
-        t = time.time()
-        self.start_signal.emit((_total, self.speed, self.is_play))
-        self.part_solve_c(clicks, len_clicks, _cell_value, self.w,
-                          self.h, num10, num9, cs, len(cs), self.a, out, len_clicks)
-        self.end_signal.emit('')
-
-        if _total > 250000:
-            time_t = time.time() - t
-            self.speed = _total / time_t
-            self.cfg['speed'] = self.speed
-            with open('cfg.json', 'w') as f:
-                json.dump(self.cfg, f, cls=MyEncoder)
-
-        out = out.flatten()
-        index = out.argmax()
-        res_list = out[:index]
-        del out
-        res_list = res_list.reshape((int(len(res_list) / len_clicks), len_clicks))
-
-        return res_list, len(res_list)
-
-    def part_solve_py(self, clicks, cell_value, num10, num9, cs):
         res_list = []
         list_getter = get_list(self.a - num10 - num9, self.a - num10, len(clicks))
         _total = next(list_getter)
