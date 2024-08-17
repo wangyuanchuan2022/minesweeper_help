@@ -8,7 +8,6 @@
 提高您的胜率，玩的更开心。
 
 ## 快速上手
-* 确保python==3.7
 * 解压MineSweeper.zip，获取扫雷游戏
 * `pip install -r requirements.txt`
 
@@ -39,4 +38,4 @@ python自带的ctypes十分好用，windows api看[这个链接](https://learn.m
 
 ## 可以提高的地方
 由于算力及时间的限制，有一些确定的情况无法判断
-* 优化算法降低复杂度
+* 枚举后随机选择权重
