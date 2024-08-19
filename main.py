@@ -26,6 +26,7 @@ from mm0 import minesweeper_run, ClientToScreen, ScreenToClient, GetMousePositio
 from screenshot import Ui_form
 from utils import Solver
 from window import Ui_MainWindow
+import setting
 
 
 class MyMainWindow(QMainWindow, Ui_MainWindow):
@@ -47,8 +48,9 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.clicks = []  # 已知不是雷的方格
         self.mines = []  # 已知是雷的方格
         # 加载config
-        with open('cfg.json') as f:
+        with open('cfg.json', encoding='utf-8') as f:
             self.cfg = json.load(f)
+        # assign values to the variables
         self.a = self.cfg['a']
         self.w = self.cfg['w']
         self.h = self.cfg['h']
@@ -247,22 +249,33 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.up_pgb_timer.stop()
 
     def screenshot_help_func(self):
+        # Reload the game
         self.reload()
         try:
+            # Run the game and get the window handle
             hwnd = minesweeper_run(self.path)
         except:
+            # Show an error message if the path is not correct
             QMessageBox.warning(self, '错误', '请检查设置中扫雷exe的路径是否输入正确')
             return
 
+        # Disable help
         self.with_help = False
         self.update_image()
 
+        # Create a new instance of the ScreenShot class
         self.screen_shot = ScreenShot(hwnd)
+        # Set the window modality to application modal
         self.screen_shot.setWindowModality(Qt.ApplicationModal)
+        # Show the window
         self.screen_shot.show()
+        # Wait for the window to be created
         time.sleep(0.05)
+        # Find the window handle of the "截图帮助" window
         hwnd = win32gui.FindWindow(None, '截图帮助')
+        # Show the window
         win32gui.ShowWindow(hwnd, 1)
+        # Set the top window
         set_top_window(hwnd)
 
     def end_h_func(self):
@@ -298,7 +311,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
     def reload(self):
         # 重新加载
-        with open('cfg.json') as f:
+        with open('cfg.json', encoding='utf-8') as f:
             cfg = json.load(f)
         self.w = cfg['w']
         self.h = cfg['h']
@@ -497,7 +510,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
     def click_all_func(self):
         try:
-            hwnd = win32gui.FindWindow(None, '扫雷')
+            hwnd = win32gui.FindWindow(None, setting.win_name)
             win32gui.ShowWindow(hwnd, 1)
             self.reload()
             self.bx, self.by = ClientToScreen(hwnd, self._bx, self._by)
@@ -627,7 +640,7 @@ class EditWindow(QDialog, Ui_Dialog):
         self.y0 = None
         self.x1 = None
         self.y1 = None
-        with open('cfg.json') as f:
+        with open('cfg.json', encoding='utf-8') as f:
             self.cfg = json.load(f)
         self.a = self.cfg['a']
         self.w = self.cfg['w']
@@ -717,7 +730,7 @@ class EditWindow(QDialog, Ui_Dialog):
 
     def get_pos_1_func(self, pos):
         self.x0, self.y0 = pos
-        hwnd = win32gui.FindWindow(None, '扫雷')
+        hwnd = win32gui.FindWindow(None, setting.win_name)
         self.x0, self.y0 = ScreenToClient(hwnd, self.x0, self.y0)
         hwnd = win32gui.FindWindow(None, '设置')
         self.label_bx.setText('请将鼠标移到扫雷区域的右下角，并静止。')
@@ -726,7 +739,7 @@ class EditWindow(QDialog, Ui_Dialog):
 
     def get_pos_2_func(self, pos):
         self.x1, self.y1 = pos
-        hwnd = win32gui.FindWindow(None, '扫雷')
+        hwnd = win32gui.FindWindow(None, setting.win_name)
         self.x1, self.y1 = ScreenToClient(hwnd, self.x1, self.y1)
 
         cell_width = (self.x1 - self.x0) / self.w
@@ -813,7 +826,7 @@ class ScreenShot(QtWidgets.QWidget, Ui_form):
         self.setWindowTitle("截图帮助")
 
         self.img = None
-        with open('cfg.json') as f:
+        with open('cfg.json', encoding='utf-8') as f:
             self.cfg = json.load(f)
         self.a = self.cfg['a']
         self.w = self.cfg['w']
@@ -846,29 +859,34 @@ class ScreenShot(QtWidgets.QWidget, Ui_form):
         try:
             i = int(self.lineEdit_i.text())
             j = int(self.lineEdit_j.text())
-            x = self.bx + i * self.cell_width
-            y = self.by + j * self.cell_width
+            x = i * self.cell_width
+            y = j * self.cell_width
             h = int(self.cell_width * 7 / 9)
             w = int(self.cell_width * 5 / 9)
-            self.saveDC.BitBlt((0, 0), (w, h), self.mfcDC, (x - int(w / 2), y - int(h / 2)), win32con.SRCCOPY)
-            self.saveBM.SaveBitmapFile(self.saveDC, './image/temp.bmp')
-            bmpstr = self.saveBM.GetBitmapBits(True)
+            
+            hwnd = win32gui.FindWindow(None, setting.win_name)
+            bx, by = ClientToScreen(hwnd, self.bx, self.by)
+            pil_img = ImageGrab.grab((bx + 0.5 * self.cell_width, by + 0.5 * self.cell_width,
+                                      self.w * self.cell_width + bx + 0.5 * self.cell_width, self.h * self.cell_width + by + 0.5 * self.cell_width))
 
-            pil_img = np.frombuffer(bmpstr, dtype='uint8')
-            pil_img.shape = (h, w, 4)
+            pil_img = np.array(pil_img)
+            pil_img.reshape(self.w * self.cell_width, self.h * self.cell_width, 3)
+            self.img = cv2.cvtColor(pil_img, cv2.COLOR_RGB2BGR)
 
-            self.img = cv2.cvtColor(pil_img, cv2.COLOR_BGRA2BGR)
+            self.img = self.img[y - self.cell_width // 2 - h // 2: y - self.cell_width // 2 + h // 2,
+                                                                x - self.cell_width // 2 - w // 2: x - self.cell_width // 2 + w // 2, :]
+            cv2.imwrite('image/temp.bmp', self.img)
             self.img_label.setText('')
             self.img_label.setPixmap(QPixmap('image/temp.bmp').scaled(100, 140))
             self.img_label.repaint()
-        except ValueError:
-            QMessageBox.about(self, '错误', '横纵坐标都要为整数哦。')
         except win32ui.error:
             QMessageBox.about(self, '错误', '找不到扫雷窗口哦。\n将要重新打开扫雷窗口。')
             try:
                 minesweeper_run(self.path)
             except:
                 QMessageBox.warning(self, '错误', '请检查设置中扫雷exe的路径是否输入正确')
+        except ValueError as e:
+            QMessageBox.about(self, '错误', '横纵坐标都要为整数哦。')
 
     def _save_img(self):
         if self.img is not None:

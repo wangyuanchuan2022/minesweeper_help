@@ -8,7 +8,6 @@ import time
 from PIL import ImageGrab
 import numpy as np
 import pyautogui
-import win32con
 import win32gui
 import win32ui
 import cv2 as cv
@@ -220,9 +219,10 @@ class Solver(AutoPlayThread):
         self.bx = None
         self.num = 0
         self.cell_value = None
+        self.img = None
 
         self.count = 0
-        with open('cfg.json') as f:
+        with open('cfg.json', encoding='utf-8') as f:
             self.cfg = json.load(f)
         self.w = self.cfg['w']
         self.h = self.cfg['h']
@@ -231,6 +231,7 @@ class Solver(AutoPlayThread):
         self.cell_width = self.cfg['cell_width']
         self.a = self.cfg['a']  # 总雷数
         self.limit = self.cfg['limit']
+        self.p = self.a / (self.w * self.h)
         self.speed = self.cfg['speed']
 
         self.screenshot_h = int(self.cell_width * 7 / 9)
@@ -250,7 +251,7 @@ class Solver(AutoPlayThread):
             self.help()
 
     def reload(self):
-        with open('cfg.json') as f:
+        with open('cfg.json', encoding='utf-8') as f:
             self.cfg = json.load(f)
         self.w = self.cfg['w']
         self.h = self.cfg['h']
@@ -310,21 +311,28 @@ class Solver(AutoPlayThread):
         bg = ImageGrab.grab()
         bg = np.array(bg)
         bg = cv.cvtColor(bg, cv.COLOR_RGB2BGR)
-        res = cv.matchTemplate(bg, tem, cv.TM_CCOEFF_NORMED)
-        x, y = cv.minMaxLoc(res)[3]
+        res = cv.matchTemplate(bg, tem, cv.TM_SQDIFF_NORMED)
+        x, y = cv.minMaxLoc(res)[2]
         x, y = x + w / 2, y + w / 2
         return x, y
 
+    @staticmethod
+    def _locate(f):
+        tem = cv.imread(f)
+        h, w, _ = tem.shape
+        bg = ImageGrab.grab()
+        bg = np.array(bg)
+        bg = cv.cvtColor(bg, cv.COLOR_RGB2BGR)
+        res = cv.matchTemplate(bg, tem, cv.TM_SQDIFF_NORMED)
+        _min = np.min(res)
+        x, y = cv.minMaxLoc(res)[2]
+        x, y = x + w / 2, y + w / 2
+        return _min < 0.01, x, y
+    
     def play(self, limit):
         try:
-            hwnd = win32gui.FindWindow(None, '扫雷')
+            hwnd = win32gui.FindWindow(None, setting.win_name)
             self.bx, self.by = ClientToScreen(hwnd, self._bx, self._by)
-            hwndDC = win32gui.GetWindowDC(hwnd)
-            mfcDC = win32ui.CreateDCFromHandle(hwndDC)
-            saveDC = mfcDC.CreateCompatibleDC()
-            saveBM = win32ui.CreateBitmap()
-            saveBM.CreateCompatibleBitmap(mfcDC, self.screenshot_w, self.screenshot_h)
-            saveDC.SelectObject(saveBM)
 
             w = self.w
             h = self.h
@@ -338,7 +346,6 @@ class Solver(AutoPlayThread):
 
             # 初始化cell_value
             cell_value = np.zeros((h + 2, w + 2), dtype='int32')
-            self.cell_value = np.zeros((h + 2, w + 2), dtype='int32')
             for i in range(1, w + 1):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
@@ -351,19 +358,6 @@ class Solver(AutoPlayThread):
                     self.warning_signal.emit('请检查设置中总雷数，宽度，长度是否输入正确')
                     self.count = 0
                     return
-
-                cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM, True)
-                sum2 = np.sum(cell_value)
-                cell_value = self.mine_clear1(cell_value, mfcDC, saveDC, saveBM)
-                sum3 = np.sum(cell_value)
-                if sum3 == sum2:
-                    cell_value = self.mine_clear3_1(cell_value, mfcDC, saveDC, saveBM)
-                    sum4 = np.sum(cell_value)
-                    if sum4 == sum3:
-                        try:
-                            cell_value = self.number5_1(cell_value, mfcDC, saveDC, saveBM)
-                        except ImportError:
-                            pass
 
                 if win32gui.FindWindow(None, '游戏胜利') > 0:
                     time.sleep(3)
@@ -380,7 +374,7 @@ class Solver(AutoPlayThread):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
                     time.sleep(1.0)
-                    hwnd = win32gui.FindWindow(None, '扫雷')
+                    hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
                     pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
@@ -397,18 +391,74 @@ class Solver(AutoPlayThread):
                                           f'{str(round(win / total, 4) * 100)}%\n')
                     if total == limit:
                         break
-                    time.sleep(2.0)
                     cell_value = np.zeros((h + 2, w + 2), dtype='int32')
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
-                    hwnd = win32gui.FindWindow(None, '扫雷')
+                    time.sleep(1.0)
+                    hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
                     pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
-                    self.checked = {}
+                    self.checked = {}  # 重置checked
+                    
+                _win, x, y = self._locate('win.bmp')
+                if _win:
+                    time.sleep(3)
+                    win += 1
+                    total += 1
+                    pyautogui.click(x, y)
+                    self.text_signal.emit(f'已玩 {str(total)} 局。 {str(win)} 局获胜。胜率：'
+                                          f'{str(round(win / total, 4) * 100)}%\n')
+                    if total == limit:
+                        break
+                    cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                    for i in range(1, w + 1):
+                        for j in range(1, h + 1):
+                            cell_value[j, i] = 9
+                    time.sleep(1.0)
+                    hwnd = win32gui.FindWindow(None, setting.win_name)
+                    win32gui.ShowWindow(hwnd, 1)
+                    time.sleep(0.5)
+                    pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    self.checked = {}  # 重置checked
 
                     time.sleep(0.1)
+                    
+                _lose, x, y = self._locate('lose.bmp')
+                if _lose:
+                    time.sleep(3)
+                    pyautogui.click(x, y)
+                    total += 1
+                    self.text_signal.emit(f'已玩 {str(total)} 局。 {str(win)} 局获胜。胜率：'
+                                          f'{str(round(win / total, 4) * 100)}%\n')
+                    if total == limit:
+                        break
+                    cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                    for i in range(1, w + 1):
+                        for j in range(1, h + 1):
+                            cell_value[j, i] = 9
+                    time.sleep(1.0)
+                    hwnd = win32gui.FindWindow(None, setting.win_name)
+                    win32gui.ShowWindow(hwnd, 1)
+                    time.sleep(0.5)
+                    pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    self.checked = {}  # 重置checked
+
+                    time.sleep(0.1)
+
+                cell_value = self.complete_scan(cell_value, True)
+                sum2 = np.sum(cell_value)
+                cell_value = self.mine_clear1(cell_value)
+                sum3 = np.sum(cell_value)
+                if sum3 == sum2:
+                    cell_value = self.mine_clear3_1(cell_value)
+                    sum4 = np.sum(cell_value)
+                    if sum4 == sum3:
+                        try:
+                            cell_value = self.number5_1(cell_value)
+                        except ImportError:
+                            pass
 
         except pyautogui.FailSafeException:
             self.pv_signal.emit(0)
@@ -426,14 +476,8 @@ class Solver(AutoPlayThread):
             self.pos_dict_list = []
             self.appended_pos = set()
 
-            hwnd = win32gui.FindWindow(None, '扫雷')
+            hwnd = win32gui.FindWindow(None, setting.win_name)
             self.bx, self.by = ClientToScreen(hwnd, self._bx, self._by)
-            hwndDC = win32gui.GetWindowDC(hwnd)
-            mfcDC = win32ui.CreateDCFromHandle(hwndDC)
-            saveDC = mfcDC.CreateCompatibleDC()
-            saveBM = win32ui.CreateBitmap()
-            saveBM.CreateCompatibleBitmap(mfcDC, self.screenshot_w, self.screenshot_h)
-            saveDC.SelectObject(saveBM)
 
             w = self.w
             h = self.h
@@ -444,17 +488,17 @@ class Solver(AutoPlayThread):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
 
-            self.cell_value = self.complete_scan(cell_value.copy(), mfcDC, saveDC, saveBM, False)
+            self.cell_value = self.complete_scan(cell_value.copy(), False)
             for _ in range(2):
-                cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM)
-                cell_value = self.mine_clear1(cell_value, mfcDC, saveDC, saveBM)
-                cell_value = self.mine_clear3_1(cell_value, mfcDC, saveDC, saveBM)
-            cell_value = self.mine_clear1(cell_value, mfcDC, saveDC, saveBM)
+                cell_value = self.complete_scan(cell_value)
+                cell_value = self.mine_clear1(cell_value)
+                cell_value = self.mine_clear3_1(cell_value)
+            cell_value = self.mine_clear1(cell_value)
             if len(self.pos_dict_list) == 0:
                 flag = 4
                 for flag in range(5):
                     self.num += 1
-                    cell_value = self.number5_1(cell_value, mfcDC, saveDC, saveBM)
+                    cell_value = self.number5_1(cell_value)
                     if len(self.pos_dict_list) != 0:
                         flag = 0
                         break
@@ -473,17 +517,48 @@ class Solver(AutoPlayThread):
             self.Visible_signal.emit(False)
             return
 
-    def cell_screenshot(self, i, j, mfcDC, saveDC, saveBM):
-        x = self._bx + i * self.cell_width
-        y = self._by + j * self.cell_width
-        saveDC.BitBlt((0, 0), (self.screenshot_w, self.screenshot_h), mfcDC,
-                      (x - int(self.screenshot_w / 2), y - int(self.screenshot_h / 2)), win32con.SRCCOPY)
-        bmpstr = saveBM.GetBitmapBits(True)
+    def try_solve(self, i, j, cell_value, clicks, num9, num10):
+        play = self.is_play
+        res = 0
+        self.is_play = False
+        num = self.num
+        pos_dict_list = self.pos_dict_list
+        appended_pos = self.appended_pos
 
-        pil_img = np.frombuffer(bmpstr, dtype='uint8')
-        pil_img.shape = (self.screenshot_h, self.screenshot_w, 4)
+        for mine_num in range(num10, num10 + num9 + 1):
+            if mine_num == 0:
+                res += 8 * (1 - self.p) ** num9
+                continue
+            cell_value[j, i] = mine_num
+            self.num = 1
+            self.pos_dict_list = []
+            self.appended_pos = set()
+            
+            try:
+                for _ in range(2):
+                    cell_value = self.mine_clear1(cell_value)
+                    cell_value = self.mine_clear3_1(cell_value)
+                cell_value = self.mine_clear1(cell_value)
+            except:
+                pass
 
-        img = cv.cvtColor(pil_img, cv.COLOR_BGRA2BGR)
+            res += len(self.appended_pos) * (1 - self.p) ** (num9 - mine_num + num10) * (self.p) ** (mine_num - num10) * C_num(num9, mine_num - num10)
+            
+        res /= num9 + 1
+        
+        self.is_play = play
+        self.num = num
+        self.pos_dict_list = pos_dict_list
+        self.appended_pos = appended_pos
+        return res
+        
+    def cell_screenshot(self, i, j):
+        x = i * self.cell_width
+        y = j * self.cell_width
+        w = self.screenshot_w
+        h = self.screenshot_h
+        img = self.img[y - self.cell_width // 2 - h // 2: y - self.cell_width // 2 + h // 2,
+                                                                x - self.cell_width // 2 - w // 2: x - self.cell_width // 2 + w // 2, :]
 
         return img
 
@@ -499,16 +574,21 @@ class Solver(AutoPlayThread):
                         cnt10 += 1
         return cnt9, cnt10
 
-    def mine_clear1(self, cell_value, mfcDC, saveDC, saveBM):
+    def mine_clear1(self, cell_value, clicks=None):
+        if clicks:
+            for i, j in clicks:
+                cell_value = self.number0(i, j, cell_value)
+            return cell_value
+        
         for j in range(1, self.h + 1):
             if (9 in cell_value[j - 1]) or (9 in cell_value[j]) or (9 in cell_value[j + 1]):
                 for i in range(1, self.w + 1):
                     if 0 < cell_value[j, i] < 8:
-                        cell_value = self.number0(i, j, cell_value, mfcDC, saveDC, saveBM)
+                        cell_value = self.number0(i, j, cell_value)
 
         return cell_value
 
-    def number0(self, i, j, cell_value, mfcDC, saveDC, saveBM):
+    def number0(self, i, j, cell_value):
         c = False
         cnt9, cnt10 = self.cell_around(i, j, cell_value)
         if (cnt9 + cnt10) == cell_value[j, i] and cnt9 != 0:
@@ -554,11 +634,12 @@ class Solver(AutoPlayThread):
         if c:
             if not self.is_play:
                 self.num += 1
-            cell_value = self.small_square_scan(i, j, cell_value, mfcDC, saveDC, saveBM)
+            else:
+                cell_value = self.small_square_scan(i, j, cell_value)
 
         return cell_value
 
-    def number_3_1(self, i, j, cell_value, mfcDC, saveDC, saveBM):
+    def number_3_1(self, i, j, cell_value):
         x1 = cell_value[j, i]
         a, cnt10 = self.get_set(i, j, cell_value)
         x1 -= cnt10
@@ -671,20 +752,30 @@ class Solver(AutoPlayThread):
                     if c:
                         if not self.is_play:
                             self.num += 1
-                        cell_value = self.small_square_scan(i + 1, j + 1,
-                                                            cell_value, mfcDC, saveDC=saveDC, saveBM=saveBM)
+                        else:
+                            cell_value = self.small_square_scan(i + 1, j + 1,
+                                                                cell_value)
 
         return cell_value
 
-    def mine_clear3_1(self, cell_value, mfcDC, saveDC, saveBM):
+    def mine_clear3_1(self, cell_value, clicks=None):
+        if clicks:
+            for i, j in clicks:
+                cell_value = self.number_3_1(i, j, cell_value)
+            return cell_value
         for i in range(2, self.w):
             for j in range(2, self.h):
                 if 0 < cell_value[j, i] < 8:
                     if self.cell_around(i, j, cell_value)[0] > 0:
-                        cell_value = self.number_3_1(i, j, cell_value, mfcDC, saveDC, saveBM)
+                        cell_value = self.number_3_1(i, j, cell_value)
         return cell_value
 
-    def number5_1(self, cell_value, mfcDC, saveDC, saveBM):
+    def number5_1(self, cell_value):
+        """
+        5.1 数字统计
+        :param cell_value:格子值
+        :return:
+        """
         confidence = 0
         w = cell_value.shape[1] - 2
         h = cell_value.shape[0] - 2
@@ -696,6 +787,7 @@ class Solver(AutoPlayThread):
                 if cell_value[j, index] == 10:
                     num10 += 1
 
+        # 找到所有未开方格
         bg = np.zeros((h, w), dtype=np.uint8)
         for index in range(w):
             for j in range(h):
@@ -716,13 +808,12 @@ class Solver(AutoPlayThread):
                     clicks.append(tuple((i + 1, j + 1)))
                 elif res[j, i] > 1.5 and cell_value[j + 1, i + 1] == 9:
                     clicks9.append(tuple((i + 1, j + 1)))
-
         if len(clicks9) == 0 and len(clicks) == 0:  # 识别错误或没检测到胜利/失败窗口
             cell_value = np.zeros((h + 2, w + 2), dtype='int32')
             for i in range(1, w + 1):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
-            cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM)
+            cell_value = self.complete_scan(cell_value)
             self.count += 1
             return cell_value
 
@@ -792,6 +883,7 @@ class Solver(AutoPlayThread):
             t_sum = temp.sum()
             limit = self.limit - int(math.log2(t_sum) / 2) if t_sum != 0 else self.limit  # 20大约20s 19 10s 18 5s
             res_list = []
+            canopen_res = np.array([])
             ck = []  # res_list中res的长度
             total = 1
 
@@ -802,11 +894,12 @@ class Solver(AutoPlayThread):
                 # 运算
                 try:
                     self.pv_signal.emit(0)
-                    _res = self.checked[tuple(click_list[index])]
-                    res_list.append(_res)
+                    _res, _canopen_res = self.checked[tuple(click_list[index])]
                     _total = len(_res)
-                    ck.append(_total)
+                    canopen_res = np.hstack((canopen_res, _canopen_res))
                     total *= _total
+                    res_list.append(_res)
+                    ck.append(_total)
                     self.pv_signal.emit(100)
                 except KeyError:
                     if len(click_list[index]) > limit:  # 大于limit时因为算量过大而无法判断
@@ -819,23 +912,26 @@ class Solver(AutoPlayThread):
                         for li in list(self.checked.keys()):
                             if len(set(li) & set(tuple(click_list[index]))) != 0:
                                 self.checked.pop(li)
-                        _res, _total = self.part_solve(click_list[index], cell_value, num10,
+                        _res, _total, _canopen_res = self.part_solve(click_list[index], cell_value, num10,
                                                        num9 - len(click_list[index]),
                                                        set_list[index])
+
                         if len(_res) == 0:
                             cell_value = np.zeros((h + 2, w + 2), dtype='int32')
                             for i in range(1, w + 1):
                                 for j in range(1, h + 1):
                                     cell_value[j, i] = 9
-                            cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM)
+                            cell_value = self.complete_scan(cell_value)
                             self.count += 1
                             self.Visible_signal.emit(False)
                             return cell_value
+
+                        canopen_res = np.hstack((canopen_res, _canopen_res))
                         total *= _total
                         res_list.append(_res)
                         ck.append(_total)
 
-                        self.checked[tuple(click_list[index])] = _res
+                        self.checked[tuple(click_list[index])] = (_res, _canopen_res)
 
             if is_removed and (not self.is_play):
                 self.warning_signal_2.emit('由于计算量的限制，一部分情况未枚举，结果可能不准确\n'
@@ -895,19 +991,23 @@ class Solver(AutoPlayThread):
                         for i in range(1, w + 1):
                             for j in range(1, h + 1):
                                 cell_value[j, i] = 9
-                        cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM)
+                        cell_value = self.complete_scan(cell_value)
                         self.count += 1
                         return cell_value
 
                     max_loc = np.argmax(res)
                     max_val = res[max_loc]  # 最大值
-                    poses = []  # 所有与最大值相同的位置坐标
-                    for p in range(len(clicks)):
+                    max_open = 0  # 最大可确定格数
+                    _a = np.arange(len(clicks))
+                    np.random.shuffle(_a)
+                    for p in _a:
                         if 0.005 >= max_val - res[p] >= -0.005:
-                            poses.append(clicks[p])
+                            if canopen_res[p] >= max_open:
+                                pos = clicks[p]
+                                max_open = canopen_res[p]
 
+                    pos = [pos]
                     mine9 = self.a - mine_num - num10  # 剩余雷数
-                    pos = [random.choice(poses)]
 
                     is_recommend = True
                     confidence = round(max_val, 5)  # 不是雷的概率
@@ -935,16 +1035,28 @@ class Solver(AutoPlayThread):
                         for p in range(len(clicks)):
                             if 0.005 >= max_val - res[p] >= -0.005:
                                 if tuple(clicks[p]) not in self.appended_pos:
-                                    self.pos_dict_list.append({
-                                        'pos': clicks[p],
-                                        'confidence': round(res[p], 5),
-                                        'num': self.num,
-                                        'is_mine': False,
-                                        'is_best': False,
-                                        'exp': '枚举得出',
-                                        'is_recommend': is_recommend
-                                    })
-                                    self.appended_pos.add(tuple(clicks[p]))
+                                    if tuple(clicks[p]) == pos[0]:
+                                        self.pos_dict_list.append({
+                                            'pos': clicks[p],
+                                            'confidence': round(res[p], 5),
+                                            'num': self.num,
+                                            'is_mine': False,
+                                            'is_best': False,
+                                            'exp': f'枚举得出 {canopen_res[p]}',
+                                            'is_recommend': True if is_recommend else False
+                                        })
+                                        self.appended_pos.add(tuple(clicks[p]))
+                                    else:
+                                        self.pos_dict_list.append({
+                                            'pos': clicks[p],
+                                            'confidence': round(res[p], 5),
+                                            'num': self.num,
+                                            'is_mine': False,
+                                            'is_best': False,
+                                            'exp': f'枚举得出',
+                                            'is_recommend': False
+                                        })
+                                        self.appended_pos.add(tuple(clicks[p]))
                             else:
                                 if tuple(clicks[p]) not in self.appended_pos:
                                     self.pos_dict_list.append({
@@ -1033,18 +1145,22 @@ class Solver(AutoPlayThread):
                             for i in range(1, w + 1):
                                 for j in range(1, h + 1):
                                     cell_value[j, i] = 9
-                            cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM)
+                            cell_value = self.complete_scan(cell_value)
                             self.count += 1
                             return cell_value
                         max_loc = np.argmax(res)
                         max_val = res[max_loc]  # 最大值
-                        poses = []  # 所有与最小值相同的位置坐标
-                        for p in range(len(clicks)):
+                        max_open = 0  # 最大可确定格数
+                        _a = np.arange(len(clicks))
+                        np.random.shuffle(_a)
+                        for p in _a:
                             if 0.005 >= max_val - res[p] >= -0.005:
-                                poses.append(clicks[p])
+                                if canopen_res[p] >= max_open:
+                                    pos = clicks[p]
+                                    max_open = canopen_res[p]
 
+                        pos = [pos]
                         mine9 = self.a - mine_num - num10  # 剩余雷数
-                        pos = [random.choice(poses)]
 
                         is_recommend = True
                         confidence = round(max_val, 5)  # 不是雷的概率
@@ -1072,16 +1188,28 @@ class Solver(AutoPlayThread):
                             for p in range(len(clicks)):
                                 if 0.005 >= max_val - res[p] >= -0.005:
                                     if tuple(clicks[p]) not in self.appended_pos:
-                                        self.pos_dict_list.append({
-                                            'pos': clicks[p],
-                                            'confidence': round(res[p], 5),
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': '枚举得出',
-                                            'is_recommend': is_recommend
-                                        })
-                                        self.appended_pos.add(tuple(clicks[p]))
+                                        if tuple(clicks[p]) == pos[0]:
+                                            self.pos_dict_list.append({
+                                                'pos': clicks[p],
+                                                'confidence': round(res[p], 5),
+                                                'num': self.num,
+                                                'is_mine': False,
+                                                'is_best': False,
+                                                'exp': f'枚举得出 {canopen_res[p]}',
+                                                'is_recommend': True if is_recommend else False
+                                            })
+                                            self.appended_pos.add(tuple(clicks[p]))
+                                        else:
+                                            self.pos_dict_list.append({
+                                                'pos': clicks[p],
+                                                'confidence': round(res[p], 5),
+                                                'num': self.num,
+                                                'is_mine': False,
+                                                'is_best': False,
+                                                'exp': f'枚举得出',
+                                                'is_recommend': False
+                                            })
+                                            self.appended_pos.add(tuple(clicks[p]))
                                 else:
                                     if tuple(clicks[p]) not in self.appended_pos:
                                         self.pos_dict_list.append({
@@ -1113,7 +1241,7 @@ class Solver(AutoPlayThread):
         for i in range(1, w + 1):
             for j in range(1, h + 1):
                 cell_value[j, i] = 9
-        cell_value = self.complete_scan(cell_value, mfcDC, saveDC, saveBM)
+        cell_value = self.complete_scan(cell_value)
 
         if 0 in res:
             for i in range(len(res)):
@@ -1136,10 +1264,21 @@ class Solver(AutoPlayThread):
         return cell_value
 
     def part_solve(self, clicks, cell_value, num10, num9, cs):
+        '''
+        根据点击的坐标，计算出可能的值
+        :param clicks: 点击的坐标
+        :param cell_value: 格子中的值
+        :param num10: 10的个数
+        :param num9: 9的个数
+        :param cs: 雷的坐标
+        :return: 可能的值
+        '''
+        canopen_res = np.zeros(len(clicks))
         res_list = []
         list_getter = get_list(self.a - num10 - num9, self.a - num10, len(clicks))
         _total = next(list_getter)
         num = 0
+        num_solve = 0
         o_value = 0
         self.pv_signal.emit(0)  #
         for index_list in list_getter:
@@ -1157,6 +1296,21 @@ class Solver(AutoPlayThread):
 
             res = np.zeros(len(clicks), dtype=np.int32)
             if flag == 0:  # 符合条件
+                num_solve += 1
+                for loc in set(range(len(clicks))) - set(index_list):
+                    _value = cell_value.copy()
+                    num9 = 0
+                    num10 = 0
+                    i, j = clicks[loc]
+                    for u in range(i-1, i+2):
+                        for v in range(j - 1, j+2):
+                            if value[v, u] == 9 and ((u, v) not in clicks):
+                                num9 += 1
+                            elif value[v, u] == 10:
+                                num10 += 1
+                    can_open = self.try_solve(i, j, _value, clicks, num9, num10)
+                    canopen_res[loc] += can_open
+                    
                 for loc in index_list:
                     res[loc] += 1
                 res_list.append(res)
@@ -1179,8 +1333,11 @@ class Solver(AutoPlayThread):
         if flag == 0:  # 符合条件
             res_list.append(np.zeros(len(clicks), dtype=np.int32))
 
+        if num_solve != 0:
+            canopen_res /= num_solve
+
         self.pv_signal.emit(100)
-        return res_list, len(res_list)
+        return res_list, len(res_list), canopen_res
 
     def get_set_1(self, i, j, cell_value):
         result = set()
@@ -1204,32 +1361,47 @@ class Solver(AutoPlayThread):
         return result, cnt10
 
     def compare_img(self, img, no_10):
-        result = np.zeros((11, 3))
+        result = np.ones((11, 3)) * 100
         for i in range(len(self.images)):
             for j in range(len(self.images[i])):
                 try:
-                    res = cv.matchTemplate(img, self.images[i][j], cv.TM_CCOEFF_NORMED)
+                    res = cv.matchTemplate(img, self.images[i][j], cv.TM_SQDIFF_NORMED)
                     result[i, j] = np.sum(res)
-                except cv.Error:
+                except:
                     pass
-        res = np.unravel_index(np.argmax(result, axis=None), result.shape)[0]
+                
+        res = np.unravel_index(np.argmin(result, axis=None), result.shape)[0]
         if no_10:
             if res == 10:
                 res = 9
         return res
 
-    def complete_scan(self, cell_value, mfcDC, saveDC, saveBM, no_10=True):
+    def complete_scan(self, cell_value, no_10=True):
         pyautogui.moveTo(10, 640, _pause=False)
+        hwnd = win32gui.FindWindow(None, setting.win_name)
+        bx, by = ClientToScreen(hwnd, self._bx, self._by)
+        pil_img = ImageGrab.grab((bx + 0.5 * self.cell_width, by + 0.5 * self.cell_width,
+                                  self.w * self.cell_width + bx + 0.5 * self.cell_width, self.h * self.cell_width + by + 0.5 * self.cell_width))
+        pil_img = np.array(pil_img)
+        pil_img.reshape(self.w * self.cell_width, self.h * self.cell_width, 3)
+        self.img = cv.cvtColor(pil_img, cv.COLOR_RGB2BGR)
 
         for y in range(1, self.h + 1):
             for x in range(1, self.w + 1):
-                img = self.cell_screenshot(x, y, mfcDC, saveDC, saveBM)
                 if cell_value[y, x] == 9:
+                    img = self.cell_screenshot(x, y)
                     cell_value[y, x] = self.compare_img(img, no_10)
 
         return cell_value
 
-    def small_square_scan(self, i, j, cell_value, mfcDC, saveDC, saveBM):
+    def small_square_scan(self, i, j, cell_value):
+        hwnd = win32gui.FindWindow(None, setting.win_name)
+        bx, by = ClientToScreen(hwnd, self._bx, self._by)
+        pil_img = ImageGrab.grab((bx + 0.5 * self.cell_width, by + 0.5 * self.cell_width,
+                                  self.w * self.cell_width + bx + 0.5 * self.cell_width, self.h * self.cell_width + by + 0.5 * self.cell_width))
+        pil_img = np.array(pil_img)
+        pil_img.reshape(self.w * self.cell_width, self.h * self.cell_width, 3)
+        self.img = cv.cvtColor(pil_img, cv.COLOR_RGB2BGR)
         sx0 = i - 2
         if sx0 < 1:
             sx0 = 1
@@ -1245,7 +1417,7 @@ class Solver(AutoPlayThread):
         pyautogui.moveTo(10, 640, _pause=False)
         for j in range(sy0, sy1 + 1):
             for i in range(sx0, sx1 + 1):
-                img = self.cell_screenshot(i, j, mfcDC, saveDC, saveBM)
+                img = self.cell_screenshot(i, j)
                 if cell_value[j, i] == 9:
                     cell_value[j, i] = self.compare_img(img, no_10=True)
         return cell_value
@@ -1262,10 +1434,12 @@ class MyEncoder(json.JSONEncoder):
         else:
             return super(MyEncoder, self).default(obj)
 
+def print_board(cell_value):
+    for row in cell_value:
+        for i in row:
+            print((2 - len(str(int(i)))) * ' ', int(i), end='')
+        print()
+
 
 if __name__ == '__main__':
-    t = time.time()
-    for i in get_list(0, 100, 20):
-        pass
-    n = time.time()
-    print(n - t)
+    print(Solver().locate_exit())
