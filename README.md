@@ -10,6 +10,7 @@
 ## 快速上手
 * 解压MineSweeper.zip，获取扫雷游戏
 * `pip install -r requirements.txt`
+* 参考[这个视频](https://www.bilibili.com/video/BV1J3p1ekE7d)
 
 ## 成果及程序概述
 ### 成果
