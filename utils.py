@@ -903,9 +903,8 @@ class Solver(AutoPlayThread):
                     self.pv_signal.emit(100)
                 except KeyError:
                     if len(click_list[index]) > limit:  # 大于limit时因为算量过大而无法判断
+                        is_removed = True
                         for pos in click_list[index]:
-                            # 添加到clicks9中
-                            is_removed = True
                             clicks.remove(pos)
                             clicks9.append(pos)
                     else:
@@ -1015,18 +1014,29 @@ class Solver(AutoPlayThread):
                         _confidence = round(1 - (mine9 / len(clicks9)), 5)
                         if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
                             is_recommend = False
+                            pos = [self.best_solve(clicks, clicks9, res, cell_value)]
                             if not self.is_play:
                                 for (i, j) in clicks9:
-                                    self.pos_dict_list.append({
-                                        'pos': (i, j),
-                                        'confidence': _confidence,
-                                        'num': self.num,
-                                        'is_mine': False,
-                                        'is_best': False,
-                                        'exp': '随机选择。',
-                                        'is_recommend': True
-                                    })
-                            pos = [random.choice(clicks9)]
+                                    if (i, j) in pos:
+                                        self.pos_dict_list.append({
+                                            'pos': (i, j),
+                                            'confidence': _confidence,
+                                            'num': self.num,
+                                            'is_mine': False,
+                                            'is_best': False,
+                                            'exp': '随机选择。',
+                                            'is_recommend': True
+                                        })
+                                    else:
+                                        self.pos_dict_list.append({
+                                            'pos': (i, j),
+                                            'confidence': _confidence,
+                                            'num': self.num,
+                                            'is_mine': False,
+                                            'is_best': False,
+                                            'exp': '随机选择。',
+                                            'is_recommend': False
+                                        })
                             confidence = _confidence  # 剩余未开方格不是雷的概率
                             if confidence == 1:
                                 pos = clicks9
@@ -1168,21 +1178,32 @@ class Solver(AutoPlayThread):
                             _confidence = round(1 - (mine9 / len(clicks9)), 5)
                             if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
                                 is_recommend = False
-                                pos = [random.choice(clicks9)]
+                                pos = [self.best_solve(clicks, clicks9, res, cell_value)]
                                 confidence = _confidence  # 剩余未开方格不是雷的概率
                                 if confidence == 1:
                                     pos = clicks9
                             if not self.is_play:
                                 for (i, j) in clicks9:
-                                    self.pos_dict_list.append({
-                                        'pos': (i, j),
-                                        'confidence': _confidence,
-                                        'num': self.num,
-                                        'is_mine': False,
-                                        'is_best': False,
-                                        'exp': '随机选择。',
-                                        'is_recommend': not is_recommend
-                                    })
+                                    if (i, j) in pos:
+                                        self.pos_dict_list.append({
+                                            'pos': (i, j),
+                                            'confidence': _confidence,
+                                            'num': self.num,
+                                            'is_mine': False,
+                                            'is_best': False,
+                                            'exp': '随机选择。',
+                                            'is_recommend': True
+                                        })
+                                    else:
+                                        self.pos_dict_list.append({
+                                            'pos': (i, j),
+                                            'confidence': _confidence,
+                                            'num': self.num,
+                                            'is_mine': False,
+                                            'is_best': False,
+                                            'exp': '随机选择。',
+                                            'is_recommend': False
+                                        })
 
                         if not self.is_play:
                             for p in range(len(clicks)):
@@ -1262,6 +1283,35 @@ class Solver(AutoPlayThread):
                             self.appended_pos.add(tuple((x, y)))
         self.count = 0
         return cell_value
+
+    def best_solve(self, clicks, clicks9, res, cell_value):
+        total = len(clicks9)
+        self.pv_signal.emit(0)
+        self.Visible_signal.emit(True)
+        opennum_res = np.zeros(len(clicks9))
+        for k, (i, j) in enumerate(clicks9):
+            num9 = 0
+            num10 = 0
+            for m in range(i-1, i+2):
+                for n in range(j-1, j+2):
+                    if (m, n) in clicks:
+                        index = clicks.index((m, n))
+                        num10 += res[index]
+                    elif cell_value[n, m] == 10:
+                        num10 += 1
+                    elif cell_value[n, m] == 9:
+                        num9 += 1
+            num10 = int(num10)
+            open_num = self.try_solve(i, j, cell_value.copy(), clicks, num9, num10)
+            opennum_res[k] = open_num
+            if k % 10 == 0:
+                self.pv_signal.emit(int(k * 100 / total))
+
+        arg = random.choice(np.where(opennum_res == np.amax(opennum_res))[0])
+        self.pv_signal.emit(100)
+        self.Visible_signal.emit(False)
+        
+        return clicks9[arg]
 
     def part_solve(self, clicks, cell_value, num10, num9, cs):
         '''
@@ -1348,6 +1398,79 @@ class Solver(AutoPlayThread):
                         result.add((m, n))
         return result
 
+    def part_solve_1(self, clicks, cell_value, num10, num9, cs):
+        '''
+        根据点击的坐标，计算出可能的值
+        :param clicks: 点击的坐标
+        :param cell_value: 格子中的值
+        :param num10: 10的个数
+        :param num9: 9的个数
+        :param cs: 雷的坐标
+        :return: 可能的值
+        '''
+        canopen_res = np.zeros(len(clicks))
+        res_list = []
+        _total = int(1e6)
+        num = 0
+        num_solve = 0
+        o_value = 0
+        self.pv_signal.emit(0)
+        indexes = np.arange(len(clicks))
+        
+        a = self.a - num9 - num10 if self.a - num9 - num10 >= 0 else 0
+        b = self.a - num10 if (self.a - num10) <= len(clicks) else len(clicks)
+        if a >= b:
+            a = b
+        ps = np.zeros(b + 1 - a)
+        for i in range(b+1-a):
+            ps[i] = C_num(b, i+a)
+        ps /= np.sum(ps)
+        for i in range(_total):
+            # copy 防止改变原数组
+            value = cell_value.copy()
+            # 将尝试的坐标设为雷。
+            mine_num = np.random.choice(np.arange(a, b+1), p=ps)
+            index_list = np.random.choice(indexes, mine_num, replace=False)
+            for loc in index_list:
+                value[clicks[loc][1], clicks[loc][0]] = 10
+
+            flag = 0  # 0 符合条件 -1 不符合条件
+            for (i, j) in cs:
+                if value[j, i] != self.cell_around(i, j, value)[1]:
+                    flag = -1
+                    break
+
+            res = np.zeros(len(clicks), dtype=np.int32)
+            if flag == 0:  # 符合条件
+                num_solve += 1                    
+                for loc in index_list:
+                    res[loc] += 1
+                res_list.append(res)
+
+            n_value = int((num / _total) * 100)
+            if n_value - o_value >= 1:
+                self.pv_signal.emit(n_value)
+                o_value = n_value
+            num += 1
+
+        # 没有雷的情况
+        value = cell_value.copy()
+
+        flag = 0
+        for (i, j) in cs:
+            if value[j, i] != self.cell_around(i, j, value)[1]:  # 不符合条件的
+                flag = -1
+                break
+
+        if flag == 0:  # 符合条件
+            res_list.append(np.zeros(len(clicks), dtype=np.int32))
+
+        if num_solve != 0:
+            canopen_res /= num_solve
+
+        self.pv_signal.emit(100)
+        return res_list, len(res_list), canopen_res
+    
     def get_set(self, i, j, cell_value):
         result = set()
         cnt10 = 0

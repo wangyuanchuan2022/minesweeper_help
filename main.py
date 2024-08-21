@@ -387,8 +387,6 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
     def update_image(self):
         # 启动帮助程序
-        self.reload()
-
         self.click_all.setEnabled(False)
         self.return_to_main_p3.setVisible(False)
         self.reload()
@@ -431,6 +429,22 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.label_p3.resize(self.w * self.btn_width, self.h * self.btn_width)
         self.label_p3.setMinimumSize(self.w * self.btn_width, self.h * self.btn_width)
         self.frame_2.setMinimumSize(w, h)
+
+        w, h = self.w, self.h
+        cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+        for i in range(1, w + 1):
+            for j in range(1, h + 1):
+                cell_value[j, i] = 9
+        cell_value = self.help_thread.complete_scan(cell_value, False)
+        for u in range(1, w + 1):
+            for v in range(1, h + 1):
+                i, j = u - 1, v - 1
+                self.btn_list[j][i].setEnabled(True)
+                self.btn_list[j][i].setText(str(cell_value[j + 1, i + 1]))
+                self.btn_list[j][i].setStyleSheet("QPushButton{border-radius:0px; border: 0px solid rgb(255, 255, 255);"
+                                                  "background-color:rgba(255, 255, 255, 120);font: 10pt \"楷体\"}"
+                                                  "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);"
+                                                  "color:rgba(210, 210, 210, 0);}")
 
     def update_btn_list(self, pos_dict_list):
         # 根据计算结果更新btn_list
@@ -526,7 +540,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
                 pyautogui.keyDown('ctrl')
                 for (i, j) in self.mines:
                     # 将是雷的方格标雷
-                    pyautogui.click(self.cell_width * i + self.bx,
+                    pyautogui.rightClick(self.cell_width * i + self.bx,
                                     self.cell_width * j + self.by)
                 pyautogui.keyUp('ctrl')
                 self.mines = []
