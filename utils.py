@@ -1,3 +1,4 @@
+# Minesweeper Arbiter 
 import json
 import math
 import random
@@ -448,15 +449,13 @@ class Solver(AutoPlayThread):
                 cell_value = self.complete_scan(cell_value, True)
                 sum2 = np.sum(cell_value)
                 cell_value = self.mine_clear1(cell_value)
+                cell_value = self.mine_clear3_1(cell_value)
                 sum3 = np.sum(cell_value)
                 if sum3 == sum2:
-                    cell_value = self.mine_clear3_1(cell_value)
-                    sum4 = np.sum(cell_value)
-                    if sum4 == sum3:
-                        try:
-                            cell_value = self.number5_1(cell_value)
-                        except ImportError:
-                            pass
+                    try:
+                        cell_value = self.number5_1(cell_value)
+                    except ImportError:
+                        pass
 
         except pyautogui.FailSafeException:
             self.pv_signal.emit(0)
@@ -900,7 +899,7 @@ class Solver(AutoPlayThread):
                     ck.append(_total)
                     self.pv_signal.emit(100)
                 except KeyError:
-                    if len(click_list[index]) > limit:  # 大于limit时因为算量过大而无法判断
+                    if len(click_list[index]) > limit + 3:  # 大于limit时因为算量过大而无法判断
                         is_removed = True
                         for pos in click_list[index]:
                             clicks.remove(pos)
@@ -909,9 +908,14 @@ class Solver(AutoPlayThread):
                         for li in list(self.checked.keys()):
                             if len(set(li) & set(tuple(click_list[index]))) != 0:
                                 self.checked.pop(li)
-                        _res, _total, _canopen_res = self.part_solve(click_list[index], cell_value, num10,
-                                                       num9 - len(click_list[index]),
-                                                       set_list[index])
+                        if len(click_list[index]) > limit:
+                            _res, _total, _canopen_res = self.part_solve(click_list[index], cell_value, num10,
+                                                           num9 - len(click_list[index]),
+                                                           set_list[index], False)
+                        else:
+                            _res, _total, _canopen_res = self.part_solve(click_list[index], cell_value, num10,
+                                                           num9 - len(click_list[index]),
+                                                           set_list[index])
 
                         if len(_res) == 0:
                             cell_value = np.zeros((h + 2, w + 2), dtype='int32')
@@ -953,6 +957,7 @@ class Solver(AutoPlayThread):
                     })
 
             else:
+                pos = []
                 if total > 150000:  # total太大全排列计算量太大
                     self.Visible_signal.emit(False)
                     mine_num = 0
@@ -964,7 +969,6 @@ class Solver(AutoPlayThread):
                         mine_num += res_l.sum() / _total
                         res_l = (_total - res_l) / _total
                         res = np.hstack((res, res_l))
-                    pos = []
                 else:
                     res = np.zeros(len(clicks))
                     _total = 0
@@ -1045,7 +1049,11 @@ class Solver(AutoPlayThread):
                         _confidence = round(1 - (mine9 / len(clicks9)), 5)
                         if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
                             is_recommend = False
-                            pos, opennum_res = self.best_solve(clicks, clicks9, res, cell_value)
+                            if is_removed:
+                                pos = random.choice(clicks9)
+                                opennum_res = np.zeros(len(clicks9))
+                            else:
+                                pos, opennum_res = self.best_solve(clicks, clicks9, res, cell_value)
                             pos = [pos]
                             if not self.is_play:
                                 for k, (i, j) in enumerate(clicks9):
@@ -1181,7 +1189,7 @@ class Solver(AutoPlayThread):
         
         return clicks9[arg], opennum_res
 
-    def part_solve(self, clicks, cell_value, num10, num9, cs):
+    def part_solve(self, clicks, cell_value, num10, num9, cs, _try=True):
         '''
         根据点击的坐标，计算出可能的值
         :param clicks: 点击的坐标
@@ -1214,21 +1222,22 @@ class Solver(AutoPlayThread):
 
             res = np.zeros(len(clicks), dtype=np.int32)
             if flag == 0:  # 符合条件
-                num_solve += 1
-                for loc in set(range(len(clicks))) - set(index_list):
-                    _value = cell_value.copy()
-                    num9 = 0
-                    num10 = 0
-                    i, j = clicks[loc]
-                    for u in range(i-1, i+2):
-                        for v in range(j - 1, j+2):
-                            if value[v, u] == 9 and ((u, v) not in clicks):
-                                num9 += 1
-                            elif value[v, u] == 10:
-                                num10 += 1
-                    can_open = self.try_solve(i, j, _value, clicks, num9, num10)
-                    canopen_res[loc] += can_open
+                if _try:
+                    for loc in set(range(len(clicks))) - set(index_list):
+                        _value = cell_value.copy()
+                        num9 = 0
+                        num10 = 0
+                        i, j = clicks[loc]
+                        for u in range(i-1, i+2):
+                            for v in range(j - 1, j+2):
+                                if value[v, u] == 9 and ((u, v) not in clicks):
+                                    num9 += 1
+                                elif value[v, u] == 10:
+                                    num10 += 1
+                        can_open = self.try_solve(i, j, _value, clicks, num9, num10)
+                        canopen_res[loc] += can_open
                     
+                num_solve += 1
                 for loc in index_list:
                     res[loc] += 1
                 res_list.append(res)
