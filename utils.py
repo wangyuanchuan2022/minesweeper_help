@@ -1,5 +1,3 @@
-# https://www.bilibili.com/video/BV1b44y1H71v?spm_id_from=333.999.0.0&vd_source=4a9c14092489228cb93dda72e43780cb
-# 10:51
 import json
 import math
 import random
@@ -954,18 +952,51 @@ class Solver(AutoPlayThread):
                         'is_recommend': False
                     })
 
-            elif total > 150000:  # total太大全排列计算量太大
-                self.Visible_signal.emit(False)
-                mine_num = 0
-                res = np.array([])
-                for res_l in res_list:
-                    res_l = np.array(res_l)
-                    _total = len(res_l)
-                    res_l = res_l.sum(axis=0)
-                    mine_num += res_l.sum() / _total
-                    res_l = (_total - res_l) / _total
-                    res = np.hstack((res, res_l))
-                pos = []
+            else:
+                if total > 150000:  # total太大全排列计算量太大
+                    self.Visible_signal.emit(False)
+                    mine_num = 0
+                    res = np.array([])
+                    for res_l in res_list:
+                        res_l = np.array(res_l)
+                        _total = len(res_l)
+                        res_l = res_l.sum(axis=0)
+                        mine_num += res_l.sum() / _total
+                        res_l = (_total - res_l) / _total
+                        res = np.hstack((res, res_l))
+                    pos = []
+                else:
+                    res = np.zeros(len(clicks))
+                    _total = 0
+                    min_val = self.a - len(clicks9)
+                    mine_num = []
+
+                    o_value = 0
+                    num = 0
+                    self.pv_signal.emit(0)
+                    for index_list in A(ck):
+                        _mine_num = 0  # 一个方案中的雷数
+                        r = np.array([])
+                        for i in range(len(index_list)):
+                            _mine_num += res_list[i][index_list[i]].sum()
+                            r = np.hstack([r, res_list[i][index_list[i]]])
+
+                        if min_val <= (_mine_num + num10) <= self.a:
+                            mine_num.append(_mine_num)
+                            _total += 1
+                            res += r
+                        n_value = int((num / total) * 100)
+                        if n_value - o_value >= 1:
+                            self.pv_signal.emit(n_value)
+                            o_value = n_value
+                        num += 1
+
+                    self.pv_signal.emit(100)
+                    self.Visible_signal.emit(False)
+                    total = _total
+                    mine_num = min(mine_num)
+                    res = res.astype(np.float32)
+                    res = (total - res) / total
 
                 if 1 in res:  # 有确定不为雷的地方
                     for index in range(len(res)):
@@ -1014,9 +1045,10 @@ class Solver(AutoPlayThread):
                         _confidence = round(1 - (mine9 / len(clicks9)), 5)
                         if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
                             is_recommend = False
-                            pos = [self.best_solve(clicks, clicks9, res, cell_value)]
+                            pos, opennum_res = self.best_solve(clicks, clicks9, res, cell_value)
+                            pos = [pos]
                             if not self.is_play:
-                                for (i, j) in clicks9:
+                                for k, (i, j) in enumerate(clicks9):
                                     if (i, j) in pos:
                                         self.pos_dict_list.append({
                                             'pos': (i, j),
@@ -1024,7 +1056,7 @@ class Solver(AutoPlayThread):
                                             'num': self.num,
                                             'is_mine': False,
                                             'is_best': False,
-                                            'exp': '随机选择。',
+                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}',
                                             'is_recommend': True
                                         })
                                     else:
@@ -1034,7 +1066,7 @@ class Solver(AutoPlayThread):
                                             'num': self.num,
                                             'is_mine': False,
                                             'is_best': False,
-                                            'exp': '随机选择。',
+                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}',
                                             'is_recommend': False
                                         })
                             confidence = _confidence  # 剩余未开方格不是雷的概率
@@ -1052,7 +1084,7 @@ class Solver(AutoPlayThread):
                                             'num': self.num,
                                             'is_mine': False,
                                             'is_best': False,
-                                            'exp': f'枚举得出 {canopen_res[p]}',
+                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}',
                                             'is_recommend': True if is_recommend else False
                                         })
                                         self.appended_pos.add(tuple(clicks[p]))
@@ -1063,7 +1095,7 @@ class Solver(AutoPlayThread):
                                             'num': self.num,
                                             'is_mine': False,
                                             'is_best': False,
-                                            'exp': f'枚举得出',
+                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}',
                                             'is_recommend': False
                                         })
                                         self.appended_pos.add(tuple(clicks[p]))
@@ -1075,174 +1107,10 @@ class Solver(AutoPlayThread):
                                         'num': self.num,
                                         'is_mine': False,
                                         'is_best': False,
-                                        'exp': '枚举得出',
+                                        'exp': f'枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}',
                                         'is_recommend': False
                                     })
                                     self.appended_pos.add(tuple(clicks[p]))
-
-            else:
-                res = np.zeros(len(clicks))
-                _total = 0
-                min_val = self.a - len(clicks9)
-                mine_num = []
-
-                o_value = 0
-                num = 0
-                self.pv_signal.emit(0)
-                for index_list in A(ck):
-                    _mine_num = 0  # 一个方案中的雷数
-                    r = np.array([])
-                    for i in range(len(index_list)):
-                        _mine_num += res_list[i][index_list[i]].sum()
-                        r = np.hstack([r, res_list[i][index_list[i]]])
-
-                    if min_val <= (_mine_num + num10) <= self.a:
-                        mine_num.append(_mine_num)
-                        _total += 1
-                        res += r
-                    n_value = int((num / total) * 100)
-                    if n_value - o_value >= 1:
-                        self.pv_signal.emit(n_value)
-                        o_value = n_value
-                    num += 1
-
-                self.pv_signal.emit(100)
-                self.Visible_signal.emit(False)
-                total = _total
-
-                if total == 0:  # 如果clicks中的数都被删完了
-                    res = []
-                    # 就从clicks9中随机选一个
-                    pos = [random.choice(clicks + clicks9)]  # 随机选择
-                    confidence = 1 - ((self.a - num10) / (len(clicks) + len(clicks9)))
-                    if not self.is_play:
-                        self.pos_dict_list.append({
-                            'pos': pos[0],
-                            'confidence': round(confidence, 5),
-                            'num': self.num,
-                            'is_mine': False,
-                            'is_best': False,
-                            'exp': '随机选择。',
-                            'is_recommend': False
-                        })
-                else:
-                    # 找到解
-                    res = res.astype(np.float32)
-                    mine_num = min(mine_num)
-                    res = (total - res) / total
-                    pos = []
-                    if 1 in res:  # 有确定不为雷的地方
-                        for index in range(len(res)):
-                            if res[index] == 1:
-                                pos.append(clicks[index])
-                                confidence = 1
-                                if not self.is_play:
-                                    if tuple(clicks[index]) not in self.appended_pos:
-                                        self.pos_dict_list.append({
-                                            'pos': clicks[index],
-                                            'confidence': 1,
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': True,
-                                            'exp': '枚举得出',
-                                            'is_recommend': False
-                                        })
-                                        self.appended_pos.add(tuple(clicks[index]))
-
-                    else:
-                        if len(res) == 0:
-                            cell_value = np.zeros((h + 2, w + 2), dtype='int32')
-                            for i in range(1, w + 1):
-                                for j in range(1, h + 1):
-                                    cell_value[j, i] = 9
-                            cell_value = self.complete_scan(cell_value)
-                            self.count += 1
-                            return cell_value
-                        max_loc = np.argmax(res)
-                        max_val = res[max_loc]  # 最大值
-                        max_open = 0  # 最大可确定格数
-                        _a = np.arange(len(clicks))
-                        np.random.shuffle(_a)
-                        for p in _a:
-                            if 0.005 >= max_val - res[p] >= -0.005:
-                                if canopen_res[p] >= max_open:
-                                    pos = clicks[p]
-                                    max_open = canopen_res[p]
-
-                        pos = [pos]
-                        mine9 = self.a - mine_num - num10  # 剩余雷数
-
-                        is_recommend = True
-                        confidence = round(max_val, 5)  # 不是雷的概率
-                        if len(clicks9) != 0:
-                            _confidence = round(1 - (mine9 / len(clicks9)), 5)
-                            if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
-                                is_recommend = False
-                                pos = [self.best_solve(clicks, clicks9, res, cell_value)]
-                                confidence = _confidence  # 剩余未开方格不是雷的概率
-                                if confidence == 1:
-                                    pos = clicks9
-                            if not self.is_play:
-                                for (i, j) in clicks9:
-                                    if (i, j) in pos:
-                                        self.pos_dict_list.append({
-                                            'pos': (i, j),
-                                            'confidence': _confidence,
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': '随机选择。',
-                                            'is_recommend': True
-                                        })
-                                    else:
-                                        self.pos_dict_list.append({
-                                            'pos': (i, j),
-                                            'confidence': _confidence,
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': '随机选择。',
-                                            'is_recommend': False
-                                        })
-
-                        if not self.is_play:
-                            for p in range(len(clicks)):
-                                if 0.005 >= max_val - res[p] >= -0.005:
-                                    if tuple(clicks[p]) not in self.appended_pos:
-                                        if tuple(clicks[p]) == pos[0]:
-                                            self.pos_dict_list.append({
-                                                'pos': clicks[p],
-                                                'confidence': round(res[p], 5),
-                                                'num': self.num,
-                                                'is_mine': False,
-                                                'is_best': False,
-                                                'exp': f'枚举得出 {canopen_res[p]}',
-                                                'is_recommend': True if is_recommend else False
-                                            })
-                                            self.appended_pos.add(tuple(clicks[p]))
-                                        else:
-                                            self.pos_dict_list.append({
-                                                'pos': clicks[p],
-                                                'confidence': round(res[p], 5),
-                                                'num': self.num,
-                                                'is_mine': False,
-                                                'is_best': False,
-                                                'exp': f'枚举得出',
-                                                'is_recommend': False
-                                            })
-                                            self.appended_pos.add(tuple(clicks[p]))
-                                else:
-                                    if tuple(clicks[p]) not in self.appended_pos:
-                                        self.pos_dict_list.append({
-                                            'pos': clicks[p],
-                                            'confidence': round(res[p], 5),
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': '枚举得出',
-                                            'is_recommend': False
-                                        })
-                                        self.appended_pos.add(tuple(clicks[p]))
 
         self.text_signal.emit(f'共{total}种解。')
         if total == 0:
@@ -1311,7 +1179,7 @@ class Solver(AutoPlayThread):
         self.pv_signal.emit(100)
         self.Visible_signal.emit(False)
         
-        return clicks9[arg]
+        return clicks9[arg], opennum_res
 
     def part_solve(self, clicks, cell_value, num10, num9, cs):
         '''
@@ -1397,79 +1265,6 @@ class Solver(AutoPlayThread):
                     if 0 < cell_value[n, m] < 8:
                         result.add((m, n))
         return result
-
-    def part_solve_1(self, clicks, cell_value, num10, num9, cs):
-        '''
-        根据点击的坐标，计算出可能的值
-        :param clicks: 点击的坐标
-        :param cell_value: 格子中的值
-        :param num10: 10的个数
-        :param num9: 9的个数
-        :param cs: 雷的坐标
-        :return: 可能的值
-        '''
-        canopen_res = np.zeros(len(clicks))
-        res_list = []
-        _total = int(1e6)
-        num = 0
-        num_solve = 0
-        o_value = 0
-        self.pv_signal.emit(0)
-        indexes = np.arange(len(clicks))
-        
-        a = self.a - num9 - num10 if self.a - num9 - num10 >= 0 else 0
-        b = self.a - num10 if (self.a - num10) <= len(clicks) else len(clicks)
-        if a >= b:
-            a = b
-        ps = np.zeros(b + 1 - a)
-        for i in range(b+1-a):
-            ps[i] = C_num(b, i+a)
-        ps /= np.sum(ps)
-        for i in range(_total):
-            # copy 防止改变原数组
-            value = cell_value.copy()
-            # 将尝试的坐标设为雷。
-            mine_num = np.random.choice(np.arange(a, b+1), p=ps)
-            index_list = np.random.choice(indexes, mine_num, replace=False)
-            for loc in index_list:
-                value[clicks[loc][1], clicks[loc][0]] = 10
-
-            flag = 0  # 0 符合条件 -1 不符合条件
-            for (i, j) in cs:
-                if value[j, i] != self.cell_around(i, j, value)[1]:
-                    flag = -1
-                    break
-
-            res = np.zeros(len(clicks), dtype=np.int32)
-            if flag == 0:  # 符合条件
-                num_solve += 1                    
-                for loc in index_list:
-                    res[loc] += 1
-                res_list.append(res)
-
-            n_value = int((num / _total) * 100)
-            if n_value - o_value >= 1:
-                self.pv_signal.emit(n_value)
-                o_value = n_value
-            num += 1
-
-        # 没有雷的情况
-        value = cell_value.copy()
-
-        flag = 0
-        for (i, j) in cs:
-            if value[j, i] != self.cell_around(i, j, value)[1]:  # 不符合条件的
-                flag = -1
-                break
-
-        if flag == 0:  # 符合条件
-            res_list.append(np.zeros(len(clicks), dtype=np.int32))
-
-        if num_solve != 0:
-            canopen_res /= num_solve
-
-        self.pv_signal.emit(100)
-        return res_list, len(res_list), canopen_res
     
     def get_set(self, i, j, cell_value):
         result = set()
