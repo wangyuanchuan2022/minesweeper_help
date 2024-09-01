@@ -1,4 +1,4 @@
-# Minesweeper Arbiter 
+# Minesweeper Arbiter
 import json
 import math
 import random
@@ -62,8 +62,8 @@ def C(a, b):
 def C_num(a, b):
     result = 1
     for i in range(b):
-        result *= (a - i)
-        result /= (i + 1)
+        result *= a - i
+        result /= i + 1
     return result
 
 
@@ -210,7 +210,6 @@ class AutoPlayThread(QThread):
 
 
 class Solver(AutoPlayThread):
-
     def __init__(self):
         super().__init__()
         self.images = None
@@ -221,17 +220,17 @@ class Solver(AutoPlayThread):
         self.img = None
 
         self.count = 0
-        with open('cfg.json', encoding='utf-8') as f:
+        with open("cfg.json", encoding="utf-8") as f:
             self.cfg = json.load(f)
-        self.w = self.cfg['w']
-        self.h = self.cfg['h']
-        self._bx = self.cfg['bx']  #
-        self._by = self.cfg['by']  #
-        self.cell_width = self.cfg['cell_width']
-        self.a = self.cfg['a']  # 总雷数
-        self.limit = self.cfg['limit']
+        self.w = self.cfg["w"]
+        self.h = self.cfg["h"]
+        self._bx = self.cfg["bx"]  #
+        self._by = self.cfg["by"]  #
+        self.cell_width = self.cfg["cell_width"]
+        self.a = self.cfg["a"]  # 总雷数
+        self.limit = self.cfg["limit"]
         self.p = self.a / (self.w * self.h)
-        self.speed = self.cfg['speed']
+        self.speed = self.cfg["speed"]
 
         self.screenshot_h = int(self.cell_width * 7 / 9)
         self.screenshot_w = int(self.cell_width * 5 / 9)
@@ -239,7 +238,7 @@ class Solver(AutoPlayThread):
 
         self.pos_dict_list = []
         self.appended_pos = set()
-        
+
         self.checked = {}
 
     def run(self):
@@ -250,62 +249,64 @@ class Solver(AutoPlayThread):
             self.help()
 
     def reload(self):
-        with open('cfg.json', encoding='utf-8') as f:
+        with open("cfg.json", encoding="utf-8") as f:
             self.cfg = json.load(f)
-        self.w = self.cfg['w']
-        self.h = self.cfg['h']
-        self._bx = self.cfg['bx']  #
-        self._by = self.cfg['by']  #
-        self.cell_width = self.cfg['cell_width']
-        self.a = self.cfg['a']  # 总雷数
-        self.limit = self.cfg['limit']
-        self.speed = self.cfg['speed']
+        self.w = self.cfg["w"]
+        self.h = self.cfg["h"]
+        self._bx = self.cfg["bx"]  #
+        self._by = self.cfg["by"]  #
+        self.cell_width = self.cfg["cell_width"]
+        self.a = self.cfg["a"]  # 总雷数
+        self.limit = self.cfg["limit"]
+        self.speed = self.cfg["speed"]
 
         self.screenshot_h = int(self.cell_width * 7 / 9)
         self.screenshot_w = int(self.cell_width * 5 / 9)
         self.load_img()
 
     def load_img(self):
-        img0 = cv.imread('image/0.bmp')
-        img0_1 = cv.imread('image/0_1.bmp')
-        img0_2 = cv.imread('image/0_2.bmp')
-        img1 = cv.imread('image/1.bmp')
-        img1_1 = cv.imread('image/1_1.bmp')
-        img1_2 = cv.imread('image/1_2.bmp')
-        img2 = cv.imread('image/2.bmp')
-        img2_1 = cv.imread('image/2_1.bmp')
-        img3 = cv.imread('image/3.bmp')
-        img3_1 = cv.imread('image/3_1.bmp')
-        img4 = cv.imread('image/4.bmp')
-        img4_1 = cv.imread('image/4_1.bmp')
-        img5 = cv.imread('image/5.bmp')
-        img5_1 = cv.imread('image/5_1.bmp')
-        img6 = cv.imread('image/6.bmp')
-        img6_1 = cv.imread('image/6_1.bmp')
-        img7 = cv.imread('image/7.bmp')
-        img7_1 = cv.imread('image/7_1.bmp')
-        img8 = cv.imread('image/8.bmp')
-        img8_1 = cv.imread('image/8_1.bmp')
-        img9 = cv.imread('image/9.bmp')
-        img9_1 = cv.imread('image/9_1.bmp')
-        img9_2 = cv.imread('image/9_2.bmp')
-        img10 = cv.imread('image/10.bmp')
-        img10_1 = cv.imread('image/10_1.bmp')
-        self.images = [[img0, img0_1, img0_2],
-                       [img1, img1_1, img1_2],
-                       [img2, img2_1],
-                       [img3, img3_1],
-                       [img4, img4_1],
-                       [img5, img5_1],
-                       [img6, img6_1],
-                       [img7, img7_1],
-                       [img8, img8_1],
-                       [img9, img9_1, img9_2],
-                       [img10, img10_1]]
+        img0 = cv.imread("image/0.bmp")
+        img0_1 = cv.imread("image/0_1.bmp")
+        img0_2 = cv.imread("image/0_2.bmp")
+        img1 = cv.imread("image/1.bmp")
+        img1_1 = cv.imread("image/1_1.bmp")
+        img1_2 = cv.imread("image/1_2.bmp")
+        img2 = cv.imread("image/2.bmp")
+        img2_1 = cv.imread("image/2_1.bmp")
+        img3 = cv.imread("image/3.bmp")
+        img3_1 = cv.imread("image/3_1.bmp")
+        img4 = cv.imread("image/4.bmp")
+        img4_1 = cv.imread("image/4_1.bmp")
+        img5 = cv.imread("image/5.bmp")
+        img5_1 = cv.imread("image/5_1.bmp")
+        img6 = cv.imread("image/6.bmp")
+        img6_1 = cv.imread("image/6_1.bmp")
+        img7 = cv.imread("image/7.bmp")
+        img7_1 = cv.imread("image/7_1.bmp")
+        img8 = cv.imread("image/8.bmp")
+        img8_1 = cv.imread("image/8_1.bmp")
+        img9 = cv.imread("image/9.bmp")
+        img9_1 = cv.imread("image/9_1.bmp")
+        img9_2 = cv.imread("image/9_2.bmp")
+        img10 = cv.imread("image/10.bmp")
+        img10_1 = cv.imread("image/10_1.bmp")
+        self.images = [
+            [img0, img0_1, img0_2],
+            [img1, img1_1, img1_2],
+            [img2, img2_1],
+            [img3, img3_1],
+            [img4, img4_1],
+            [img5, img5_1],
+            [img6, img6_1],
+            [img7, img7_1],
+            [img8, img8_1],
+            [img9, img9_1, img9_2],
+            [img10, img10_1],
+        ]
 
     @staticmethod
     def locate_exit():
-        tem = cv.imread('exit.bmp')
+        tem = cv.imread("exit.bmp")
         h, w, _ = tem.shape
         bg = ImageGrab.grab()
         bg = np.array(bg)
@@ -327,7 +328,7 @@ class Solver(AutoPlayThread):
         x, y = cv.minMaxLoc(res)[2]
         x, y = x + w / 2, y + w / 2
         return _min < 0.01, x, y
-    
+
     def play(self, limit):
         try:
             hwnd = win32gui.FindWindow(None, setting.win_name)
@@ -340,11 +341,13 @@ class Solver(AutoPlayThread):
             start_i = int(w / 2)
             start_j = int(h / 2)
 
-            pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+            pyautogui.click(
+                self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width
+            )
             time.sleep(setting.sleep)
 
             # 初始化cell_value
-            cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
             for i in range(1, w + 1):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
@@ -354,21 +357,23 @@ class Solver(AutoPlayThread):
 
             while True:
                 if self.count >= 3:
-                    self.warning_signal.emit('请检查设置中总雷数，宽度，长度是否输入正确')
+                    self.warning_signal.emit("请检查设置中总雷数，宽度，长度是否输入正确")
                     self.count = 0
                     return
 
-                if win32gui.FindWindow(None, '游戏胜利') > 0:
+                if win32gui.FindWindow(None, "游戏胜利") > 0:
                     time.sleep(3)
                     win += 1
                     total += 1
                     exit_i, exit_j = self.locate_exit()
                     pyautogui.click(exit_i, exit_j)
-                    self.text_signal.emit(f'已玩 {str(total)} 局。 {str(win)} 局获胜。胜率：'
-                                          f'{str(round(win / total, 4) * 100)}%\n')
+                    self.text_signal.emit(
+                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
+                        f"{str(round(win / total, 4) * 100)}%\n"
+                    )
                     if total == limit:
                         break
-                    cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                    cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
@@ -376,21 +381,26 @@ class Solver(AutoPlayThread):
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
-                    pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    pyautogui.click(
+                        self.bx + start_i * self.cell_width,
+                        self.by + start_j * self.cell_width,
+                    )
                     self.checked = {}  # 重置checked
 
                     time.sleep(0.1)
 
-                elif win32gui.FindWindow(None, '游戏失败') > 0:
+                elif win32gui.FindWindow(None, "游戏失败") > 0:
                     time.sleep(3)
                     exit_i, exit_j = self.locate_exit()
                     pyautogui.click(exit_i, exit_j)
                     total += 1
-                    self.text_signal.emit(f'已玩 {str(total)} 局。 {str(win)} 局获胜。胜率：'
-                                          f'{str(round(win / total, 4) * 100)}%\n')
+                    self.text_signal.emit(
+                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
+                        f"{str(round(win / total, 4) * 100)}%\n"
+                    )
                     if total == limit:
                         break
-                    cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                    cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
@@ -398,20 +408,25 @@ class Solver(AutoPlayThread):
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
-                    pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    pyautogui.click(
+                        self.bx + start_i * self.cell_width,
+                        self.by + start_j * self.cell_width,
+                    )
                     self.checked = {}  # 重置checked
-                    
-                _win, x, y = self._locate('win.bmp')
+
+                _win, x, y = self._locate("win.bmp")
                 if _win:
                     time.sleep(3)
                     win += 1
                     total += 1
                     pyautogui.click(x, y)
-                    self.text_signal.emit(f'已玩 {str(total)} 局。 {str(win)} 局获胜。胜率：'
-                                          f'{str(round(win / total, 4) * 100)}%\n')
+                    self.text_signal.emit(
+                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
+                        f"{str(round(win / total, 4) * 100)}%\n"
+                    )
                     if total == limit:
                         break
-                    cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                    cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
@@ -419,21 +434,26 @@ class Solver(AutoPlayThread):
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
-                    pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    pyautogui.click(
+                        self.bx + start_i * self.cell_width,
+                        self.by + start_j * self.cell_width,
+                    )
                     self.checked = {}  # 重置checked
 
                     time.sleep(0.1)
-                    
-                _lose, x, y = self._locate('lose.bmp')
+
+                _lose, x, y = self._locate("lose.bmp")
                 if _lose:
                     time.sleep(3)
                     pyautogui.click(x, y)
                     total += 1
-                    self.text_signal.emit(f'已玩 {str(total)} 局。 {str(win)} 局获胜。胜率：'
-                                          f'{str(round(win / total, 4) * 100)}%\n')
+                    self.text_signal.emit(
+                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
+                        f"{str(round(win / total, 4) * 100)}%\n"
+                    )
                     if total == limit:
                         break
-                    cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                    cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
@@ -441,7 +461,10 @@ class Solver(AutoPlayThread):
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
                     time.sleep(0.5)
-                    pyautogui.click(self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width)
+                    pyautogui.click(
+                        self.bx + start_i * self.cell_width,
+                        self.by + start_j * self.cell_width,
+                    )
                     self.checked = {}  # 重置checked
 
                     time.sleep(0.1)
@@ -480,7 +503,7 @@ class Solver(AutoPlayThread):
             h = self.h
 
             # 初始化cell_value
-            cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
             for i in range(1, w + 1):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
@@ -500,7 +523,7 @@ class Solver(AutoPlayThread):
                         flag = 0
                         break
                 if flag == 4:
-                    self.warning_signal.emit('请检查设置中总雷数，宽度，长度是否输入正确')
+                    self.warning_signal.emit("请检查设置中总雷数，宽度，长度是否输入正确")
                     return
 
             self.update_btn_list_signal.emit(self.pos_dict_list)
@@ -530,7 +553,7 @@ class Solver(AutoPlayThread):
             self.num = 1
             self.pos_dict_list = []
             self.appended_pos = set()
-            
+
             try:
                 for _ in range(2):
                     cell_value = self.mine_clear1(cell_value)
@@ -539,23 +562,31 @@ class Solver(AutoPlayThread):
             except:
                 pass
 
-            res += len(self.appended_pos) * (1 - self.p) ** (num9 - mine_num + num10) * (self.p) ** (mine_num - num10) * C_num(num9, mine_num - num10)
-            
+            res += (
+                len(self.appended_pos)
+                * (1 - self.p) ** (num9 - mine_num + num10)
+                * (self.p) ** (mine_num - num10)
+                * C_num(num9, mine_num - num10)
+            )
+
         res /= num9 + 1
-        
+
         self.is_play = play
         self.num = num
         self.pos_dict_list = pos_dict_list
         self.appended_pos = appended_pos
         return res
-        
+
     def cell_screenshot(self, i, j):
         x = i * self.cell_width
         y = j * self.cell_width
         w = self.screenshot_w
         h = self.screenshot_h
-        img = self.img[y - self.cell_width // 2 - h // 2: y - self.cell_width // 2 + h // 2,
-                                                                x - self.cell_width // 2 - w // 2: x - self.cell_width // 2 + w // 2, :]
+        img = self.img[
+            y - self.cell_width // 2 - h // 2 : y - self.cell_width // 2 + h // 2,
+            x - self.cell_width // 2 - w // 2 : x - self.cell_width // 2 + w // 2,
+            :,
+        ]
 
         return img
 
@@ -576,9 +607,13 @@ class Solver(AutoPlayThread):
             for i, j in clicks:
                 cell_value = self.number0(i, j, cell_value)
             return cell_value
-        
+
         for j in range(1, self.h + 1):
-            if (9 in cell_value[j - 1]) or (9 in cell_value[j]) or (9 in cell_value[j + 1]):
+            if (
+                (9 in cell_value[j - 1])
+                or (9 in cell_value[j])
+                or (9 in cell_value[j + 1])
+            ):
                 for i in range(1, self.w + 1):
                     if 0 < cell_value[j, i] < 8:
                         cell_value = self.number0(i, j, cell_value)
@@ -594,17 +629,22 @@ class Solver(AutoPlayThread):
                     if cell_value[n, m] == 9:
                         cell_value[n, m] = 10
                         if not self.is_play:
-                            if tuple((m, n)) not in self.appended_pos and self.cell_value[n, m] != 10:
+                            if (
+                                tuple((m, n)) not in self.appended_pos
+                                and self.cell_value[n, m] != 10
+                            ):
                                 c = True
-                                self.pos_dict_list.append({
-                                    'pos': (m, n),
-                                    'confidence': 0,
-                                    'num': self.num,
-                                    'is_mine': True,
-                                    'is_best': False,
-                                    'exp': f'由({i}, {j})得出',
-                                    'is_recommend': False
-                                })
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": (m, n),
+                                        "confidence": 0,
+                                        "num": self.num,
+                                        "is_mine": True,
+                                        "is_best": False,
+                                        "exp": f"由({i}, {j})得出",
+                                        "is_recommend": False,
+                                    }
+                                )
                                 self.appended_pos.add(tuple((m, n)))
 
         elif cnt10 == cell_value[j, i] and cnt9 >= 1:
@@ -613,20 +653,25 @@ class Solver(AutoPlayThread):
                     if cell_value[n, m] == 9:
                         if self.is_play:
                             c = True
-                            pyautogui.click(self.bx + m * self.cell_width, self.by + n * self.cell_width)
+                            pyautogui.click(
+                                self.bx + m * self.cell_width,
+                                self.by + n * self.cell_width,
+                            )
                         else:
                             if tuple((m, n)) not in self.appended_pos:
                                 c = True
                                 cell_value[n, m] = 11
-                                self.pos_dict_list.append({
-                                    'pos': (m, n),
-                                    'confidence': 1,
-                                    'num': self.num,
-                                    'is_mine': False,
-                                    'is_best': True,
-                                    'exp': f"由({i}, {j})得出",
-                                    'is_recommend': False
-                                })
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": (m, n),
+                                        "confidence": 1,
+                                        "num": self.num,
+                                        "is_mine": False,
+                                        "is_best": True,
+                                        "exp": f"由({i}, {j})得出",
+                                        "is_recommend": False,
+                                    }
+                                )
                                 self.appended_pos.add(tuple((m, n)))
         if c:
             if not self.is_play:
@@ -658,100 +703,119 @@ class Solver(AutoPlayThread):
                     z_set = bj - a
                     y_set = a & b
                     if x1 - x2 == len(x_set):
-                        for (u, v) in x_set:
+                        for u, v in x_set:
                             cell_value[v, u] = 10
                             if not self.is_play:
-                                if tuple((u, v)) not in self.appended_pos and self.cell_value[v, u] != 10:
+                                if (
+                                    tuple((u, v)) not in self.appended_pos
+                                    and self.cell_value[v, u] != 10
+                                ):
                                     c = True
-                                    self.pos_dict_list.append({
-                                        'pos': (u, v),
-                                        'confidence': 0,
-                                        'num': self.num,
-                                        'is_mine': True,
-                                        'is_best': False,
-                                        'exp': f"由({i}, {j}), ({x}, {y})得出\n"
-                                               f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                               f"中至多有{x2}个雷，{list(x_set | y_set)}中"
-                                               f"有{x1}个雷，所以{list(x_set)}是雷。",
-                                        'is_recommend': False
-                                    })
+                                    self.pos_dict_list.append(
+                                        {
+                                            "pos": (u, v),
+                                            "confidence": 0,
+                                            "num": self.num,
+                                            "is_mine": True,
+                                            "is_best": False,
+                                            "exp": f"由({i}, {j}), ({x}, {y})得出\n"
+                                            f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                            f"中至多有{x2}个雷，{list(x_set | y_set)}中"
+                                            f"有{x1}个雷，所以{list(x_set)}是雷。",
+                                            "is_recommend": False,
+                                        }
+                                    )
                                     self.appended_pos.add(tuple((u, v)))
 
-                        for (u, v) in z_set:
+                        for u, v in z_set:
                             if cell_value[v, u] == 9:
                                 if self.is_play:
-                                    pyautogui.click(self.bx + u * self.cell_width,
-                                                    self.by + v * self.cell_width)
+                                    pyautogui.click(
+                                        self.bx + u * self.cell_width,
+                                        self.by + v * self.cell_width,
+                                    )
                                     c = True
                                 else:
                                     cell_value[v, u] = 11
                                     if tuple((u, v)) not in self.appended_pos:
                                         c = True
-                                        self.pos_dict_list.append({
-                                            'pos': (u, v),
-                                            'confidence': 1,
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': True,
-                                            'exp': f"由({i}, {j}), ({x}, {y})得出\n"
-                                                   f"{str(f'已经可以判断出{list(x_set)}是雷。') if len(x_set) != 0 else str('')}"
-                                                   f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                                   f"中有{x2}个雷，{list(z_set | y_set)}中有"
-                                                   f"{x2}个雷，所以{list(z_set)}不是雷。",
-                                            'is_recommend': False
-                                        })
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": (u, v),
+                                                "confidence": 1,
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": True,
+                                                "exp": f"由({i}, {j}), ({x}, {y})得出\n"
+                                                f"{str(f'已经可以判断出{list(x_set)}是雷。') if len(x_set) != 0 else str('')}"
+                                                f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                                f"中有{x2}个雷，{list(z_set | y_set)}中有"
+                                                f"{x2}个雷，所以{list(z_set)}不是雷。",
+                                                "is_recommend": False,
+                                            }
+                                        )
                                         self.appended_pos.add(tuple((u, v)))
 
                     if x2 - x1 == len(z_set):
-                        for (u, v) in z_set:
+                        for u, v in z_set:
                             cell_value[v, u] = 10
                             if not self.is_play:
-                                if tuple((u, v)) not in self.appended_pos and self.cell_value[v, u] != 10:
+                                if (
+                                    tuple((u, v)) not in self.appended_pos
+                                    and self.cell_value[v, u] != 10
+                                ):
                                     c = True
-                                    self.pos_dict_list.append({
-                                        'pos': (u, v),
-                                        'confidence': 0,
-                                        'is_mine': True,
-                                        'num': self.num,
-                                        'is_best': False,
-                                        'exp': f"由({i}, {j}), ({x}, {y})得出\n"
-                                               f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                               f"中至多有{x1}个雷，{list(z_set | y_set)}中"
-                                               f"有{x2}个雷，所以{list(z_set)}是雷。",
-                                        'is_recommend': False
-                                    })
+                                    self.pos_dict_list.append(
+                                        {
+                                            "pos": (u, v),
+                                            "confidence": 0,
+                                            "is_mine": True,
+                                            "num": self.num,
+                                            "is_best": False,
+                                            "exp": f"由({i}, {j}), ({x}, {y})得出\n"
+                                            f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                            f"中至多有{x1}个雷，{list(z_set | y_set)}中"
+                                            f"有{x2}个雷，所以{list(z_set)}是雷。",
+                                            "is_recommend": False,
+                                        }
+                                    )
                                     self.appended_pos.add(tuple((u, v)))
-                        for (u, v) in x_set:
+                        for u, v in x_set:
                             if cell_value[v, u] == 9:
                                 if self.is_play:
-                                    pyautogui.click(self.bx + u * self.cell_width,
-                                                    self.by + v * self.cell_width)
+                                    pyautogui.click(
+                                        self.bx + u * self.cell_width,
+                                        self.by + v * self.cell_width,
+                                    )
                                     c = True
                                 else:
                                     cell_value[v, u] = 11
                                     if tuple((u, v)) not in self.appended_pos:
                                         c = True
-                                        self.pos_dict_list.append({
-                                            'pos': (u, v),
-                                            'confidence': 1,
-                                            'is_mine': False,
-                                            'num': self.num,
-                                            'is_best': True,
-                                            'exp': f"由({i}, {j}), ({x}, {y})得出\n"
-                                                   f"{str(f'已经可以判断出{list(z_set)}是雷。') if len(z_set) != 0 else str('')}"
-                                                   f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                                   f"中有{x1}个雷，{list(x_set | y_set)}中有"
-                                                   f"{x1}个雷，所以{list(x_set)}不是雷。",
-                                            'is_recommend': False
-                                        })
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": (u, v),
+                                                "confidence": 1,
+                                                "is_mine": False,
+                                                "num": self.num,
+                                                "is_best": True,
+                                                "exp": f"由({i}, {j}), ({x}, {y})得出\n"
+                                                f"{str(f'已经可以判断出{list(z_set)}是雷。') if len(z_set) != 0 else str('')}"
+                                                f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                                f"中有{x1}个雷，{list(x_set | y_set)}中有"
+                                                f"{x1}个雷，所以{list(x_set)}不是雷。",
+                                                "is_recommend": False,
+                                            }
+                                        )
                                         self.appended_pos.add(tuple((u, v)))
 
                     if c:
                         if not self.is_play:
                             self.num += 1
                         else:
-                            cell_value = self.small_square_scan(i + 1, j + 1,
-                                                                cell_value)
+                            cell_value = self.small_square_scan(
+                                i + 1, j + 1, cell_value
+                            )
 
         return cell_value
 
@@ -788,7 +852,10 @@ class Solver(AutoPlayThread):
         bg = np.zeros((h, w), dtype=np.uint8)
         for index in range(w):
             for j in range(h):
-                if cell_value[j + 1, index + 1] == 9 or cell_value[j + 1, index + 1] == 10:
+                if (
+                    cell_value[j + 1, index + 1] == 9
+                    or cell_value[j + 1, index + 1] == 10
+                ):
                     bg[j, index] = 255
 
         # 计算255到0的最小距离，以找到最边缘的9与10
@@ -806,7 +873,7 @@ class Solver(AutoPlayThread):
                 elif res[j, i] > 1.5 and cell_value[j + 1, i + 1] == 9:
                     clicks9.append(tuple((i + 1, j + 1)))
         if len(clicks9) == 0 and len(clicks) == 0:  # 识别错误或没检测到胜利/失败窗口
-            cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
             for i in range(1, w + 1):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
@@ -819,19 +886,23 @@ class Solver(AutoPlayThread):
             res = []
             pos = [random.choice(clicks9)]  # 随机选择
             confidence = 1 - (self.a - num10) / len(clicks9)  # 不是雷的概率
-            self.pos_dict_list.append({
-                'pos': pos[0],
-                'confidence': round(confidence, 4),
-                'num': self.num,
-                'is_mine': False,
-                'is_best': False,
-                'exp': '随机选择。',
-                'is_recommend': False
-            })
+            self.pos_dict_list.append(
+                {
+                    "pos": pos[0],
+                    "confidence": round(confidence, 4),
+                    "num": self.num,
+                    "is_mine": False,
+                    "is_best": False,
+                    "exp": "随机选择。",
+                    "is_recommend": False,
+                }
+            )
         else:
             # 将clicks分组，组与组之间没有公共区域（没有公共数字格）
             click_list = [tuple([tuple(clicks[0])])]
-            set_list = [self.get_set_1(clicks[0][0], clicks[0][1], cell_value)]  # click_list没一个坐标组对应的周边数字格
+            set_list = [
+                self.get_set_1(clicks[0][0], clicks[0][1], cell_value)
+            ]  # click_list没一个坐标组对应的周边数字格
             for pos in clicks[1:]:
                 pos = tuple(pos)
                 x, y = pos
@@ -869,7 +940,7 @@ class Solver(AutoPlayThread):
             # 同序化clicks与click_list
             clicks = []
             for poses in click_list:
-                for (i, j) in poses:
+                for i, j in poses:
                     clicks.append(tuple((i, j)))
 
             # 计算limit
@@ -878,7 +949,9 @@ class Solver(AutoPlayThread):
                 temp[i] = len(click_list[i])
             temp = temp >= 15
             t_sum = temp.sum()
-            limit = self.limit - int(math.log2(t_sum) / 2) if t_sum != 0 else self.limit  # 20大约20s 19 10s 18 5s
+            limit = (
+                self.limit - int(math.log2(t_sum) / 2) if t_sum != 0 else self.limit
+            )  # 20大约20s 19 10s 18 5s
             res_list = []
             canopen_res = np.array([])
             ck = []  # res_list中res的长度
@@ -909,16 +982,25 @@ class Solver(AutoPlayThread):
                             if len(set(li) & set(tuple(click_list[index]))) != 0:
                                 self.checked.pop(li)
                         if len(click_list[index]) > limit:
-                            _res, _total, _canopen_res = self.part_solve(click_list[index], cell_value, num10,
-                                                           num9 - len(click_list[index]),
-                                                           set_list[index], False)
+                            _res, _total, _canopen_res = self.part_solve(
+                                click_list[index],
+                                cell_value,
+                                num10,
+                                num9 - len(click_list[index]),
+                                set_list[index],
+                                False,
+                            )
                         else:
-                            _res, _total, _canopen_res = self.part_solve(click_list[index], cell_value, num10,
-                                                           num9 - len(click_list[index]),
-                                                           set_list[index])
+                            _res, _total, _canopen_res = self.part_solve(
+                                click_list[index],
+                                cell_value,
+                                num10,
+                                num9 - len(click_list[index]),
+                                set_list[index],
+                            )
 
                         if len(_res) == 0:
-                            cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                             for i in range(1, w + 1):
                                 for j in range(1, h + 1):
                                     cell_value[j, i] = 9
@@ -935,9 +1017,11 @@ class Solver(AutoPlayThread):
                         self.checked[tuple(click_list[index])] = (_res, _canopen_res)
 
             if is_removed and (not self.is_play):
-                self.warning_signal_2.emit('由于计算量的限制，一部分情况未枚举，结果可能不准确\n'
-                                           '您可以通过增加设置中的limit使枚举更全面，但limit\n'
-                                           '每增加1计算所需的时间增加1倍')
+                self.warning_signal_2.emit(
+                    "由于计算量的限制，一部分情况未枚举，结果可能不准确\n"
+                    "您可以通过增加设置中的limit使枚举更全面，但limit\n"
+                    "每增加1计算所需的时间增加1倍"
+                )
 
             if len(clicks) == 0:
                 self.Visible_signal.emit(False)
@@ -946,15 +1030,17 @@ class Solver(AutoPlayThread):
                 pos = [random.choice(clicks9)]
                 confidence = 1 - (self.a - num10) / len(clicks9)
                 if not self.is_play:
-                    self.pos_dict_list.append({
-                        'pos': pos[0],
-                        'confidence': round(confidence, 4),
-                        'num': self.num,
-                        'is_mine': False,
-                        'is_best': False,
-                        'exp': '随机选择。',
-                        'is_recommend': False
-                    })
+                    self.pos_dict_list.append(
+                        {
+                            "pos": pos[0],
+                            "confidence": round(confidence, 4),
+                            "num": self.num,
+                            "is_mine": False,
+                            "is_best": False,
+                            "exp": "随机选择。",
+                            "is_recommend": False,
+                        }
+                    )
 
             else:
                 pos = []
@@ -1009,19 +1095,21 @@ class Solver(AutoPlayThread):
                             confidence = 1
                             if not self.is_play:
                                 if tuple(clicks[index]) not in self.appended_pos:
-                                    self.pos_dict_list.append({
-                                        'pos': clicks[index],
-                                        'num': self.num,
-                                        'confidence': 1,
-                                        'is_mine': False,
-                                        'is_best': True,
-                                        'exp': '枚举得出',
-                                        'is_recommend': False
-                                    })
+                                    self.pos_dict_list.append(
+                                        {
+                                            "pos": clicks[index],
+                                            "num": self.num,
+                                            "confidence": 1,
+                                            "is_mine": False,
+                                            "is_best": True,
+                                            "exp": "枚举得出",
+                                            "is_recommend": False,
+                                        }
+                                    )
                                     self.appended_pos.add(tuple(clicks[index]))
                 else:
                     if len(res) == 0:
-                        cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+                        cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                         for i in range(1, w + 1):
                             for j in range(1, h + 1):
                                 cell_value[j, i] = 9
@@ -1053,30 +1141,36 @@ class Solver(AutoPlayThread):
                                 pos = random.choice(clicks9)
                                 opennum_res = np.zeros(len(clicks9))
                             else:
-                                pos, opennum_res = self.best_solve(clicks, clicks9, res, cell_value)
+                                pos, opennum_res = self.best_solve(
+                                    clicks, clicks9, res, cell_value
+                                )
                             pos = [pos]
                             if not self.is_play:
                                 for k, (i, j) in enumerate(clicks9):
                                     if (i, j) in pos:
-                                        self.pos_dict_list.append({
-                                            'pos': (i, j),
-                                            'confidence': _confidence,
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}',
-                                            'is_recommend': True
-                                        })
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": (i, j),
+                                                "confidence": _confidence,
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": False,
+                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}",
+                                                "is_recommend": True,
+                                            }
+                                        )
                                     else:
-                                        self.pos_dict_list.append({
-                                            'pos': (i, j),
-                                            'confidence': _confidence,
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}',
-                                            'is_recommend': False
-                                        })
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": (i, j),
+                                                "confidence": _confidence,
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": False,
+                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}",
+                                                "is_recommend": False,
+                                            }
+                                        )
                             confidence = _confidence  # 剩余未开方格不是雷的概率
                             if confidence == 1:
                                 pos = clicks9
@@ -1086,55 +1180,65 @@ class Solver(AutoPlayThread):
                             if 0.005 >= max_val - res[p] >= -0.005:
                                 if tuple(clicks[p]) not in self.appended_pos:
                                     if tuple(clicks[p]) == pos[0]:
-                                        self.pos_dict_list.append({
-                                            'pos': clicks[p],
-                                            'confidence': round(res[p], 5),
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}',
-                                            'is_recommend': True if is_recommend else False
-                                        })
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": clicks[p],
+                                                "confidence": round(res[p], 5),
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": False,
+                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}",
+                                                "is_recommend": True
+                                                if is_recommend
+                                                else False,
+                                            }
+                                        )
                                         self.appended_pos.add(tuple(clicks[p]))
                                     else:
-                                        self.pos_dict_list.append({
-                                            'pos': clicks[p],
-                                            'confidence': round(res[p], 5),
-                                            'num': self.num,
-                                            'is_mine': False,
-                                            'is_best': False,
-                                            'exp': f'枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}',
-                                            'is_recommend': False
-                                        })
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": clicks[p],
+                                                "confidence": round(res[p], 5),
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": False,
+                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}",
+                                                "is_recommend": False,
+                                            }
+                                        )
                                         self.appended_pos.add(tuple(clicks[p]))
                             else:
                                 if tuple(clicks[p]) not in self.appended_pos:
-                                    self.pos_dict_list.append({
-                                        'pos': clicks[p],
-                                        'confidence': round(res[p], 5),
-                                        'num': self.num,
-                                        'is_mine': False,
-                                        'is_best': False,
-                                        'exp': f'枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}',
-                                        'is_recommend': False
-                                    })
+                                    self.pos_dict_list.append(
+                                        {
+                                            "pos": clicks[p],
+                                            "confidence": round(res[p], 5),
+                                            "num": self.num,
+                                            "is_mine": False,
+                                            "is_best": False,
+                                            "exp": f"枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}",
+                                            "is_recommend": False,
+                                        }
+                                    )
                                     self.appended_pos.add(tuple(clicks[p]))
 
-        self.text_signal.emit(f'共{total}种解。')
+        self.text_signal.emit(f"共{total}种解。")
         if total == 0:
-            self.text_signal.emit('随机选择。\n')
-            self.text_signal.emit('您可以通过增加设置中的limit使枚举更加全面，但limit每增加1计算所需的时间增加1倍')
+            self.text_signal.emit("随机选择。\n")
+            self.text_signal.emit("您可以通过增加设置中的limit使枚举更加全面，但limit每增加1计算所需的时间增加1倍")
         else:
-            self.text_signal.emit('\n')
+            self.text_signal.emit("\n")
         self.text_signal.emit(str(pos))
         self.text_signal.emit(f" confidence: {(confidence * 100): 0.2f}%\n")
 
         for p in pos:
             if self.is_play:
                 # pass
-                pyautogui.click(self.bx + p[0] * self.cell_width, self.by + p[1] * self.cell_width)
+                pyautogui.click(
+                    self.bx + p[0] * self.cell_width, self.by + p[1] * self.cell_width
+                )
 
-        cell_value = np.zeros((h + 2, w + 2), dtype='int32')
+        cell_value = np.zeros((h + 2, w + 2), dtype="int32")
         for i in range(1, w + 1):
             for j in range(1, h + 1):
                 cell_value[j, i] = 9
@@ -1147,15 +1251,17 @@ class Solver(AutoPlayThread):
                     cell_value[y, x] = 10
                     if not self.is_play and self.cell_value[y, x] != 10:
                         if tuple((x, y)) not in self.appended_pos:
-                            self.pos_dict_list.append({
-                                'pos': (x, y),
-                                'confidence': 0,
-                                'num': self.num,
-                                'is_mine': True,
-                                'is_best': False,
-                                'exp': '枚举得出。',
-                                'is_recommend': False
-                            })
+                            self.pos_dict_list.append(
+                                {
+                                    "pos": (x, y),
+                                    "confidence": 0,
+                                    "num": self.num,
+                                    "is_mine": True,
+                                    "is_best": False,
+                                    "exp": "枚举得出。",
+                                    "is_recommend": False,
+                                }
+                            )
                             self.appended_pos.add(tuple((x, y)))
         self.count = 0
         return cell_value
@@ -1168,8 +1274,8 @@ class Solver(AutoPlayThread):
         for k, (i, j) in enumerate(clicks9):
             num9 = 0
             num10 = 0
-            for m in range(i-1, i+2):
-                for n in range(j-1, j+2):
+            for m in range(i - 1, i + 2):
+                for n in range(j - 1, j + 2):
                     if (m, n) in clicks:
                         index = clicks.index((m, n))
                         num10 += res[index]
@@ -1186,11 +1292,11 @@ class Solver(AutoPlayThread):
         arg = random.choice(np.where(opennum_res == np.amax(opennum_res))[0])
         self.pv_signal.emit(100)
         self.Visible_signal.emit(False)
-        
+
         return clicks9[arg], opennum_res
 
     def part_solve(self, clicks, cell_value, num10, num9, cs, _try=True):
-        '''
+        """
         根据点击的坐标，计算出可能的值
         :param clicks: 点击的坐标
         :param cell_value: 格子中的值
@@ -1198,7 +1304,7 @@ class Solver(AutoPlayThread):
         :param num9: 9的个数
         :param cs: 雷的坐标
         :return: 可能的值
-        '''
+        """
         canopen_res = np.zeros(len(clicks))
         res_list = []
         list_getter = get_list(self.a - num10 - num9, self.a - num10, len(clicks))
@@ -1215,7 +1321,7 @@ class Solver(AutoPlayThread):
                 value[clicks[loc][1], clicks[loc][0]] = 10
 
             flag = 0  # 0 符合条件 -1 不符合条件
-            for (i, j) in cs:
+            for i, j in cs:
                 if value[j, i] != self.cell_around(i, j, value)[1]:
                     flag = -1
                     break
@@ -1228,15 +1334,15 @@ class Solver(AutoPlayThread):
                         num9 = 0
                         num10 = 0
                         i, j = clicks[loc]
-                        for u in range(i-1, i+2):
-                            for v in range(j - 1, j+2):
+                        for u in range(i - 1, i + 2):
+                            for v in range(j - 1, j + 2):
                                 if value[v, u] == 9 and ((u, v) not in clicks):
                                     num9 += 1
                                 elif value[v, u] == 10:
                                     num10 += 1
                         can_open = self.try_solve(i, j, _value, clicks, num9, num10)
                         canopen_res[loc] += can_open
-                    
+
                 num_solve += 1
                 for loc in index_list:
                     res[loc] += 1
@@ -1252,7 +1358,7 @@ class Solver(AutoPlayThread):
         value = cell_value.copy()
 
         flag = 0
-        for (i, j) in cs:
+        for i, j in cs:
             if value[j, i] != self.cell_around(i, j, value)[1]:  # 不符合条件的
                 flag = -1
                 break
@@ -1274,7 +1380,7 @@ class Solver(AutoPlayThread):
                     if 0 < cell_value[n, m] < 8:
                         result.add((m, n))
         return result
-    
+
     def get_set(self, i, j, cell_value):
         result = set()
         cnt10 = 0
@@ -1296,7 +1402,7 @@ class Solver(AutoPlayThread):
                     result[i, j] = np.sum(res)
                 except:
                     pass
-                
+
         res = np.unravel_index(np.argmin(result, axis=None), result.shape)[0]
         if no_10:
             if res == 10:
@@ -1307,8 +1413,14 @@ class Solver(AutoPlayThread):
         pyautogui.moveTo(10, 640, _pause=False)
         hwnd = win32gui.FindWindow(None, setting.win_name)
         bx, by = ClientToScreen(hwnd, self._bx, self._by)
-        pil_img = ImageGrab.grab((bx + 0.5 * self.cell_width, by + 0.5 * self.cell_width,
-                                  self.w * self.cell_width + bx + 0.5 * self.cell_width, self.h * self.cell_width + by + 0.5 * self.cell_width))
+        pil_img = ImageGrab.grab(
+            (
+                bx + 0.5 * self.cell_width,
+                by + 0.5 * self.cell_width,
+                self.w * self.cell_width + bx + 0.5 * self.cell_width,
+                self.h * self.cell_width + by + 0.5 * self.cell_width,
+            )
+        )
         pil_img = np.array(pil_img)
         pil_img.reshape(self.w * self.cell_width, self.h * self.cell_width, 3)
         self.img = cv.cvtColor(pil_img, cv.COLOR_RGB2BGR)
@@ -1324,8 +1436,14 @@ class Solver(AutoPlayThread):
     def small_square_scan(self, i, j, cell_value):
         hwnd = win32gui.FindWindow(None, setting.win_name)
         bx, by = ClientToScreen(hwnd, self._bx, self._by)
-        pil_img = ImageGrab.grab((bx + 0.5 * self.cell_width, by + 0.5 * self.cell_width,
-                                  self.w * self.cell_width + bx + 0.5 * self.cell_width, self.h * self.cell_width + by + 0.5 * self.cell_width))
+        pil_img = ImageGrab.grab(
+            (
+                bx + 0.5 * self.cell_width,
+                by + 0.5 * self.cell_width,
+                self.w * self.cell_width + bx + 0.5 * self.cell_width,
+                self.h * self.cell_width + by + 0.5 * self.cell_width,
+            )
+        )
         pil_img = np.array(pil_img)
         pil_img.reshape(self.w * self.cell_width, self.h * self.cell_width, 3)
         self.img = cv.cvtColor(pil_img, cv.COLOR_RGB2BGR)
@@ -1353,7 +1471,7 @@ class Solver(AutoPlayThread):
 class MyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, bytes):
-            return str(obj, encoding='utf-8')
+            return str(obj, encoding="utf-8")
         if isinstance(obj, int):
             return int(obj)
         elif isinstance(obj, float):
@@ -1361,12 +1479,13 @@ class MyEncoder(json.JSONEncoder):
         else:
             return super(MyEncoder, self).default(obj)
 
+
 def print_board(cell_value):
     for row in cell_value:
         for i in row:
-            print((2 - len(str(int(i)))) * ' ', int(i), end='')
+            print((2 - len(str(int(i)))) * " ", int(i), end="")
         print()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(Solver().locate_exit())

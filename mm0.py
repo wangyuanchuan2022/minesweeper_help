@@ -14,6 +14,7 @@ import cv2
 import numpy
 import win32gui
 from win32com import client
+import setting
 
 
 def pil_to_cv(img):
@@ -22,7 +23,7 @@ def pil_to_cv(img):
 
 def minesweeper_run(mine_dir):
     class_name = None
-    title_name = "扫雷"
+    title_name = setting.win_name
 
     hwnd = win32gui.FindWindow(class_name, title_name)
     if hwnd == 0:
@@ -31,7 +32,7 @@ def minesweeper_run(mine_dir):
         hwnd = win32gui.FindWindow(class_name, title_name)
     win32gui.ShowWindow(hwnd, 1)
     shell = client.Dispatch("WScript.Shell")
-    shell.SendKeys('%')
+    shell.SendKeys("%")
     win32gui.SetForegroundWindow(hwnd)
 
     return hwnd
@@ -39,14 +40,20 @@ def minesweeper_run(mine_dir):
 
 def ClientToScreen(hwnd, x, y):
     rect = ctypes.wintypes.RECT()
-    ctypes.windll.user32.GetWindowRect(ctypes.wintypes.HWND(hwnd), ctypes.byref(rect), )
+    ctypes.windll.user32.GetWindowRect(
+        ctypes.wintypes.HWND(hwnd),
+        ctypes.byref(rect),
+    )
     win_x, win_y, _, _ = rect.left, rect.top, rect.right, rect.bottom
     return win_x + x, win_y + y
 
 
 def ScreenToClient(hwnd, x, y):
     rect = ctypes.wintypes.RECT()
-    ctypes.windll.user32.GetWindowRect(ctypes.wintypes.HWND(hwnd), ctypes.byref(rect), )
+    ctypes.windll.user32.GetWindowRect(
+        ctypes.wintypes.HWND(hwnd),
+        ctypes.byref(rect),
+    )
     win_x, win_y, _, _ = rect.left, rect.top, rect.right, rect.bottom
     return x - win_x, y - win_y
 
@@ -98,11 +105,11 @@ class MouseWindow(QMainWindow):
         self.setMinimumSize(90, 90)
         self.setMaximumSize(90, 90)
         self.move(0, 0)
-        self.setWindowTitle('aaa')
+        self.setWindowTitle("aaa")
         self.hwnd = None
 
         self.label = QLabel(self)
-        self.label.setText('')
+        self.label.setText("")
         self.label.setGeometry(0, 0, 90, 90)
 
         self.timer = QTimer()
@@ -114,7 +121,7 @@ class MouseWindow(QMainWindow):
 
     def _update(self):
         if not self.hwnd or self.hwnd == 0:
-            self.hwnd = win32gui.FindWindow(None, 'aaa')
+            self.hwnd = win32gui.FindWindow(None, "aaa")
 
         pci = ctypes.wintypes.POINT(0, 0)
         pci = ctypes.pointer(pci)
@@ -123,8 +130,8 @@ class MouseWindow(QMainWindow):
         img = ImageGrab.grab((o_x - 4, o_y - 4, o_x + 5, o_y + 5))
         img = img.resize((90, 90), resample=Image.NEAREST)
         draw = ImageDraw.Draw(img)
-        draw.line([45, 0, 45, 100], fill='green', width=5)
-        draw.line([0, 45, 100, 45], fill='green', width=5)
+        draw.line([45, 0, 45, 100], fill="green", width=5)
+        draw.line([0, 45, 100, 45], fill="green", width=5)
         self.label.setPixmap(img.toqpixmap())
         self.label.repaint()
 
@@ -132,12 +139,24 @@ class MouseWindow(QMainWindow):
             hwnd = ctypes.wintypes.HWND(self.hwnd)
             ctypes.windll.user32.ShowWindow(hwnd, ctypes.c_int(1))
             if ctypes.windll.user32.GetForegroundWindow() != self.hwnd:
-                ctypes.windll.user32.SetWindowPos(hwnd, ctypes.wintypes.HWND(-1),
-                                                  ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0), ctypes.c_int(0),
-                                                  0x0002 | 0x0001)
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd,
+                    ctypes.wintypes.HWND(-1),
+                    ctypes.c_int(0),
+                    ctypes.c_int(0),
+                    ctypes.c_int(0),
+                    ctypes.c_int(0),
+                    0x0002 | 0x0001,
+                )
                 ctypes.windll.user32.SetForegroundWindow(hwnd)
-            ctypes.windll.user32.MoveWindow(hwnd, ctypes.c_int(o_x + 10), ctypes.c_int(o_y + 10),
-                                            ctypes.c_int(90), ctypes.c_int(90), ctypes.c_bool(True))
+            ctypes.windll.user32.MoveWindow(
+                hwnd,
+                ctypes.c_int(o_x + 10),
+                ctypes.c_int(o_y + 10),
+                ctypes.c_int(90),
+                ctypes.c_int(90),
+                ctypes.c_bool(True),
+            )
 
     def closeEvent(self, a0) -> None:
         self.timer.stop()
@@ -149,6 +168,6 @@ def set_top_window(hwnd):
     ctypes.windll.user32.SetForegroundWindow(hwnd)
 
 
-if __name__ == '__main__':
-    hwnd = win32gui.FindWindow(None, '扫雷')
+if __name__ == "__main__":
+    hwnd = win32gui.FindWindow(None, setting.win_name)
     print(ClientToScreen(hwnd, 54 + 18, 114 + 18))

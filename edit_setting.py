@@ -15,16 +15,18 @@ class Ui_Dialog(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName("Dialog")
         Dialog.resize(498, 505)
-        Dialog.setStyleSheet("QDialog {background-color:rgb(255, 255, 255);background-image: url("
-                             ":/icons/background_2.bmp);}QLabel{color:rgb(255, 255, 255);font: 10pt "
-                             "\"楷体\";}QPushButton{background-color:rgba(255, 255, 255, "
-                             "200);border:none;border-radius:5px;font: 10pt \"楷体\";min-width:130px;color:rgb(0, 0, "
-                             "0)}QPushButton:hover{background-color:rgba(255, 255, 255, 150);}\n"
-                             "QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 180);}\n"
-                             "QMessageBox QPushButton:hover{background-color:rgba(255, 255, 255, 150);}\n"
-                             "QMessageBox QPushButton{background-color:rgba(255, 255, 255, "
-                             "200);border:none;border-radius:5px;font: 10pt "
-                             "\"楷体\";min-width:130px;min-height:28px;color:rgb(0, 0, 0)}")
+        Dialog.setStyleSheet(
+            "QDialog {background-color:rgb(255, 255, 255);background-image: url("
+            ":/icons/background_2.bmp);}QLabel{color:rgb(255, 255, 255);font: 10pt "
+            '"楷体";}QPushButton{background-color:rgba(255, 255, 255, '
+            '200);border:none;border-radius:5px;font: 10pt "楷体";min-width:130px;color:rgb(0, 0, '
+            "0)}QPushButton:hover{background-color:rgba(255, 255, 255, 150);}\n"
+            "QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 180);}\n"
+            "QMessageBox QPushButton:hover{background-color:rgba(255, 255, 255, 150);}\n"
+            "QMessageBox QPushButton{background-color:rgba(255, 255, 255, "
+            "200);border:none;border-radius:5px;font: 10pt "
+            '"楷体";min-width:130px;min-height:28px;color:rgb(0, 0, 0)}'
+        )
         self.gridLayout = QtWidgets.QGridLayout(Dialog)
         self.gridLayout.setObjectName("gridLayout")
         self.label_9 = QtWidgets.QLabel(Dialog)
@@ -102,9 +104,12 @@ class Ui_Dialog(object):
         self.buttonBox = QtWidgets.QDialogButtonBox(Dialog)
         self.buttonBox.setMinimumSize(QtCore.QSize(0, 44))
         self.buttonBox.setStyleSheet(
-            "QPushButton{background-color:rgba(255, 255, 255, 200);border:none;border-radius:5px;font: 10pt \"楷体\";min-height:28px;min-width:105px;color:rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 150);}")
+            'QPushButton{background-color:rgba(255, 255, 255, 200);border:none;border-radius:5px;font: 10pt "楷体";min-height:28px;min-width:105px;color:rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 150);}'
+        )
         self.buttonBox.setOrientation(QtCore.Qt.Horizontal)
-        self.buttonBox.setStandardButtons(QtWidgets.QDialogButtonBox.Cancel | QtWidgets.QDialogButtonBox.Ok)
+        self.buttonBox.setStandardButtons(
+            QtWidgets.QDialogButtonBox.Cancel | QtWidgets.QDialogButtonBox.Ok
+        )
         self.buttonBox.setObjectName("buttonBox")
         self.gridLayout.addWidget(self.buttonBox, 10, 0, 1, 3)
         self.label_7 = QtWidgets.QLabel(Dialog)

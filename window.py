@@ -28,10 +28,12 @@ class Ui_MainWindow(object):
         self.frame = QtWidgets.QFrame(self.centralwidget)
         self.frame.setMinimumSize(QtCore.QSize(200, 0))
         self.frame.setMaximumSize(QtCore.QSize(200, 16777215))
-        self.frame.setStyleSheet("QFrame {\n"
-"    background-image:url(:/icons/background_2.bmp);\n"
-"    border:none;\n"
-"}")
+        self.frame.setStyleSheet(
+            "QFrame {\n"
+            "    background-image:url(:/icons/background_2.bmp);\n"
+            "    border:none;\n"
+            "}"
+        )
         self.frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame.setFrameShadow(QtWidgets.QFrame.Raised)
         self.frame.setObjectName("frame")
@@ -45,28 +47,34 @@ class Ui_MainWindow(object):
         font.setFamily("宋体")
         font.setPointSize(12)
         self.setting_2.setFont(font)
-        self.setting_2.setStyleSheet("QPushButton{\n"
-"border-radius: none;\n"
-"border: none;\n"
-"background-color:rgba(255, 255, 255, 0);\n"
-"color:rgb(0, 0, 0);\n"
-"}\n"
-"QPushButton:hover{\n"
-"border: none;\n"
-"background-color:rgba(255, 255, 255, 100);\n"
-"color: rgb(0, 0, 0);\n"
-"}\n"
-"QPushButton:disabled{\n"
-"border: none;\n"
-"background-color:rgba(0, 0, 0, 0);\n"
-"color:rgb(210, 210, 210);\n"
-"}")
+        self.setting_2.setStyleSheet(
+            "QPushButton{\n"
+            "border-radius: none;\n"
+            "border: none;\n"
+            "background-color:rgba(255, 255, 255, 0);\n"
+            "color:rgb(0, 0, 0);\n"
+            "}\n"
+            "QPushButton:hover{\n"
+            "border: none;\n"
+            "background-color:rgba(255, 255, 255, 100);\n"
+            "color: rgb(0, 0, 0);\n"
+            "}\n"
+            "QPushButton:disabled{\n"
+            "border: none;\n"
+            "background-color:rgba(0, 0, 0, 0);\n"
+            "color:rgb(210, 210, 210);\n"
+            "}"
+        )
         icon = QtGui.QIcon()
-        icon.addPixmap(QtGui.QPixmap("icons/settings.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon.addPixmap(
+            QtGui.QPixmap("icons/settings.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         self.setting_2.setIcon(icon)
         self.setting_2.setObjectName("setting_2")
         self.verticalLayout.addWidget(self.setting_2)
-        spacerItem = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        spacerItem = QtWidgets.QSpacerItem(
+            20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+        )
         self.verticalLayout.addItem(spacerItem)
         self.auto_play = QtWidgets.QPushButton(self.frame)
         self.auto_play.setMinimumSize(QtCore.QSize(0, 45))
@@ -74,24 +82,32 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         font.setPointSize(15)
         self.auto_play.setFont(font)
-        self.auto_play.setStyleSheet("QPushButton{\n"
-"border-radius: none;\n"
-"border: none;\n"
-"background-color:rgba(255, 255, 255, 150);\n"
-"color:rgb(0, 0, 0);\n"
-"}\n"
-"QPushButton:hover{\n"
-"background-color:rgba(255, 255, 255, 200);\n"
-"color:rgb(84, 158, 255);\n"
-"}\n"
-"QPushButton:disabled{\n"
-"background-color:rgba(255, 255, 255, 150);\n"
-"color:rgba(255, 255, 255, 175);\n"
-"}")
+        self.auto_play.setStyleSheet(
+            "QPushButton{\n"
+            "border-radius: none;\n"
+            "border: none;\n"
+            "background-color:rgba(255, 255, 255, 150);\n"
+            "color:rgb(0, 0, 0);\n"
+            "}\n"
+            "QPushButton:hover{\n"
+            "background-color:rgba(255, 255, 255, 200);\n"
+            "color:rgb(84, 158, 255);\n"
+            "}\n"
+            "QPushButton:disabled{\n"
+            "background-color:rgba(255, 255, 255, 150);\n"
+            "color:rgba(255, 255, 255, 175);\n"
+            "}"
+        )
         icon1 = QtGui.QIcon()
-        icon1.addPixmap(QtGui.QPixmap("icons/play.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
-        icon1.addPixmap(QtGui.QPixmap("icons/play.png"), QtGui.QIcon.Active, QtGui.QIcon.Off)
-        icon1.addPixmap(QtGui.QPixmap("icons/play.png"), QtGui.QIcon.Selected, QtGui.QIcon.On)
+        icon1.addPixmap(
+            QtGui.QPixmap("icons/play.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
+        icon1.addPixmap(
+            QtGui.QPixmap("icons/play.png"), QtGui.QIcon.Active, QtGui.QIcon.Off
+        )
+        icon1.addPixmap(
+            QtGui.QPixmap("icons/play.png"), QtGui.QIcon.Selected, QtGui.QIcon.On
+        )
         self.auto_play.setIcon(icon1)
         self.auto_play.setObjectName("auto_play")
         self.verticalLayout.addWidget(self.auto_play)
@@ -101,22 +117,28 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         font.setPointSize(15)
         self.help_human.setFont(font)
-        self.help_human.setStyleSheet("QPushButton{\n"
-"border-radius: none;\n"
-"border: none;\n"
-"background-color:rgba(255, 255, 255, 150);\n"
-"color:rgb(0, 0, 0);\n"
-"}\n"
-"QPushButton:hover{\n"
-"background-color:rgba(255, 255, 255, 200);\n"
-"color:rgb(84, 158, 255);\n"
-"}\n"
-"QPushButton:disabled{\n"
-"background-color:rgba(255, 255, 255, 150);\n"
-"color:rgba(255, 255, 255, 175);\n"
-"}")
+        self.help_human.setStyleSheet(
+            "QPushButton{\n"
+            "border-radius: none;\n"
+            "border: none;\n"
+            "background-color:rgba(255, 255, 255, 150);\n"
+            "color:rgb(0, 0, 0);\n"
+            "}\n"
+            "QPushButton:hover{\n"
+            "background-color:rgba(255, 255, 255, 200);\n"
+            "color:rgb(84, 158, 255);\n"
+            "}\n"
+            "QPushButton:disabled{\n"
+            "background-color:rgba(255, 255, 255, 150);\n"
+            "color:rgba(255, 255, 255, 175);\n"
+            "}"
+        )
         icon2 = QtGui.QIcon()
-        icon2.addPixmap(QtGui.QPixmap("icons/interrogation.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon2.addPixmap(
+            QtGui.QPixmap("icons/interrogation.png"),
+            QtGui.QIcon.Normal,
+            QtGui.QIcon.Off,
+        )
         self.help_human.setIcon(icon2)
         self.help_human.setObjectName("help_human")
         self.verticalLayout.addWidget(self.help_human)
@@ -126,38 +148,47 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         font.setPointSize(15)
         self.screenshot_help.setFont(font)
-        self.screenshot_help.setStyleSheet("QPushButton{\n"
-"border-radius: none;\n"
-"border: none;\n"
-"background-color:rgba(255, 255, 255, 150);\n"
-"color:rgb(0, 0, 0);\n"
-"}\n"
-"QPushButton:hover{\n"
-"background-color:rgba(255, 255, 255, 200);\n"
-"color:rgb(84, 158, 255);\n"
-"}\n"
-"QPushButton:disabled{\n"
-"background-color:rgba(255, 255, 255, 150);\n"
-"color:rgba(255, 255, 255, 175);\n"
-"}")
+        self.screenshot_help.setStyleSheet(
+            "QPushButton{\n"
+            "border-radius: none;\n"
+            "border: none;\n"
+            "background-color:rgba(255, 255, 255, 150);\n"
+            "color:rgb(0, 0, 0);\n"
+            "}\n"
+            "QPushButton:hover{\n"
+            "background-color:rgba(255, 255, 255, 200);\n"
+            "color:rgb(84, 158, 255);\n"
+            "}\n"
+            "QPushButton:disabled{\n"
+            "background-color:rgba(255, 255, 255, 150);\n"
+            "color:rgba(255, 255, 255, 175);\n"
+            "}"
+        )
         icon3 = QtGui.QIcon()
-        icon3.addPixmap(QtGui.QPixmap("icons/screenshot.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon3.addPixmap(
+            QtGui.QPixmap("icons/screenshot.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         self.screenshot_help.setIcon(icon3)
         self.screenshot_help.setIconSize(QtCore.QSize(30, 30))
         self.screenshot_help.setObjectName("screenshot_help")
         self.verticalLayout.addWidget(self.screenshot_help)
-        spacerItem1 = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        spacerItem1 = QtWidgets.QSpacerItem(
+            20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding
+        )
         self.verticalLayout.addItem(spacerItem1)
         self.gridLayout.addWidget(self.frame, 0, 0, 1, 1)
         self.stackedWidget = QtWidgets.QStackedWidget(self.centralwidget)
         self.stackedWidget.setMinimumSize(QtCore.QSize(622, 500))
-        self.stackedWidget.setStyleSheet("QStackedWidget > QWidget{\n"
-"background-image: url(:/icons/background_1.bmp);\n"
-"}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}")
+        self.stackedWidget.setStyleSheet(
+            "QStackedWidget > QWidget{\n"
+            "background-image: url(:/icons/background_1.bmp);\n"
+            "}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}"
+        )
         self.stackedWidget.setObjectName("stackedWidget")
         self.page_main = QtWidgets.QWidget()
-        self.page_main.setStyleSheet("QLabel{color:rgb(255, 255, 255);font: 10pt \"楷体\";min-height:26px}\n"
-"")
+        self.page_main.setStyleSheet(
+            'QLabel{color:rgb(255, 255, 255);font: 10pt "楷体";min-height:26px}\n' ""
+        )
         self.page_main.setObjectName("page_main")
         self.verticalLayout_4 = QtWidgets.QVBoxLayout(self.page_main)
         self.verticalLayout_4.setSpacing(12)
@@ -203,9 +234,11 @@ class Ui_MainWindow(object):
         self.verticalLayout_4.addWidget(self.frame_5)
         self.stackedWidget.addWidget(self.page_main)
         self.page_2 = QtWidgets.QWidget()
-        self.page_2.setStyleSheet("QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
-"color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
-"color: rgb(0, 0, 0)}")
+        self.page_2.setStyleSheet(
+            "QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
+            "color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
+            "color: rgb(0, 0, 0)}"
+        )
         self.page_2.setObjectName("page_2")
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(self.page_2)
         self.verticalLayout_2.setObjectName("verticalLayout_2")
@@ -218,7 +251,9 @@ class Ui_MainWindow(object):
         self.end_auto_play_thread.setFont(font)
         self.end_auto_play_thread.setStyleSheet("")
         icon4 = QtGui.QIcon()
-        icon4.addPixmap(QtGui.QPixmap("icons/stop.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon4.addPixmap(
+            QtGui.QPixmap("icons/stop.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         self.end_auto_play_thread.setIcon(icon4)
         self.end_auto_play_thread.setObjectName("end_auto_play_thread")
         self.verticalLayout_2.addWidget(self.end_auto_play_thread)
@@ -232,7 +267,9 @@ class Ui_MainWindow(object):
         self.return_to_main_page.setFont(font)
         self.return_to_main_page.setStyleSheet("")
         icon5 = QtGui.QIcon()
-        icon5.addPixmap(QtGui.QPixmap("icons/house.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon5.addPixmap(
+            QtGui.QPixmap("icons/house.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         self.return_to_main_page.setIcon(icon5)
         self.return_to_main_page.setObjectName("return_to_main_page")
         self.verticalLayout_2.addWidget(self.return_to_main_page)
@@ -241,8 +278,10 @@ class Ui_MainWindow(object):
         font.setFamily("宋体")
         font.setPointSize(13)
         self.plainTextEdit.setFont(font)
-        self.plainTextEdit.setStyleSheet("QPlainTextEdit{\n"
-"border: 3px solid rgb(225, 225, 225);background-color: rgba(44, 44, 44, 170);color:rgb(255, 255, 255);}")
+        self.plainTextEdit.setStyleSheet(
+            "QPlainTextEdit{\n"
+            "border: 3px solid rgb(225, 225, 225);background-color: rgba(44, 44, 44, 170);color:rgb(255, 255, 255);}"
+        )
         self.plainTextEdit.setPlainText("")
         self.plainTextEdit.setObjectName("plainTextEdit")
         self.verticalLayout_2.addWidget(self.plainTextEdit)
@@ -252,8 +291,10 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         font.setPointSize(10)
         self.pgb.setFont(font)
-        self.pgb.setStyleSheet("QProgressBar {border: none;border-radius: 12px;text-align: center;}\n"
-"QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}")
+        self.pgb.setStyleSheet(
+            "QProgressBar {border: none;border-radius: 12px;text-align: center;}\n"
+            "QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}"
+        )
         self.pgb.setProperty("value", 24)
         self.pgb.setObjectName("pgb")
         self.verticalLayout_2.addWidget(self.pgb)
@@ -269,17 +310,20 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         font.setPointSize(11)
         self.return_to_main_p3.setFont(font)
-        self.return_to_main_p3.setStyleSheet("QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
-"color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
-"color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}")
+        self.return_to_main_p3.setStyleSheet(
+            "QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
+            "color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
+            "color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}"
+        )
         self.return_to_main_p3.setIcon(icon5)
         self.return_to_main_p3.setObjectName("return_to_main_p3")
         self.verticalLayout_3.addWidget(self.return_to_main_p3)
         self.frame_explaination = QtWidgets.QFrame(self.page_3)
         self.frame_explaination.setMinimumSize(QtCore.QSize(598, 210))
         self.frame_explaination.setMaximumSize(QtCore.QSize(16777215, 210))
-        self.frame_explaination.setStyleSheet("QLabel{color: rgb(255, 255, 255);font: 10pt \"楷体\";}\n"
-"")
+        self.frame_explaination.setStyleSheet(
+            'QLabel{color: rgb(255, 255, 255);font: 10pt "楷体";}\n' ""
+        )
         self.frame_explaination.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame_explaination.setFrameShadow(QtWidgets.QFrame.Raised)
         self.frame_explaination.setObjectName("frame_explaination")
@@ -296,7 +340,9 @@ class Ui_MainWindow(object):
         self.label_4.setGeometry(QtCore.QRect(450, 30, 231, 31))
         self.label_4.setMinimumSize(QtCore.QSize(0, 31))
         self.label_4.setMaximumSize(QtCore.QSize(16777215, 21))
-        self.label_4.setStyleSheet("background-color:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 0, 0, 255), stop:1 rgba(0, 255, 0, 255))")
+        self.label_4.setStyleSheet(
+            "background-color:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 0, 0, 255), stop:1 rgba(0, 255, 0, 255))"
+        )
         self.label_4.setText("")
         self.label_4.setObjectName("label_4")
         self.label_5 = QtWidgets.QLabel(self.frame_explaination)
@@ -311,15 +357,19 @@ class Ui_MainWindow(object):
         self.pushButton = QtWidgets.QPushButton(self.frame_explaination)
         self.pushButton.setGeometry(QtCore.QRect(20, 70, 24, 24))
         self.pushButton.setMaximumSize(QtCore.QSize(24, 24))
-        self.pushButton.setStyleSheet("QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);background-color:rgba(0, 255, 0, 255);}QPushButton:disabled{border: none;background-color:rgba\n"
-"(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}")
+        self.pushButton.setStyleSheet(
+            "QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);background-color:rgba(0, 255, 0, 255);}QPushButton:disabled{border: none;background-color:rgba\n"
+            "(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}"
+        )
         self.pushButton.setText("")
         self.pushButton.setObjectName("pushButton")
         self.pushButton_2 = QtWidgets.QPushButton(self.frame_explaination)
         self.pushButton_2.setGeometry(QtCore.QRect(170, 70, 24, 24))
         self.pushButton_2.setMaximumSize(QtCore.QSize(24, 24))
-        self.pushButton_2.setStyleSheet("QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);background-color:rgba(255, 0, 0, 255);}\n"
-"QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}")
+        self.pushButton_2.setStyleSheet(
+            "QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);background-color:rgba(255, 0, 0, 255);}\n"
+            "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}"
+        )
         self.pushButton_2.setText("")
         self.pushButton_2.setObjectName("pushButton_2")
         self.label_7 = QtWidgets.QLabel(self.frame_explaination)
@@ -330,8 +380,10 @@ class Ui_MainWindow(object):
         self.pushButton_3 = QtWidgets.QPushButton(self.frame_explaination)
         self.pushButton_3.setGeometry(QtCore.QRect(20, 100, 24, 24))
         self.pushButton_3.setMaximumSize(QtCore.QSize(24, 24))
-        self.pushButton_3.setStyleSheet("QPushButton{border-radius:0px; border: 3px solid rgb(255, 255, 82);background-color:rgba(30, 225, 0, 255);}\n"
-"QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}")
+        self.pushButton_3.setStyleSheet(
+            "QPushButton{border-radius:0px; border: 3px solid rgb(255, 255, 82);background-color:rgba(30, 225, 0, 255);}\n"
+            "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(210, 210, 210, 0);}"
+        )
         self.pushButton_3.setText("")
         self.pushButton_3.setObjectName("pushButton_3")
         self.label_8 = QtWidgets.QLabel(self.frame_explaination)
@@ -363,16 +415,20 @@ class Ui_MainWindow(object):
         self.verticalLayout_3.addWidget(self.frame_2)
         self.frame_3 = QtWidgets.QFrame(self.page_3)
         self.frame_3.setMaximumSize(QtCore.QSize(16777215, 40))
-        self.frame_3.setStyleSheet("QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
-"color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
-"color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}")
+        self.frame_3.setStyleSheet(
+            "QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
+            "color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
+            "color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}"
+        )
         self.frame_3.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame_3.setFrameShadow(QtWidgets.QFrame.Raised)
         self.frame_3.setObjectName("frame_3")
         self.horizontalLayout = QtWidgets.QHBoxLayout(self.frame_3)
         self.horizontalLayout.setContentsMargins(0, 0, 0, 0)
         self.horizontalLayout.setObjectName("horizontalLayout")
-        spacerItem2 = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum)
+        spacerItem2 = QtWidgets.QSpacerItem(
+            40, 20, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Minimum
+        )
         self.horizontalLayout.addItem(spacerItem2)
         self.end_help_thread = QtWidgets.QPushButton(self.frame_3)
         self.end_help_thread.setMinimumSize(QtCore.QSize(105, 32))
@@ -390,7 +446,9 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         self.click_all.setFont(font)
         icon6 = QtGui.QIcon()
-        icon6.addPixmap(QtGui.QPixmap("icons/interactive.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon6.addPixmap(
+            QtGui.QPixmap("icons/interactive.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off
+        )
         self.click_all.setIcon(icon6)
         self.click_all.setIconSize(QtCore.QSize(16, 16))
         self.click_all.setObjectName("click_all")
@@ -403,8 +461,10 @@ class Ui_MainWindow(object):
         font.setFamily("楷体")
         font.setPointSize(10)
         self.pgb_p3.setFont(font)
-        self.pgb_p3.setStyleSheet("QProgressBar {border: none;border-radius: 12px;text-align: center;}\n"
-"QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}")
+        self.pgb_p3.setStyleSheet(
+            "QProgressBar {border: none;border-radius: 12px;text-align: center;}\n"
+            "QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}"
+        )
         self.pgb_p3.setProperty("value", 24)
         self.pgb_p3.setObjectName("pgb_p3")
         self.verticalLayout_3.addWidget(self.pgb_p3)
@@ -425,11 +485,21 @@ class Ui_MainWindow(object):
         self.help_human.setText(_translate("MainWindow", "帮助人类"))
         self.help_human.setShortcut(_translate("MainWindow", "Ctrl+Shift+H"))
         self.screenshot_help.setText(_translate("MainWindow", "截图帮助"))
-        self.label_10.setText(_translate("MainWindow", "·这是一个帮助您扫雷的程序，当您不想自己玩的时候可以点击“自动”按钮，欣赏自动扫"))
-        self.label_11.setText(_translate("MainWindow", "雷。当您自己扫雷时，如果您不知道该点哪里，您可以点击“帮助人类”获得提示。"))
-        self.label_12.setText(_translate("MainWindow", "·您可以参照如下图片调整设置，以获得更好的效果。您应该在点击“设置”自动打开扫雷"))
-        self.label_13.setText(_translate("MainWindow", "·如果出现一些基础的判断都无法正确判断，那就是识别的问题，您需要先设置好设置，再"))
-        self.label_14.setText(_translate("MainWindow", "点击“截图帮助”按钮，重新截图。以“_1” “_2”结尾的名称是背景颜色深浅不同的图像"))
+        self.label_10.setText(
+            _translate("MainWindow", "·这是一个帮助您扫雷的程序，当您不想自己玩的时候可以点击“自动”按钮，欣赏自动扫")
+        )
+        self.label_11.setText(
+            _translate("MainWindow", "雷。当您自己扫雷时，如果您不知道该点哪里，您可以点击“帮助人类”获得提示。")
+        )
+        self.label_12.setText(
+            _translate("MainWindow", "·您可以参照如下图片调整设置，以获得更好的效果。您应该在点击“设置”自动打开扫雷")
+        )
+        self.label_13.setText(
+            _translate("MainWindow", "·如果出现一些基础的判断都无法正确判断，那就是识别的问题，您需要先设置好设置，再")
+        )
+        self.label_14.setText(
+            _translate("MainWindow", "点击“截图帮助”按钮，重新截图。以“_1” “_2”结尾的名称是背景颜色深浅不同的图像")
+        )
         self.label_15.setText(_translate("MainWindow", "界面后再调整设置。之后就不要再调整窗口的大小了。"))
         self.label_16.setText(_translate("MainWindow", "·将鼠标移到左上角强制结束自动扫雷。"))
         self.end_auto_play_thread.setText(_translate("MainWindow", "终止计算"))
@@ -443,9 +513,15 @@ class Ui_MainWindow(object):
         self.label_7.setText(_translate("MainWindow", "确定是雷 方格上的数字表示判断的次序，数字越小，越先判断"))
         self.label_8.setText(_translate("MainWindow", "推荐点击的方格，它有很高的概率不是雷，您可以从中选一个点击。"))
         self.label_9.setText(_translate("MainWindow", "·点击下方的已经被标记的方格，可以获得更多信息。"))
-        self.label_17.setText(_translate("MainWindow", "·如果提示框位置不正，请检查设置中bx，by是否输入正确。如果所示区域不全，请检查"))
-        self.label_18.setText(_translate("MainWindow", "长宽是否输入正确。如果无法正确判断，请检查总雷数是否输入正确。"))
+        self.label_17.setText(
+            _translate("MainWindow", "·如果提示框位置不正，请检查设置中bx，by是否输入正确。如果所示区域不全，请检查")
+        )
+        self.label_18.setText(
+            _translate("MainWindow", "长宽是否输入正确。如果无法正确判断，请检查总雷数是否输入正确。")
+        )
         self.end_help_thread.setText(_translate("MainWindow", "终止计算"))
         self.click_all.setText(_translate("MainWindow", "点击所有的确定方格"))
         self.pgb_p3.setFormat(_translate("MainWindow", "计算中%p%"))
+
+
 import bg_rc

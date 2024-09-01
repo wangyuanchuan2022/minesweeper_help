@@ -17,15 +17,19 @@ class Ui_form(object):
         form.resize(398, 443)
         form.setMinimumSize(QtCore.QSize(398, 443))
         form.setMaximumSize(QtCore.QSize(398, 443))
-        form.setStyleSheet("#frame_5{background-image: url(:/icons/background_2.bmp);border:none}")
+        form.setStyleSheet(
+            "#frame_5{background-image: url(:/icons/background_2.bmp);border:none}"
+        )
         self.verticalLayout = QtWidgets.QVBoxLayout(form)
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
         self.verticalLayout.setSpacing(0)
         self.verticalLayout.setObjectName("verticalLayout")
         self.frame_5 = QtWidgets.QFrame(form)
-        self.frame_5.setStyleSheet("QLabel{color:rgb(255, 255, 255);font: 10pt \"楷体\";}\n"
-"QPushButton{background-color:rgba(255, 255, 255, 200);color:rgb(0, 0, 0);border:none;border-radius:5px;font: 10pt \"楷体\";min-height:28px;min-width:105px;}\n"
-"QPushButton:hover{background-color:rgba(255, 255, 255, 150);color:rgb(8, 75, 176)}")
+        self.frame_5.setStyleSheet(
+            'QLabel{color:rgb(255, 255, 255);font: 10pt "楷体";}\n'
+            'QPushButton{background-color:rgba(255, 255, 255, 200);color:rgb(0, 0, 0);border:none;border-radius:5px;font: 10pt "楷体";min-height:28px;min-width:105px;}\n'
+            "QPushButton:hover{background-color:rgba(255, 255, 255, 150);color:rgb(8, 75, 176)}"
+        )
         self.frame_5.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame_5.setFrameShadow(QtWidgets.QFrame.Raised)
         self.frame_5.setObjectName("frame_5")
@@ -118,4 +122,6 @@ class Ui_form(object):
         self.label.setText(_translate("form", "文件名："))
         self.save_img.setText(_translate("form", "保存图片"))
         self.re_screenshot.setText(_translate("form", "截图"))
+
+
 import bg_rc
