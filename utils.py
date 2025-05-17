@@ -3,6 +3,13 @@ import json
 import math
 import random
 import time
+import concurrent.futures
+import threading
+from collections import defaultdict
+from functools import partial
+import multiprocessing
+from multiprocessing import Pipe, Queue, Manager
+from queue import Empty
 
 from PIL import ImageGrab
 import numpy as np
@@ -24,9 +31,10 @@ pyautogui.MINIMUM_SLEEP = 0.001
 # 1~8 ： 1~8
 # 9：未开方格
 # 10：雷
-def C(a, b):
+def C(a, b, start_from=None):
     """
     从a中选出b个数
+    :param start_from: array
     :param a: must be larger than
     :param b:
     :return: list
@@ -44,6 +52,8 @@ def C(a, b):
     """
     ck = range(a - b, a)
     num = list(range(b))
+    if start_from is not None:
+        num = start_from
     while True:
         yield num
         num[-1] += 1
@@ -67,8 +77,10 @@ def C_num(a, b):
     return result
 
 
-def get_list(a, num, listnum):
+def get_list(a, num, listnum, start=0, stop=-1):
     """
+    :param stop:
+    :param start:
     :param a: 小于num的正整数
     :param num: 小于listnum的正整数
     :param listnum: 列表的长度
@@ -147,13 +159,37 @@ def get_list(a, num, listnum):
     if num < a:
         a = num
 
-    total = 0
+    total = [0]
     for i in range(a, num + 1):
-        total += C_num(listnum, i)
-    yield total
-    for i in range(a, num + 1):
-        for c in C(listnum, i):
+        total.append(total[-1] + C_num(listnum, i))
+    yield total[-1]
+    if stop == -1:
+        stop = total[-1]
+    start_index = a + get_index_from_list(start, total) - 1
+    returned = 0
+    left_num = start - total[start_index - a]
+    counter = 0
+    for c in C(listnum, start_index):
+        if counter >= left_num:
             yield c.copy()
+            returned += 1
+        counter += 1
+        if returned >= stop - start:
+            break
+
+    for i in range(start_index + 1, num + 1):
+        for c in C(listnum, i):
+            if returned >= stop - start:
+                break
+            yield c.copy()
+            returned += 1
+
+
+def get_index_from_list(num, _list):
+    for i in range(len(_list)):
+        if num < _list[i]:
+            return i
+    return -1
 
 
 def A(ck: list):
@@ -187,6 +223,22 @@ def A(ck: list):
         for i in range(len(ck)):
             if num[i] >= ck[i]:
                 num[i] = 0
+
+
+def p_of_c(x: int, n: int):
+    x = int(x)
+    n = int(n)
+    if n == 0:
+        return 1
+    assert n >= x >= 0
+    k = n // 2
+    if x >= k:
+        x = n - x
+    res = 1
+    for i in range(k - x):
+        res *= x + 1 + i
+        res /= n - x - i
+    return res
 
 
 class AutoPlayThread(QThread):
@@ -340,6 +392,8 @@ class Solver(AutoPlayThread):
             # 开始时点击的坐标
             start_i = int(w / 2)
             start_j = int(h / 2)
+            # start_i = 1
+            # start_j = 1
 
             pyautogui.click(
                 self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width
@@ -471,7 +525,10 @@ class Solver(AutoPlayThread):
 
                 cell_value = self.complete_scan(cell_value, True)
                 sum2 = np.sum(cell_value)
-                cell_value = self.mine_clear1(cell_value)
+                try:
+                    cell_value = self.mine_clear1(cell_value)
+                except ValueError:
+                    continue
                 cell_value = self.mine_clear3_1(cell_value)
                 sum3 = np.sum(cell_value)
                 if sum3 == sum2:
@@ -509,11 +566,17 @@ class Solver(AutoPlayThread):
                     cell_value[j, i] = 9
 
             self.cell_value = self.complete_scan(cell_value.copy(), False)
-            for _ in range(2):
-                cell_value = self.complete_scan(cell_value)
+            try:
+                for _ in range(2):
+                    cell_value = self.complete_scan(cell_value)
+                    cell_value = self.mine_clear1(cell_value)
+                    cell_value = self.mine_clear3_1(cell_value)
                 cell_value = self.mine_clear1(cell_value)
-                cell_value = self.mine_clear3_1(cell_value)
-            cell_value = self.mine_clear1(cell_value)
+            except ValueError:
+                self.warning_signal.emit("请检查设置中总雷数，宽度，长度是否输入正确")
+                self.Visible_signal.emit(False)
+                return
+
             if len(self.pos_dict_list) == 0:
                 flag = 4
                 for flag in range(5):
@@ -524,6 +587,7 @@ class Solver(AutoPlayThread):
                         break
                 if flag == 4:
                     self.warning_signal.emit("请检查设置中总雷数，宽度，长度是否输入正确")
+                    self.Visible_signal.emit(False)
                     return
 
             self.update_btn_list_signal.emit(self.pos_dict_list)
@@ -538,21 +602,15 @@ class Solver(AutoPlayThread):
             return
 
     def try_solve(self, i, j, cell_value, clicks, num9, num10):
-        play = self.is_play
         res = 0
-        self.is_play = False
-        num = self.num
-        pos_dict_list = self.pos_dict_list
-        appended_pos = self.appended_pos
 
         for mine_num in range(num10, num10 + num9 + 1):
             if mine_num == 0:
                 res += 8 * (1 - self.p) ** num9
                 continue
             cell_value[j, i] = mine_num
-            self.num = 1
-            self.pos_dict_list = []
-            self.appended_pos = set()
+
+            appended_pos = set()
 
             try:
                 for _ in range(2):
@@ -562,19 +620,15 @@ class Solver(AutoPlayThread):
             except:
                 pass
 
+            # 计算结果
             res += (
-                len(self.appended_pos)
-                * (1 - self.p) ** (num9 - mine_num + num10)
-                * (self.p) ** (mine_num - num10)
-                * C_num(num9, mine_num - num10)
+                    len(appended_pos)
+                    * (1 - self.p) ** (num9 - mine_num + num10)
+                    * (self.p) ** (mine_num - num10)
+                    * C_num(num9, mine_num - num10)
             )
 
         res /= num9 + 1
-
-        self.is_play = play
-        self.num = num
-        self.pos_dict_list = pos_dict_list
-        self.appended_pos = appended_pos
         return res
 
     def cell_screenshot(self, i, j):
@@ -583,10 +637,10 @@ class Solver(AutoPlayThread):
         w = self.screenshot_w
         h = self.screenshot_h
         img = self.img[
-            y - self.cell_width // 2 - h // 2 : y - self.cell_width // 2 + h // 2,
-            x - self.cell_width // 2 - w // 2 : x - self.cell_width // 2 + w // 2,
-            :,
-        ]
+              y - self.cell_width // 2 - h // 2: y - self.cell_width // 2 + h // 2,
+              x - self.cell_width // 2 - w // 2: x - self.cell_width // 2 + w // 2,
+              :,
+              ]
 
         return img
 
@@ -610,9 +664,9 @@ class Solver(AutoPlayThread):
 
         for j in range(1, self.h + 1):
             if (
-                (9 in cell_value[j - 1])
-                or (9 in cell_value[j])
-                or (9 in cell_value[j + 1])
+                    (9 in cell_value[j - 1])
+                    or (9 in cell_value[j])
+                    or (9 in cell_value[j + 1])
             ):
                 for i in range(1, self.w + 1):
                     if 0 < cell_value[j, i] < 8:
@@ -623,6 +677,8 @@ class Solver(AutoPlayThread):
     def number0(self, i, j, cell_value):
         c = False
         cnt9, cnt10 = self.cell_around(i, j, cell_value)
+        if not cnt10 <= cell_value[j, i] <= cnt9 + cnt10:
+            raise ValueError("识别错误")
         if (cnt9 + cnt10) == cell_value[j, i] and cnt9 != 0:
             for n in range(j - 1, j + 2):
                 for m in range(i - 1, i + 2):
@@ -630,8 +686,8 @@ class Solver(AutoPlayThread):
                         cell_value[n, m] = 10
                         if not self.is_play:
                             if (
-                                tuple((m, n)) not in self.appended_pos
-                                and self.cell_value[n, m] != 10
+                                    tuple((m, n)) not in self.appended_pos
+                                    and self.cell_value[n, m] != 10
                             ):
                                 c = True
                                 self.pos_dict_list.append(
@@ -707,8 +763,8 @@ class Solver(AutoPlayThread):
                             cell_value[v, u] = 10
                             if not self.is_play:
                                 if (
-                                    tuple((u, v)) not in self.appended_pos
-                                    and self.cell_value[v, u] != 10
+                                        tuple((u, v)) not in self.appended_pos
+                                        and self.cell_value[v, u] != 10
                                 ):
                                     c = True
                                     self.pos_dict_list.append(
@@ -719,9 +775,9 @@ class Solver(AutoPlayThread):
                                             "is_mine": True,
                                             "is_best": False,
                                             "exp": f"由({i}, {j}), ({x}, {y})得出\n"
-                                            f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                            f"中至多有{x2}个雷，{list(x_set | y_set)}中"
-                                            f"有{x1}个雷，所以{list(x_set)}是雷。",
+                                                   f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                                   f"中至多有{x2}个雷，{list(x_set | y_set)}中"
+                                                   f"有{x1}个雷，所以{list(x_set)}是雷。",
                                             "is_recommend": False,
                                         }
                                     )
@@ -747,10 +803,10 @@ class Solver(AutoPlayThread):
                                                 "is_mine": False,
                                                 "is_best": True,
                                                 "exp": f"由({i}, {j}), ({x}, {y})得出\n"
-                                                f"{str(f'已经可以判断出{list(x_set)}是雷。') if len(x_set) != 0 else str('')}"
-                                                f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                                f"中有{x2}个雷，{list(z_set | y_set)}中有"
-                                                f"{x2}个雷，所以{list(z_set)}不是雷。",
+                                                       f"{str(f'已经可以判断出{list(x_set)}是雷。') if len(x_set) != 0 else str('')}"
+                                                       f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                                       f"中有{x2}个雷，{list(z_set | y_set)}中有"
+                                                       f"{x2}个雷，所以{list(z_set)}不是雷。",
                                                 "is_recommend": False,
                                             }
                                         )
@@ -761,8 +817,8 @@ class Solver(AutoPlayThread):
                             cell_value[v, u] = 10
                             if not self.is_play:
                                 if (
-                                    tuple((u, v)) not in self.appended_pos
-                                    and self.cell_value[v, u] != 10
+                                        tuple((u, v)) not in self.appended_pos
+                                        and self.cell_value[v, u] != 10
                                 ):
                                     c = True
                                     self.pos_dict_list.append(
@@ -773,9 +829,9 @@ class Solver(AutoPlayThread):
                                             "num": self.num,
                                             "is_best": False,
                                             "exp": f"由({i}, {j}), ({x}, {y})得出\n"
-                                            f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                            f"中至多有{x1}个雷，{list(z_set | y_set)}中"
-                                            f"有{x2}个雷，所以{list(z_set)}是雷。",
+                                                   f"{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                                   f"中至多有{x1}个雷，{list(z_set | y_set)}中"
+                                                   f"有{x2}个雷，所以{list(z_set)}是雷。",
                                             "is_recommend": False,
                                         }
                                     )
@@ -800,10 +856,10 @@ class Solver(AutoPlayThread):
                                                 "num": self.num,
                                                 "is_best": True,
                                                 "exp": f"由({i}, {j}), ({x}, {y})得出\n"
-                                                f"{str(f'已经可以判断出{list(z_set)}是雷。') if len(z_set) != 0 else str('')}"
-                                                f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
-                                                f"中有{x1}个雷，{list(x_set | y_set)}中有"
-                                                f"{x1}个雷，所以{list(x_set)}不是雷。",
+                                                       f"{str(f'已经可以判断出{list(z_set)}是雷。') if len(z_set) != 0 else str('')}"
+                                                       f"现在{list(y_set) if len(y_set) > 0 else str('公共区域')}"
+                                                       f"中有{x1}个雷，{list(x_set | y_set)}中有"
+                                                       f"{x1}个雷，所以{list(x_set)}不是雷。",
                                                 "is_recommend": False,
                                             }
                                         )
@@ -853,8 +909,8 @@ class Solver(AutoPlayThread):
         for index in range(w):
             for j in range(h):
                 if (
-                    cell_value[j + 1, index + 1] == 9
-                    or cell_value[j + 1, index + 1] == 10
+                        cell_value[j + 1, index + 1] == 9
+                        or cell_value[j + 1, index + 1] == 10
                 ):
                     bg[j, index] = 255
 
@@ -1049,14 +1105,26 @@ class Solver(AutoPlayThread):
                     mine_num = 0
                     res = np.array([])
                     for res_l in res_list:
-                        res_l = np.array(res_l)
-                        _total = len(res_l)
+                        min_mine_num = min([sum(x) for x in res_l])
+                        _all = len(set(clicks) | set(clicks9)) - len(res_l[0])
+                        _all = int(_all)
+                        min_mine_num = p_of_c(self.a - min_mine_num - num10, _all)
+                        _total = 0
+                        _res_s = []
+                        for _res in res_l:
+                            mine_num = sum(_res)
+                            p = p_of_c(self.a - mine_num - num10, _all) / min_mine_num
+                            __res = _res * p
+                            _res_s.append(__res)
+                            _total += p
+                        res_l = np.array(_res_s)
                         res_l = res_l.sum(axis=0)
                         mine_num += res_l.sum() / _total
-                        res_l = (_total - res_l) / _total
+                        res_l /= _total
+                        res_l = 1 - res_l
                         res = np.hstack((res, res_l))
                 else:
-                    res = np.zeros(len(clicks))
+                    res = []
                     _total = 0
                     min_val = self.a - len(clicks9)
                     mine_num = []
@@ -1074,7 +1142,7 @@ class Solver(AutoPlayThread):
                         if min_val <= (_mine_num + num10) <= self.a:
                             mine_num.append(_mine_num)
                             _total += 1
-                            res += r
+                            res.append(r)
                         n_value = int((num / total) * 100)
                         if n_value - o_value >= 1:
                             self.pv_signal.emit(n_value)
@@ -1083,10 +1151,22 @@ class Solver(AutoPlayThread):
 
                     self.pv_signal.emit(100)
                     self.Visible_signal.emit(False)
-                    total = _total
+                    total = 0
+                    min_mine_num = min(mine_num)
+                    min_mine_num = p_of_c(self.a - min_mine_num - num10, len(clicks9))
+                    __res = np.zeros(len(clicks), dtype=np.float32)
+
+                    for i in range(len(mine_num)):
+                        p = p_of_c(self.a - mine_num[i] - num10, len(clicks9)) / min_mine_num
+                        if i == 0:
+                            __res = res[i].astype(np.float32) * p
+                        else:
+                            __res += res[i].astype(np.float32) * p
+                        total += p
+                    res = __res.copy()
+                    res = res / total
+                    res = 1 - res
                     mine_num = min(mine_num)
-                    res = res.astype(np.float32)
-                    res = (total - res) / total
 
                 if 1 in res:  # 有确定不为雷的地方
                     for index in range(len(res)):
@@ -1137,13 +1217,8 @@ class Solver(AutoPlayThread):
                         _confidence = round(1 - (mine9 / len(clicks9)), 5)
                         if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
                             is_recommend = False
-                            if is_removed:
-                                pos = random.choice(clicks9)
-                                opennum_res = np.zeros(len(clicks9))
-                            else:
-                                pos, opennum_res = self.best_solve(
-                                    clicks, clicks9, res, cell_value
-                                )
+                            pos = random.choice(clicks9)
+                            opennum_res = np.zeros(len(clicks9))
                             pos = [pos]
                             if not self.is_play:
                                 for k, (i, j) in enumerate(clicks9):
@@ -1238,12 +1313,6 @@ class Solver(AutoPlayThread):
                     self.bx + p[0] * self.cell_width, self.by + p[1] * self.cell_width
                 )
 
-        cell_value = np.zeros((h + 2, w + 2), dtype="int32")
-        for i in range(1, w + 1):
-            for j in range(1, h + 1):
-                cell_value[j, i] = 9
-        cell_value = self.complete_scan(cell_value)
-
         if 0 in res:
             for i in range(len(res)):
                 if res[i] == 0:
@@ -1267,37 +1336,12 @@ class Solver(AutoPlayThread):
         return cell_value
 
     def best_solve(self, clicks, clicks9, res, cell_value):
-        total = len(clicks9)
-        self.pv_signal.emit(0)
-        self.Visible_signal.emit(True)
-        opennum_res = np.zeros(len(clicks9))
-        for k, (i, j) in enumerate(clicks9):
-            num9 = 0
-            num10 = 0
-            for m in range(i - 1, i + 2):
-                for n in range(j - 1, j + 2):
-                    if (m, n) in clicks:
-                        index = clicks.index((m, n))
-                        num10 += res[index]
-                    elif cell_value[n, m] == 10:
-                        num10 += 1
-                    elif cell_value[n, m] == 9:
-                        num9 += 1
-            num10 = int(num10)
-            open_num = self.try_solve(i, j, cell_value.copy(), clicks, num9, num10)
-            opennum_res[k] = open_num
-            if k % 10 == 0:
-                self.pv_signal.emit(int(k * 100 / total))
+        pass
 
-        arg = random.choice(np.where(opennum_res == np.amax(opennum_res))[0])
-        self.pv_signal.emit(100)
-        self.Visible_signal.emit(False)
-
-        return clicks9[arg], opennum_res
-
-    def part_solve(self, clicks, cell_value, num10, num9, cs, _try=True):
+    def part_solve_single(self, clicks, cell_value, num10, num9, cs, _try=True):
         """
         根据点击的坐标，计算出可能的值
+        :param _try:
         :param clicks: 点击的坐标
         :param cell_value: 格子中的值
         :param num10: 10的个数
@@ -1312,7 +1356,8 @@ class Solver(AutoPlayThread):
         num = 0
         num_solve = 0
         o_value = 0
-        self.pv_signal.emit(0)  #
+        self.pv_signal.emit(0)
+        solver = Solver()
         for index_list in list_getter:
             # copy 防止改变原数组
             value = cell_value.copy()
@@ -1322,7 +1367,7 @@ class Solver(AutoPlayThread):
 
             flag = 0  # 0 符合条件 -1 不符合条件
             for i, j in cs:
-                if value[j, i] != self.cell_around(i, j, value)[1]:
+                if value[j, i] != solver.cell_around(i, j, value)[1]:
                     flag = -1
                     break
 
@@ -1340,7 +1385,7 @@ class Solver(AutoPlayThread):
                                     num9 += 1
                                 elif value[v, u] == 10:
                                     num10 += 1
-                        can_open = self.try_solve(i, j, _value, clicks, num9, num10)
+                        can_open = solver.try_solve(i, j, _value, clicks, num9, num10)
                         canopen_res[loc] += can_open
 
                 num_solve += 1
@@ -1371,6 +1416,161 @@ class Solver(AutoPlayThread):
 
         self.pv_signal.emit(100)
         return res_list, len(res_list), canopen_res
+
+    def part_solve(self, clicks, cell_value, num10, num9, cs, _try=False):
+        """
+        根据点击的坐标，计算出可能的值
+        :param _try:
+        :param clicks: 点击的坐标
+        :param cell_value: 格子中的值
+        :param num10: 10的个数
+        :param num9: 9的个数
+        :param cs: 雷的坐标
+        :return: 可能的值
+        """
+        start = time.time()
+        solver = Solver()
+        _cs = defaultdict(list)
+        for i, j in clicks:
+            for u in range(i - 1, i + 2):
+                for v in range(j - 1, j + 2):
+                    if 1 <= cell_value[v, u] <= 8:
+                        _cs[(i, j)].append((u, v))
+        _cs = dict(_cs)
+
+        clicks = list(clicks)
+
+        def f(cell_value, state: list, clicks: list, res: list, completed=0, depth=1):
+            if len(clicks) == 1:
+                x, y = clicks[0]
+                value = cell_value.copy()
+
+                flag = 0  # 0 符合条件 -1 不符合条件
+                for i, j in _cs[(x, y)]:
+                    if value[j, i] != self.cell_around(i, j, value)[1]:
+                        flag = -1
+                        break
+
+                if flag == 0:
+                    _state = state.copy()
+                    _state.append(0)
+                    _state = np.array(_state)
+                    res.append(_state)
+
+                completed += 1 / 2 ** depth
+
+                value[y, x] = 10
+                num10 = len(np.argwhere(value == 10))
+                if num10 > self.a:
+                    return res, completed
+
+                flag = 0  # 0 符合条件 -1 不符合条件
+                for i, j in _cs[(x, y)]:
+                    if value[j, i] != self.cell_around(i, j, value)[1]:
+                        flag = -1
+                        break
+
+                if flag == 0:
+                    _state = state.copy()
+                    _state.append(1)
+                    _state = np.array(_state)
+                    res.append(_state)
+
+                completed += 1 / 2 ** depth
+
+                return res, completed
+
+            else:
+                x, y = clicks[0]
+                _clicks = clicks.copy()
+                _clicks.pop(0)
+                value = cell_value.copy()
+
+                value[y, x] = 11
+
+                flag = 0  # 0 符合条件 -1 不符合条件
+                for i, j in _cs[(x, y)]:
+                    _num9, _num10 = self.cell_around(i, j, value)
+                    if value[j, i] > _num9 + _num10 or value[j, i] < _num10:
+                        flag = -1
+                        break
+
+                if flag == 0:
+                    _state = state.copy()
+                    _state.append(0)
+                    res, completed = f(value.copy(), _state, _clicks, res, completed, depth + 1)
+                else:
+                    completed += 1 / 2 ** depth
+
+                self.pv_signal.emit(int(completed * 100))
+
+                value[y, x] = 10
+                num10 = len(np.argwhere(value == 10))
+                if num10 > self.a:
+                    return res, completed
+
+                flag = 0  # 0 符合条件 -1 不符合条件
+                for i, j in _cs[(x, y)]:
+                    _num9, _num10 = self.cell_around(i, j, value)
+                    if value[j, i] > _num9 + _num10 or value[j, i] < _num10:
+                        flag = -1
+                        break
+
+                if flag == 0:
+                    _state = state.copy()
+                    _state.append(1)
+                    res, completed = f(value.copy(), _state, _clicks, res, completed, depth + 1)
+                else:
+                    completed += 1 / 2 ** depth
+                self.pv_signal.emit(int(completed * 100))
+
+                return res, completed
+
+        canopen_res = np.zeros(len(clicks))
+        print(len(clicks))
+        # clicks = sorted(clicks, key=lambda x: x[1] + x[0])
+        res_l, _ = f(cell_value, [], clicks, [])
+
+        if _try:
+            # 计算每个方格可以开的格子数
+            for index_list in res_l:
+                # copy 防止改变原数组
+                value = cell_value.copy()
+                # 将尝试的坐标设为雷。
+                for loc in index_list:
+                    value[clicks[loc][1], clicks[loc][0]] = 10
+
+                for loc in set(range(len(clicks))) - set(index_list):
+                    _value = cell_value.copy()
+                    num9 = 0
+                    num10 = 0
+                    i, j = clicks[loc]
+                    for u in range(i - 1, i + 2):
+                        for v in range(j - 1, j + 2):
+                            if value[v, u] == 9 and ((u, v) not in clicks):
+                                num9 += 1
+                            elif value[v, u] == 10:
+                                num10 += 1
+                    can_open = solver.try_solve(i, j, _value, clicks, num9, num10)
+                    canopen_res[loc] += can_open
+
+        num_solve = len(res_l)
+        if num_solve != 0:
+            canopen_res /= num_solve
+
+        total_time = time.time() - start
+        with open("data.json") as f:
+            data = json.load(f)
+        try:
+            data[str(len(clicks))].append(total_time)
+        except KeyError:
+            data[str(len(clicks))] = [total_time]
+
+        print(data)
+        with open("data.json", "w") as f:
+            json.dump(data, f)
+
+        return res_l, num_solve, canopen_res
 
     def get_set_1(self, i, j, cell_value):
         result = set()
@@ -1488,4 +1688,37 @@ def print_board(cell_value):
 
 
 if __name__ == "__main__":
-    print(Solver().locate_exit())
+    solver = Solver()
+    solver.a = 10
+    solver.w = 6
+    solver.h = 5
+    cell_value = [[0, 0, 0, 0, 0, 0, 9, 0],
+                  [0, 9, 9, 9, 9, 9, 9, 0],
+                  [0, 9, 1, 9, 9, 3, 9, 0],
+                  [0, 9, 9, 2, 2, 9, 9, 0],
+                  [0, 9, 9, 9, 9, 1, 9, 0],
+                  [0, 9, 9, 9, 9, 9, 9, 0],
+                  [0, 0, 0, 0, 0, 0, 0, 0]
+                  ]
+    cell_value = np.array(cell_value)
+    clicks = [(1, 1), (2, 1), (1, 2), (3, 1), (1, 3), (4, 1), (3, 2), (2, 3), (5, 1), (4, 2), (2, 4), (6, 1), (3, 4), (6, 2),
+              (5, 3), (4, 4), (6, 3), (4, 5), (5, 5), (6, 4), (6, 5)]
+
+    start = time.time()
+    res_list, t, _ = solver.part_solve(clicks, cell_value, 0, 26, [(2, 2), (3, 3), (4, 3), (5, 2), (5, 4)], _try=False)
+    res_list = np.array(res_list)
+    res_list = res_list.sum(axis=0)
+    res_list = res_list / t
+    print(res_list, t)
+    print(_)
+    print("time", time.time() - start)
+
+    start = time.time()
+    res_list, t, _ = solver.part_solve_single(clicks, cell_value, 0, 26, [(2, 2), (3, 3), (4, 3), (5, 2), (5, 4)],
+                                              _try=False)
+    res_list = np.array(res_list)
+    res_list = res_list.sum(axis=0)
+    res_list = res_list / t
+    print(res_list, t)
+    print(_)
+    print("time", time.time() - start)

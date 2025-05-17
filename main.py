@@ -202,7 +202,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         )
         self.help_thread.update_btn_list_signal.connect(self.update_btn_list)
         self.help_thread.warning_signal.connect(
-            lambda s: QMessageBox.about(self, "提示", s)
+            self.help_thread_warning
         )
         self.help_thread.warning_signal_2.connect(self.help_thread_warning)
         self.help_thread.start_signal.connect(
@@ -591,6 +591,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
                 self, title="警告", message=s, checked=True
             )
             self.warning_window.signal.connect(self.set_is_show)
+            self.set_btns_Enabled(True)
 
     def set_is_show(self, t):
         self.is_show = not t[2]
