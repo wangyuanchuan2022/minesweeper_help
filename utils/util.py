@@ -3,14 +3,9 @@ import json
 import math
 import random
 import time
-import concurrent.futures
-import threading
 from collections import defaultdict
-from functools import partial
-import multiprocessing
-from multiprocessing import Pipe, Queue, Manager
-from queue import Empty
 
+import networkx as nx
 from PIL import ImageGrab
 import numpy as np
 import pyautogui
@@ -21,10 +16,47 @@ from PyQt5 import QtCore
 from PyQt5.QtCore import QThread
 
 import setting
-from mm0 import ClientToScreen
+from .mm0 import ClientToScreen
 
 pyautogui.PAUSE = setting.sleep
 pyautogui.MINIMUM_SLEEP = 0.001
+
+
+def sort_clicks(clicks, cs):
+    if len(cs) <= 1:
+        return clicks
+
+    G = nx.Graph()
+    for i in range(len(cs)):
+        x0, y0 = cs[i]
+        for j in range(i + 1, len(cs)):
+            x1, y1 = cs[j]
+            if abs(x0 - x1) <= 2 and abs(y0 - y1) <= 2:
+                G.add_edge((x0, y0), (x1, y1), weight=abs(x0 - x1) + abs(y0 - y1))
+    mst = nx.minimum_spanning_tree(G)
+
+    flag = defaultdict(bool)
+
+    def dfs(pos, mst, sorted_clicks):
+        if flag[pos]:
+            return sorted_clicks
+        flag[pos] = True
+        i, j = pos
+        for u in range(i - 1, i + 2):
+            for v in range(j - 1, j + 2):
+                if (u, v) in clicks and (u, v) not in sorted_clicks:
+                    sorted_clicks.append((u, v))
+
+        if len(sorted_clicks) == len(clicks):
+            return sorted_clicks
+
+        for _p in mst.neighbors(pos):
+            sorted_clicks = dfs(_p, mst, sorted_clicks)
+        return sorted_clicks
+
+    degree_one_nodes = [node for node in mst.nodes() if mst.degree(node) == 1 or mst.degree(node) == 0]
+    sorted_clicks = dfs(degree_one_nodes[0], mst, [])
+    return sorted_clicks
 
 
 # 0：已开方格
@@ -1333,6 +1365,13 @@ class Solver(AutoPlayThread):
                             )
                             self.appended_pos.add(tuple((x, y)))
         self.count = 0
+
+        cell_value = np.zeros((h + 2, w + 2), dtype="int32")
+        for i in range(1, w + 1):
+            for j in range(1, h + 1):
+                cell_value[j, i] = 9
+        cell_value = self.complete_scan(cell_value)
+
         return cell_value
 
     def best_solve(self, clicks, clicks9, res, cell_value):
@@ -1439,6 +1478,7 @@ class Solver(AutoPlayThread):
         _cs = dict(_cs)
 
         clicks = list(clicks)
+        print(len(clicks))
 
         def f(cell_value, state: list, clicks: list, res: list, completed=0, depth=1):
             if len(clicks) == 1:
@@ -1527,7 +1567,6 @@ class Solver(AutoPlayThread):
                 return res, completed
 
         canopen_res = np.zeros(len(clicks))
-        print(len(clicks))
         # clicks = sorted(clicks, key=lambda x: x[1] + x[0])
         res_l, _ = f(cell_value, [], clicks, [])
 
@@ -1566,7 +1605,6 @@ class Solver(AutoPlayThread):
         except KeyError:
             data[str(len(clicks))] = [total_time]
 
-        print(data)
         with open("data.json", "w") as f:
             json.dump(data, f)
 

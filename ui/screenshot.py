@@ -124,4 +124,4 @@ class Ui_form(object):
         self.re_screenshot.setText(_translate("form", "截图"))
 
 
-import bg_rc
+import ui.bg_rc

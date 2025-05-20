@@ -161,4 +161,4 @@ class Ui_Dialog(object):
         self.edit_bx.setText(_translate("Dialog", "修改"))
 
 
-import bg_rc
+import ui.bg_rc

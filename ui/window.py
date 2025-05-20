@@ -524,4 +524,4 @@ class Ui_MainWindow(object):
         self.pgb_p3.setFormat(_translate("MainWindow", "计算中%p%"))
 
 
-import bg_rc
+import ui.bg_rc
