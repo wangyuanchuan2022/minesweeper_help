@@ -410,8 +410,8 @@ class Solver(AutoPlayThread):
         res = cv.matchTemplate(bg, tem, cv.TM_SQDIFF_NORMED)
         _min = np.min(res)
         x, y = cv.minMaxLoc(res)[2]
-        x, y = x + w / 2, y + w / 2
-        return _min < 0.01, x, y
+        x, y = x + w / 2, y + h / 2
+        return _min < 0.015, x, y
 
     def play(self, limit):
         try:
@@ -500,7 +500,16 @@ class Solver(AutoPlayThread):
                     )
                     self.checked = {}  # 重置checked
 
-                _win, x, y = self._locate("win.bmp")
+                _ok, x, y = self._locate("./image/ok.png")
+                if _ok:
+                    print("ok", x, y)
+                    pyautogui.click(x, y)
+                    time.sleep(0.1)
+                    _, x, y = self._locate("./image/exit.png")
+                    pyautogui.click(x, y)
+                    time.sleep(0.1)
+
+                _win, x, y = self._locate("./image/win.bmp")
                 if _win:
                     time.sleep(3)
                     win += 1
@@ -528,7 +537,7 @@ class Solver(AutoPlayThread):
 
                     time.sleep(0.1)
 
-                _lose, x, y = self._locate("lose.bmp")
+                _lose, x, y = self._locate("./image/lose.bmp")
                 if _lose:
                     time.sleep(3)
                     pyautogui.click(x, y)
@@ -1069,7 +1078,7 @@ class Solver(AutoPlayThread):
                         for li in list(self.checked.keys()):
                             if len(set(li) & set(tuple(click_list[index]))) != 0:
                                 self.checked.pop(li)
-                        if len(click_list[index]) > limit:
+                        try:
                             _res, _total, _canopen_res = self.part_solve(
                                 click_list[index],
                                 cell_value,
@@ -1078,14 +1087,15 @@ class Solver(AutoPlayThread):
                                 set_list[index],
                                 False,
                             )
-                        else:
-                            _res, _total, _canopen_res = self.part_solve(
-                                click_list[index],
-                                cell_value,
-                                num10,
-                                num9 - len(click_list[index]),
-                                set_list[index],
-                            )
+                        except KeyError:
+                            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
+                            for i in range(1, w + 1):
+                                for j in range(1, h + 1):
+                                    cell_value[j, i] = 9
+                            cell_value = self.complete_scan(cell_value)
+                            self.count += 1
+                            self.Visible_signal.emit(False)
+                            return cell_value
 
                         if len(_res) == 0:
                             cell_value = np.zeros((h + 2, w + 2), dtype="int32")
