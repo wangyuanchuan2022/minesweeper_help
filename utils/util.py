@@ -448,7 +448,7 @@ class Solver(AutoPlayThread):
                     return
 
                 if win32gui.FindWindow(None, "游戏胜利") > 0:
-                    time.sleep(3)
+                    time.sleep(1.2)
                     win += 1
                     total += 1
                     exit_i, exit_j = self.locate_exit()
@@ -476,7 +476,7 @@ class Solver(AutoPlayThread):
                     time.sleep(0.1)
 
                 elif win32gui.FindWindow(None, "游戏失败") > 0:
-                    time.sleep(3)
+                    time.sleep(1.2)
                     exit_i, exit_j = self.locate_exit()
                     pyautogui.click(exit_i, exit_j)
                     total += 1
@@ -511,7 +511,7 @@ class Solver(AutoPlayThread):
 
                 _win, x, y = self._locate("./image/win.bmp")
                 if _win:
-                    time.sleep(3)
+                    time.sleep(1.2)
                     win += 1
                     total += 1
                     pyautogui.click(x, y)
@@ -539,7 +539,7 @@ class Solver(AutoPlayThread):
 
                 _lose, x, y = self._locate("./image/lose.bmp")
                 if _lose:
-                    time.sleep(3)
+                    time.sleep(1.2)
                     pyautogui.click(x, y)
                     total += 1
                     self.text_signal.emit(
@@ -1142,11 +1142,12 @@ class Solver(AutoPlayThread):
 
             else:
                 pos = []
-                if total > 150000:  # total太大全排列计算量太大
+                if total > 10000 or num9 > self.w * self.h / 5:  # total太大全排列计算量太大
                     self.Visible_signal.emit(False)
                     mine_num = 0
                     res = np.array([])
                     for res_l in res_list:
+                        estimated_mine_num = 0
                         min_mine_num = min([sum(x) for x in res_l])
                         _all = len(set(clicks) | set(clicks9)) - len(res_l[0])
                         _all = int(_all)
@@ -1154,14 +1155,15 @@ class Solver(AutoPlayThread):
                         _total = 0
                         _res_s = []
                         for _res in res_l:
-                            mine_num = sum(_res)
-                            p = p_of_c(self.a - mine_num - num10, _all) / min_mine_num
+                            _mine_num = sum(_res)
+                            p = p_of_c(self.a - _mine_num - num10, _all) / min_mine_num
                             __res = _res * p
+                            estimated_mine_num += p * _mine_num
                             _res_s.append(__res)
                             _total += p
                         res_l = np.array(_res_s)
                         res_l = res_l.sum(axis=0)
-                        mine_num += res_l.sum() / _total
+                        mine_num += estimated_mine_num / _total
                         res_l /= _total
                         res_l = 1 - res_l
                         res = np.hstack((res, res_l))
@@ -1194,12 +1196,14 @@ class Solver(AutoPlayThread):
                     self.pv_signal.emit(100)
                     self.Visible_signal.emit(False)
                     total = 0
+                    estimated_mine_num = 0
                     min_mine_num = min(mine_num)
                     min_mine_num = p_of_c(self.a - min_mine_num - num10, len(clicks9))
                     __res = np.zeros(len(clicks), dtype=np.float32)
 
                     for i in range(len(mine_num)):
                         p = p_of_c(self.a - mine_num[i] - num10, len(clicks9)) / min_mine_num
+                        estimated_mine_num += p * mine_num[i]
                         if i == 0:
                             __res = res[i].astype(np.float32) * p
                         else:
@@ -1208,7 +1212,7 @@ class Solver(AutoPlayThread):
                     res = __res.copy()
                     res = res / total
                     res = 1 - res
-                    mine_num = min(mine_num)
+                    mine_num = estimated_mine_num / total
 
                 if 1 in res:  # 有确定不为雷的地方
                     for index in range(len(res)):
@@ -1339,7 +1343,7 @@ class Solver(AutoPlayThread):
                                     )
                                     self.appended_pos.add(tuple(clicks[p]))
 
-        self.text_signal.emit(f"共{total}种解。")
+        self.text_signal.emit(f"共{total: 0.2f}种解。")
         if total == 0:
             self.text_signal.emit("随机选择。\n")
             self.text_signal.emit("您可以通过增加设置中的limit使枚举更加全面，但limit每增加1计算所需的时间增加1倍")
