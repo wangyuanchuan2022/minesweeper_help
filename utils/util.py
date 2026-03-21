@@ -1,4 +1,5 @@
 # Minesweeper Arbiter
+import hashlib
 import json
 import math
 import random
@@ -179,6 +180,9 @@ def get_list(a, num, listnum, start=0, stop=-1):
     [1, 3, 4, 5]
     [2, 3, 4, 5]
     """
+    a = int(a)
+    num = int(num)
+    listnum = int(listnum)
     if a < 1:
         a = 1
 
@@ -296,6 +300,7 @@ class AutoPlayThread(QThread):
 class Solver(AutoPlayThread):
     def __init__(self):
         super().__init__()
+        self.memory = {}
         self.images = None
         self.by = None
         self.bx = None
@@ -324,6 +329,8 @@ class Solver(AutoPlayThread):
         self.appended_pos = set()
 
         self.checked = {}
+
+        self.till_now_winrate = 1.0
 
     def run(self):
         self.reload()
@@ -415,6 +422,7 @@ class Solver(AutoPlayThread):
 
     def play(self, limit):
         try:
+            self.till_now_winrate = 1.0
             hwnd = win32gui.FindWindow(None, setting.win_name)
             self.bx, self.by = ClientToScreen(hwnd, self._bx, self._by)
 
@@ -472,6 +480,7 @@ class Solver(AutoPlayThread):
                         self.by + start_j * self.cell_width,
                     )
                     self.checked = {}  # 重置checked
+                    self.till_now_winrate = 1.0
 
                     time.sleep(0.1)
 
@@ -499,6 +508,7 @@ class Solver(AutoPlayThread):
                         self.by + start_j * self.cell_width,
                     )
                     self.checked = {}  # 重置checked
+                    self.till_now_winrate = 1.0
 
                 _ok, x, y = self._locate("./image/ok.png")
                 if _ok:
@@ -534,6 +544,7 @@ class Solver(AutoPlayThread):
                         self.by + start_j * self.cell_width,
                     )
                     self.checked = {}  # 重置checked
+                    self.till_now_winrate = 1.0
 
                     time.sleep(0.1)
 
@@ -561,6 +572,7 @@ class Solver(AutoPlayThread):
                         self.by + start_j * self.cell_width,
                     )
                     self.checked = {}  # 重置checked
+                    self.till_now_winrate = 1.0
 
                     time.sleep(0.1)
 
@@ -978,10 +990,19 @@ class Solver(AutoPlayThread):
             self.count += 1
             return cell_value
 
+        limitation = 12
         if len(clicks) == 0:  # 没有可以判断的格子
             total = 0
             res = []
-            pos = [random.choice(clicks9)]  # 随机选择
+            op_num = []
+            for i, j in clicks9:
+                op5x5_num = self.open_num5x5(cell_value, (i, j))
+                op_num.append(op5x5_num)
+
+            np_op_num = np.array(op_num)
+            np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
+            p = np_op_num / np_op_num.sum()
+            pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]  # 随机选择
             confidence = 1 - (self.a - num10) / len(clicks9)  # 不是雷的概率
             self.pos_dict_list.append(
                 {
@@ -1125,7 +1146,17 @@ class Solver(AutoPlayThread):
                 self.Visible_signal.emit(False)
                 res = []
                 total = 0
-                pos = [random.choice(clicks9)]
+
+                op_num = []
+                for i, j in clicks9:
+                    op5x5_num = self.open_num5x5(cell_value, (i, j))
+                    op_num.append(op5x5_num)
+
+                np_op_num = np.array(op_num)
+                np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
+                p = np_op_num / np_op_num.sum()
+                pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]
+
                 confidence = 1 - (self.a - num10) / len(clicks9)
                 if not self.is_play:
                     self.pos_dict_list.append(
@@ -1142,206 +1173,55 @@ class Solver(AutoPlayThread):
 
             else:
                 pos = []
-                if total > 10000 or num9 > self.w * self.h / 5:  # total太大全排列计算量太大
+                limitation = len(clicks9) * 0.8 + math.log2(total)
+                print(f"limitation: {limitation}")
+
+                if limitation <= 6:  # 小情况可以计算胜率
+                    win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
+                    win_rate = np.around(win_rate, decimals=4)
+                    self.text_signal.emit(f"此局面下的胜率为{max(win_rate): 0.4f}。\n")
+                    where_max = np.where(win_rate == np.max(win_rate), 1, 0)
+                    p = where_max / where_max.sum()
+                    arg = np.random.choice(np.arange(len(clicks)), p=p)
+                    pos = [clicks[arg]]
+                    confidence = win_rate[arg]
                     self.Visible_signal.emit(False)
-                    mine_num = 0
-                    res = np.array([])
-                    for res_l in res_list:
-                        estimated_mine_num = 0
-                        min_mine_num = min([sum(x) for x in res_l])
-                        _all = len(set(clicks) | set(clicks9)) - len(res_l[0])
-                        _all = int(_all)
-                        min_mine_num = p_of_c(self.a - min_mine_num - num10, _all)
-                        _total = 0
-                        _res_s = []
-                        for _res in res_l:
-                            _mine_num = sum(_res)
-                            p = p_of_c(self.a - _mine_num - num10, _all) / min_mine_num
-                            __res = _res * p
-                            estimated_mine_num += p * _mine_num
-                            _res_s.append(__res)
-                            _total += p
-                        res_l = np.array(_res_s)
-                        res_l = res_l.sum(axis=0)
-                        mine_num += estimated_mine_num / _total
-                        res_l /= _total
-                        res_l = 1 - res_l
-                        res = np.hstack((res, res_l))
-                else:
-                    res = []
-                    _total = 0
-                    min_val = self.a - len(clicks9)
-                    mine_num = []
-
-                    o_value = 0
-                    num = 0
-                    self.pv_signal.emit(0)
-                    for index_list in A(ck):
-                        _mine_num = 0  # 一个方案中的雷数
-                        r = np.array([])
-                        for i in range(len(index_list)):
-                            _mine_num += res_list[i][index_list[i]].sum()
-                            r = np.hstack([r, res_list[i][index_list[i]]])
-
-                        if min_val <= (_mine_num + num10) <= self.a:
-                            mine_num.append(_mine_num)
-                            _total += 1
-                            res.append(r)
-                        n_value = int((num / total) * 100)
-                        if n_value - o_value >= 1:
-                            self.pv_signal.emit(n_value)
-                            o_value = n_value
-                        num += 1
-
-                    self.pv_signal.emit(100)
-                    self.Visible_signal.emit(False)
-                    total = 0
-                    estimated_mine_num = 0
-                    min_mine_num = min(mine_num)
-                    min_mine_num = p_of_c(self.a - min_mine_num - num10, len(clicks9))
-                    __res = np.zeros(len(clicks), dtype=np.float32)
-
-                    for i in range(len(mine_num)):
-                        p = p_of_c(self.a - mine_num[i] - num10, len(clicks9)) / min_mine_num
-                        estimated_mine_num += p * mine_num[i]
-                        if i == 0:
-                            __res = res[i].astype(np.float32) * p
-                        else:
-                            __res += res[i].astype(np.float32) * p
-                        total += p
-                    res = __res.copy()
-                    res = res / total
-                    res = 1 - res
-                    mine_num = estimated_mine_num / total
-
-                if 1 in res:  # 有确定不为雷的地方
-                    for index in range(len(res)):
-                        if res[index] >= 0.99:
-                            pos.append(clicks[index])
-                            confidence = 1
-                            if not self.is_play:
-                                if tuple(clicks[index]) not in self.appended_pos:
-                                    self.pos_dict_list.append(
-                                        {
-                                            "pos": clicks[index],
-                                            "num": self.num,
-                                            "confidence": 1,
-                                            "is_mine": False,
-                                            "is_best": True,
-                                            "exp": "枚举得出",
-                                            "is_recommend": False,
-                                        }
-                                    )
-                                    self.appended_pos.add(tuple(clicks[index]))
-                else:
-                    if len(res) == 0:
-                        cell_value = np.zeros((h + 2, w + 2), dtype="int32")
-                        for i in range(1, w + 1):
-                            for j in range(1, h + 1):
-                                cell_value[j, i] = 9
-                        cell_value = self.complete_scan(cell_value)
-                        self.count += 1
-                        return cell_value
-
-                    max_loc = np.argmax(res)
-                    max_val = res[max_loc]  # 最大值
-                    max_open = 0  # 最大可确定格数
-                    _a = np.arange(len(clicks))
-                    np.random.shuffle(_a)
-                    for p in _a:
-                        if 0.005 >= max_val - res[p] >= -0.005:
-                            if canopen_res[p] >= max_open:
-                                pos = clicks[p]
-                                max_open = canopen_res[p]
-
-                    pos = [pos]
-                    mine9 = self.a - mine_num - num10  # 剩余雷数
-
-                    is_recommend = True
-                    confidence = round(max_val, 5)  # 不是雷的概率
-                    if len(clicks9) != 0:
-                        _confidence = round(1 - (mine9 / len(clicks9)), 5)
-                        if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
-                            is_recommend = False
-                            pos = random.choice(clicks9)
-                            opennum_res = np.zeros(len(clicks9))
-                            pos = [pos]
-                            if not self.is_play:
-                                for k, (i, j) in enumerate(clicks9):
-                                    if (i, j) in pos:
-                                        self.pos_dict_list.append(
-                                            {
-                                                "pos": (i, j),
-                                                "confidence": _confidence,
-                                                "num": self.num,
-                                                "is_mine": False,
-                                                "is_best": False,
-                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}",
-                                                "is_recommend": True,
-                                            }
-                                        )
-                                    else:
-                                        self.pos_dict_list.append(
-                                            {
-                                                "pos": (i, j),
-                                                "confidence": _confidence,
-                                                "num": self.num,
-                                                "is_mine": False,
-                                                "is_best": False,
-                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}",
-                                                "is_recommend": False,
-                                            }
-                                        )
-                            confidence = _confidence  # 剩余未开方格不是雷的概率
-                            if confidence == 1:
-                                pos = clicks9
 
                     if not self.is_play:
                         for p in range(len(clicks)):
-                            if 0.005 >= max_val - res[p] >= -0.005:
-                                if tuple(clicks[p]) not in self.appended_pos:
-                                    if tuple(clicks[p]) == pos[0]:
-                                        self.pos_dict_list.append(
-                                            {
-                                                "pos": clicks[p],
-                                                "confidence": round(res[p], 5),
-                                                "num": self.num,
-                                                "is_mine": False,
-                                                "is_best": False,
-                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}",
-                                                "is_recommend": True
-                                                if is_recommend
-                                                else False,
-                                            }
-                                        )
-                                        self.appended_pos.add(tuple(clicks[p]))
-                                    else:
-                                        self.pos_dict_list.append(
-                                            {
-                                                "pos": clicks[p],
-                                                "confidence": round(res[p], 5),
-                                                "num": self.num,
-                                                "is_mine": False,
-                                                "is_best": False,
-                                                "exp": f"枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}",
-                                                "is_recommend": False,
-                                            }
-                                        )
-                                        self.appended_pos.add(tuple(clicks[p]))
-                            else:
-                                if tuple(clicks[p]) not in self.appended_pos:
+                            if tuple(clicks[p]) not in self.appended_pos:
+                                if tuple(clicks[p]) == pos[0]:
                                     self.pos_dict_list.append(
                                         {
                                             "pos": clicks[p],
-                                            "confidence": round(res[p], 5),
+                                            "confidence": round(win_rate[p], 5),
                                             "num": self.num,
                                             "is_mine": False,
                                             "is_best": False,
-                                            "exp": f"枚举得出, 预计可以确定的方格数：{round(canopen_res[p], 2)}",
+                                            "exp": f"胜率计算得出",
+                                            "is_recommend": True
+                                        }
+                                    )
+                                    self.appended_pos.add(tuple(clicks[p]))
+                                else:
+                                    self.pos_dict_list.append(
+                                        {
+                                            "pos": clicks[p],
+                                            "confidence": round(win_rate[p], 5),
+                                            "num": self.num,
+                                            "is_mine": False,
+                                            "is_best": False,
+                                            "exp": f"胜率计算得出",
                                             "is_recommend": False,
                                         }
                                     )
                                     self.appended_pos.add(tuple(clicks[p]))
+
+                else:  # 大情况
+                    pos, confidence, total = self.process_bigger_situation(total, num9, num10, clicks, clicks9,
+                                                                           res_list, ck, cell_value, pos)
+                    self.till_now_winrate *= confidence
+                    self.text_signal.emit(f"走到此局面，还没死的概率为{self.till_now_winrate: 0.4f}。\n")
 
         self.text_signal.emit(f"共{total: 0.2f}种解。")
         if total == 0:
@@ -1359,25 +1239,32 @@ class Solver(AutoPlayThread):
                     self.bx + p[0] * self.cell_width, self.by + p[1] * self.cell_width
                 )
 
-        if 0 in res:
-            for i in range(len(res)):
-                if res[i] == 0:
-                    x, y = clicks[i]
-                    cell_value[y, x] = 10
-                    if not self.is_play and self.cell_value[y, x] != 10:
-                        if tuple((x, y)) not in self.appended_pos:
-                            self.pos_dict_list.append(
-                                {
-                                    "pos": (x, y),
-                                    "confidence": 0,
-                                    "num": self.num,
-                                    "is_mine": True,
-                                    "is_best": False,
-                                    "exp": "枚举得出。",
-                                    "is_recommend": False,
-                                }
-                            )
-                            self.appended_pos.add(tuple((x, y)))
+                time.sleep(0.1)
+
+                if limitation <= 6:
+                    confidence = clicks2p[(p[0], p[1])]
+
+                _index = confidence * 100
+                _index = round(_index)
+                _index = str(_index)
+                _lose, _, _ = self._locate("./image/lose.bmp")
+
+                with open("data.json") as f:
+                    data = json.load(f)
+                try:
+                    if _lose:
+                        data[_index]["lose"] += 1
+                    else:
+                        data[_index]["win"] += 1
+                except KeyError:
+                    if _lose:
+                        data[_index] = {"lose": 1, "win": 0}
+                    else:
+                        data[_index] = {"lose": 0, "win": 1}
+
+                with open("data.json", "w") as f:
+                    json.dump(data, f)
+
         self.count = 0
 
         cell_value = np.zeros((h + 2, w + 2), dtype="int32")
@@ -1388,8 +1275,374 @@ class Solver(AutoPlayThread):
 
         return cell_value
 
-    def best_solve(self, clicks, clicks9, res, cell_value):
-        pass
+    def process_bigger_situation(self, total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos):
+        confidence = 0
+
+        if total > 10000:  # total太大全排列计算量太大
+            self.Visible_signal.emit(False)
+            mine_num = 0
+            res = np.array([])
+            for res_l in res_list:
+                estimated_mine_num = 0
+                min_mine_num = min([sum(x) for x in res_l])
+                _all = len(set(clicks) | set(clicks9)) - len(res_l[0])
+                _all = int(_all)
+                min_mine_num = p_of_c(self.a - min_mine_num - num10, _all)
+                _total = 0
+                _res_s = []
+                for _res in res_l:
+                    _mine_num = sum(_res)
+                    p = p_of_c(self.a - _mine_num - num10, _all) / min_mine_num
+                    __res = _res * p
+                    estimated_mine_num += p * _mine_num
+                    _res_s.append(__res)
+                    _total += p
+                res_l = np.array(_res_s)
+                res_l = res_l.sum(axis=0)
+                mine_num += estimated_mine_num / _total
+                res_l /= _total
+                res_l = 1 - res_l
+                res = np.hstack((res, res_l))
+        else:
+            res = []
+            _total = 0
+            min_val = self.a - len(clicks9)
+            mine_num = []
+
+            o_value = 0
+            num = 0
+            self.pv_signal.emit(0)
+            for index_list in A(ck):
+                _mine_num = 0  # 一个方案中的雷数
+                r = np.array([])
+                for i in range(len(index_list)):
+                    _mine_num += res_list[i][index_list[i]].sum()
+                    r = np.hstack([r, res_list[i][index_list[i]]])
+
+                if min_val <= (_mine_num + num10) <= self.a:
+                    mine_num.append(_mine_num)
+                    _total += 1
+                    res.append(r)
+                n_value = int((num / total) * 100)
+                if n_value - o_value >= 1:
+                    self.pv_signal.emit(n_value)
+                    o_value = n_value
+                num += 1
+
+            self.pv_signal.emit(100)
+            self.Visible_signal.emit(False)
+            total = 0
+            estimated_mine_num = 0
+            min_mine_num = min(mine_num)
+            min_mine_num = p_of_c(self.a - min_mine_num - num10, len(clicks9))
+            __res = np.zeros(len(clicks), dtype=np.float32)
+
+            for i in range(len(mine_num)):
+                p = p_of_c(self.a - mine_num[i] - num10, len(clicks9)) / min_mine_num
+                estimated_mine_num += p * mine_num[i]
+                if i == 0:
+                    __res = res[i].astype(np.float32) * p
+                else:
+                    __res += res[i].astype(np.float32) * p
+                total += p
+            res = __res.copy()
+            res = res / total
+            res = 1 - res
+            mine_num = estimated_mine_num / total
+
+        if 1 in res:  # 有确定不为雷的地方
+            for index in range(len(res)):
+                if res[index] >= 0.99:
+                    pos.append(clicks[index])
+                    confidence = 1
+                    if not self.is_play:
+                        if tuple(clicks[index]) not in self.appended_pos:
+                            self.pos_dict_list.append(
+                                {
+                                    "pos": clicks[index],
+                                    "num": self.num,
+                                    "confidence": 1,
+                                    "is_mine": False,
+                                    "is_best": True,
+                                    "exp": "枚举得出",
+                                    "is_recommend": False,
+                                }
+                            )
+                            self.appended_pos.add(tuple(clicks[index]))
+        else:
+            if len(res) == 0:
+                cell_value = np.zeros((self.h + 2, self.w + 2), dtype="int32")
+                for i in range(1, self.w + 1):
+                    for j in range(1, self.h + 1):
+                        cell_value[j, i] = 9
+                cell_value = self.complete_scan(cell_value)
+                self.count += 1
+                return cell_value
+
+            max_loc = np.argmax(res)
+            max_val = res[max_loc]  # 最大值
+            _a = np.arange(len(clicks))
+            np.random.shuffle(_a)
+            poses = []
+            for p in _a:
+                if 0.0005 >= max_val - res[p] >= -0.0005:
+                    poses.append(clicks[p])
+
+            op_num = []
+            for i, j in poses:
+                op5x5_num = self.open_num5x5(cell_value, (i, j))
+                op_num.append(op5x5_num)
+
+            np_op_num = np.array(op_num)
+            np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
+            p = np_op_num / np_op_num.sum()
+            pos = [poses[np.random.choice(np.arange(len(poses)), p=p)]]
+
+            mine9 = self.a - mine_num - num10  # 剩余雷数
+
+            is_recommend = True
+            confidence = round(max_val, 5)  # 不是雷的概率
+            if len(clicks9) != 0:
+                _confidence = round(1 - (mine9 / len(clicks9)), 5)
+                if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
+                    is_recommend = False
+
+                    op_num = []
+                    for i, j in clicks9:
+                        op5x5_num = self.open_num5x5(cell_value, (i, j))
+                        op_num.append(op5x5_num)
+
+                    np_op_num = np.array(op_num)
+                    np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
+                    p = np_op_num / np_op_num.sum()
+                    pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]
+
+                    opennum_res = np.zeros(len(clicks9))
+
+                    if not self.is_play:
+                        for k, (i, j) in enumerate(clicks9):
+                            if (i, j) in pos:
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": (i, j),
+                                        "confidence": _confidence,
+                                        "num": self.num,
+                                        "is_mine": False,
+                                        "is_best": False,
+                                        "exp": f"枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}",
+                                        "is_recommend": True,
+                                    }
+                                )
+                            else:
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": (i, j),
+                                        "confidence": _confidence,
+                                        "num": self.num,
+                                        "is_mine": False,
+                                        "is_best": False,
+                                        "exp": f"枚举得出",
+                                        "is_recommend": False,
+                                    }
+                                )
+                    confidence = _confidence  # 剩余未开方格不是雷的概率
+                    if confidence == 1:
+                        pos = clicks9
+
+            if not self.is_play:
+                for p in range(len(clicks)):
+                    if 0.005 >= max_val - res[p] >= -0.005:
+                        if tuple(clicks[p]) not in self.appended_pos:
+                            if tuple(clicks[p]) == pos[0]:
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": clicks[p],
+                                        "confidence": round(res[p], 5),
+                                        "num": self.num,
+                                        "is_mine": False,
+                                        "is_best": False,
+                                        "exp": f"枚举得出",
+                                        "is_recommend": True
+                                        if is_recommend
+                                        else False,
+                                    }
+                                )
+                                self.appended_pos.add(tuple(clicks[p]))
+                            else:
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": clicks[p],
+                                        "confidence": round(res[p], 5),
+                                        "num": self.num,
+                                        "is_mine": False,
+                                        "is_best": False,
+                                        "exp": f"枚举得出",
+                                        "is_recommend": False,
+                                    }
+                                )
+                                self.appended_pos.add(tuple(clicks[p]))
+                    else:
+                        if tuple(clicks[p]) not in self.appended_pos:
+                            self.pos_dict_list.append(
+                                {
+                                    "pos": clicks[p],
+                                    "confidence": round(res[p], 5),
+                                    "num": self.num,
+                                    "is_mine": False,
+                                    "is_best": False,
+                                    "exp": f"枚举得出",
+                                    "is_recommend": False,
+                                }
+                            )
+                            self.appended_pos.add(tuple(clicks[p]))
+
+        return pos, confidence, total
+
+    def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
+        cell_value_list = []
+        for index_list in A(ck):
+            _cell_value = cell_value.copy()
+            r = np.array([])
+            for i in range(len(index_list)):
+                r = np.hstack([r, res_list[i][index_list[i]]])
+
+            _cell_value = cell_value.copy()
+            for i in np.argwhere(r == 1):
+                u, v = clicks[i[0]]
+                _cell_value[v, u] = 10
+
+            if self.a - num10 - sum(r) == 0:
+                cell_value_list.append(_cell_value)
+                continue
+            if self.a > num10 + sum(r) + len(clicks9):
+                continue
+
+            gl = get_list(self.a - num10 - sum(r), self.a - num10 - sum(r), len(clicks9))
+            next(gl)
+            for index_l in gl:
+                new_cell_value = _cell_value.copy()
+                for j in index_l:
+                    u, v = clicks9[j]
+                    new_cell_value[v, u] = 10
+                cell_value_list.append(new_cell_value)
+
+        depth_limit = 200 / len(clicks)
+
+        self.memory = {}
+
+        def hash_cell_value(l: np.ndarray):
+            __cell_value = np.where(l > 9, 9, l)
+            # print(__cell_value)
+            str_cell_value = __cell_value.tostring()
+            hashed_cell_value = hashlib.md5(str_cell_value).hexdigest()
+            return hashed_cell_value
+
+        def f(clicks: list, _cell_value_list, depth=1):
+            assert len(_cell_value_list) > 0
+            try:
+                return self.memory[hash_cell_value(_cell_value_list[0])]
+            except KeyError:
+                pass
+
+            if len(_cell_value_list) == 1:
+                return 1
+            if depth > depth_limit:  # 防止死循环
+                return 1
+
+            _np_cell_value_list = np.array(_cell_value_list)
+            total = len(_cell_value_list)
+
+            clicks2p = {}
+            for u, v in clicks:
+                clicks2p[(u, v)] = 1 - len(np.argwhere(_np_cell_value_list[:, v, u] == 10)) / total
+            clicks = sorted(clicks, key=lambda x: clicks2p[x], reverse=True)
+
+            _res = []
+            for i in range(len(clicks)):
+                if i > 1 and clicks2p[clicks[i]] < max(_res):  # 剪枝
+                    continue
+
+                win_p = 0
+                u, v = clicks[i]
+                new_cell_value_dict = defaultdict(list)
+                for _cell_value in _cell_value_list:
+                    if _cell_value[v, u] != 10:
+                        new_cell_value = _cell_value.copy()
+                        new_uv_value = self.cell_around(u, v, new_cell_value)[1]
+                        new_cell_value[v, u] = new_uv_value
+                        new_cell_value_dict[new_uv_value].append(new_cell_value)
+
+                for new_uv_value, new_cell_value_list in new_cell_value_dict.items():
+                    trans_prob = len(new_cell_value_list) / total
+                    new_clicks = clicks.copy()
+                    new_clicks.pop(i)
+                    win_r = f(new_clicks, new_cell_value_list, depth + 1)
+                    win_p += trans_prob * win_r
+                _res.append(win_p)
+
+            self.memory[hash_cell_value(_cell_value_list[0])] = max(_res)
+
+            return max(_res)
+
+        total = len(cell_value_list)
+        clicks += clicks9
+        res = []
+
+        np_cell_value_list = np.array(cell_value_list)
+        clicks2p = {}
+        for u, v in clicks:
+            clicks2p[(u, v)] = 1 - len(np.argwhere(np_cell_value_list[:, v, u] == 10)) / total
+        clicks = sorted(clicks, key=lambda x: clicks2p[x], reverse=True)
+
+        self.pv_signal.emit(0)
+        for i in range(len(clicks)):
+            if i > 1 and clicks2p[clicks[i]] < max(res) and self.is_play:  # 剪枝
+                res.append(0)
+                continue
+
+            win_p = 0
+            u, v = clicks[i]
+            new_cell_value_dict = defaultdict(list)
+            for _cell_value in cell_value_list:
+                if _cell_value[v, u] != 10:
+                    new_cell_value = _cell_value.copy()
+                    new_uv_value = self.cell_around(u, v, new_cell_value)[1]
+                    new_cell_value[v, u] = new_uv_value
+                    new_cell_value_dict[new_uv_value].append(new_cell_value)
+
+            for new_uv_value, new_cell_value_list in new_cell_value_dict.items():
+                trans_prob = len(new_cell_value_list) / total
+                new_clicks = clicks.copy()
+                new_clicks.pop(i)
+                win_r = f(new_clicks, new_cell_value_list)
+                win_p += trans_prob * win_r
+
+            self.pv_signal.emit(int((i + 1) / len(clicks) * 100))
+            res.append(win_p)
+
+        self.memory = {}
+
+        return res, clicks, len(cell_value_list), clicks2p
+
+    def open_num5x5(self, cell_value, pos):
+        """
+        计算5x5格子中已经打开的格子数
+        :param cell_value:
+        :param pos:
+        :return:
+        """
+        x, y = pos
+        value = cell_value.copy()
+        res = 0
+        for i in range(x - 2, x + 3):
+            for j in range(y - 2, y + 3):
+                if i < 1 or i > self.w or j < 1 or j > self.h:
+                    res += 1
+                    continue
+                if 0 <= value[j, i] <= 8:
+                    res += 1
+
+        return res
 
     def part_solve_single(self, clicks, cell_value, num10, num9, cs, _try=True):
         """
@@ -1481,7 +1734,6 @@ class Solver(AutoPlayThread):
         :param cs: 雷的坐标
         :return: 可能的值
         """
-        start = time.time()
         solver = Solver()
         _cs = defaultdict(list)
         for i, j in clicks:
@@ -1610,17 +1862,6 @@ class Solver(AutoPlayThread):
         num_solve = len(res_l)
         if num_solve != 0:
             canopen_res /= num_solve
-
-        total_time = time.time() - start
-        with open("data.json") as f:
-            data = json.load(f)
-        try:
-            data[str(len(clicks))].append(total_time)
-        except KeyError:
-            data[str(len(clicks))] = [total_time]
-
-        with open("data.json", "w") as f:
-            json.dump(data, f)
 
         return res_l, num_solve, canopen_res
 
@@ -1753,7 +1994,8 @@ if __name__ == "__main__":
                   [0, 0, 0, 0, 0, 0, 0, 0]
                   ]
     cell_value = np.array(cell_value)
-    clicks = [(1, 1), (2, 1), (1, 2), (3, 1), (1, 3), (4, 1), (3, 2), (2, 3), (5, 1), (4, 2), (2, 4), (6, 1), (3, 4), (6, 2),
+    clicks = [(1, 1), (2, 1), (1, 2), (3, 1), (1, 3), (4, 1), (3, 2), (2, 3), (5, 1), (4, 2), (2, 4), (6, 1), (3, 4),
+              (6, 2),
               (5, 3), (4, 4), (6, 3), (4, 5), (5, 5), (6, 4), (6, 5)]
 
     start = time.time()

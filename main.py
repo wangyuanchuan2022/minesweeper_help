@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
 )
 
+from color import OKLCHGradient
 from ui import Ui_Dialog, Ui_form, Ui_MainWindow
 from utils import (
     minesweeper_run,
@@ -38,6 +39,9 @@ from utils import (
     Solver
 )
 import setting
+
+gradient_gen = OKLCHGradient()
+oklch_grad = gradient_gen.create_gradient([(1, 0, 0), (0, 1, 0)])
 
 
 class MyMainWindow(QMainWindow, Ui_MainWindow):
@@ -505,14 +509,16 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         for pos_dict in pos_dict_list:
             (i, j) = pos_dict["pos"]
             string = (
-                pos_dict["exp"]
-                + f"\n({i}, {j})不是雷的概率：{pos_dict['confidence'] * 100:0.2f}%"
+                    pos_dict["exp"]
+                    + f"\n({i}, {j})不是雷的概率：{pos_dict['confidence'] * 100:0.2f}%"
             )
             i, j = i - 1, j - 1
             confidence = pos_dict["confidence"]
             self.btn_list[j][i].setEnabled(True)
             self.btn_list[j][i].setText(str(pos_dict["num"]))
             self.btn_list[j][i].clicked.connect(functools.partial(self.info, string))
+
+            cell_color = oklch_grad[int((confidence - 1e-5) * 100)]
 
             if pos_dict["is_mine"] or confidence <= 0.01:
                 self.mines.append((i + 1, j + 1))
@@ -533,8 +539,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             elif pos_dict["is_recommend"]:
                 self.btn_list[j][i].setStyleSheet(
                     f"QPushButton{{border-radius:0px; border: 3px solid rgb(255, 255,"
-                    f" 82);background-color:rgba({255 * (1 - confidence)},"
-                    f' {confidence * 255}, 0, 255);font: 9pt "楷体"}}'
+                    f" 82);background-color:rgba({cell_color[0]},"
+                    f' {cell_color[1]}, {cell_color[2]}, 255);font: 9pt "楷体"}}'
                     "QPushButton:disabled{border: none;"
                     "background-color:rgba(0, 0, 0, 0);"
                     "color:rgba(210, 210, 210, 0);}"
@@ -542,8 +548,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             else:
                 self.btn_list[j][i].setStyleSheet(
                     f"QPushButton{{border-radius:0px; border: none;"
-                    f"background-color:rgba({255 * (1 - confidence)},"
-                    f' {confidence * 255}, 0, 255);font: 9pt "楷体"}}'
+                    f"background-color:rgba({cell_color[0]},"
+                    f' {cell_color[1]}, {cell_color[2]}, 255);font: 9pt "楷体"}}'
                     "QPushButton:disabled{border: none;"
                     "background-color:rgba(0, 0, 0, 0);"
                     "color:rgba(210, 210, 210, 0);}"
@@ -629,8 +635,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.set_btns_Enabled(False)
 
         elif (
-            self.auto_play_thread.isFinished()
-            and self.stackedWidget.currentIndex() == 1
+                self.auto_play_thread.isFinished()
+                and self.stackedWidget.currentIndex() == 1
         ):
             self.set_btns_Enabled(True)
             self.auto_play.setText("自动")
@@ -640,8 +646,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.set_btns_Enabled(False)
 
         elif (
-            self.auto_play_thread.isFinished()
-            and self.stackedWidget.currentIndex() == 2
+                self.auto_play_thread.isFinished()
+                and self.stackedWidget.currentIndex() == 2
         ):
             self.set_btns_Enabled(True)
             if self.stackedWidget.currentIndex() == 2:
@@ -671,7 +677,7 @@ class MyMessageBox(QMessageBox):
     signal = QtCore.pyqtSignal(tuple)
 
     def __init__(
-        self, parent=None, title="消息", message="", x=None, y=None, checked=False
+            self, parent=None, title="消息", message="", x=None, y=None, checked=False
     ):
         super(MyMessageBox, self).__init__(parent)
         if x and y:
@@ -1016,10 +1022,10 @@ class ScreenShot(QtWidgets.QWidget, Ui_form):
             self.img = cv2.cvtColor(pil_img, cv2.COLOR_RGB2BGR)
 
             self.img = self.img[
-                y - self.cell_width // 2 - h // 2 : y - self.cell_width // 2 + h // 2,
-                x - self.cell_width // 2 - w // 2 : x - self.cell_width // 2 + w // 2,
-                :,
-            ]
+                       y - self.cell_width // 2 - h // 2: y - self.cell_width // 2 + h // 2,
+                       x - self.cell_width // 2 - w // 2: x - self.cell_width // 2 + w // 2,
+                       :,
+                       ]
             cv2.imwrite("image/temp.bmp", self.img)
             self.img_label.setText("")
             self.img_label.setPixmap(QPixmap("image/temp.bmp").scaled(100, 140))
