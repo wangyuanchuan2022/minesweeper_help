@@ -295,7 +295,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         try:
             # Run the game and get the window handle
             hwnd = minesweeper_run(self.path)
-        except:
+        except Exception:
             # Show an error message if the path is not correct
             QMessageBox.warning(self, "错误", "请检查设置中扫雷exe的路径是否输入正确")
             return
@@ -324,20 +324,21 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.pgb_p3.setVisible(False)
         self.help_thread.terminate()
         self.end_help_thread.setVisible(False)
-        self.set_btns_Enabled(True)
+        self.set_btn_list_enable(True)
         self.return_to_main_p3.setVisible(True)
         self.up_pgb_timer.stop()
         QMessageBox.about(self, "提示", "您可以降低设置中的limit来减少计算时间\n" "但减少limit可能会导致结果不全面")
 
     def end_a_func(self):
         # 终止自动程序的计算
-        self.pgb_p3.setVisible(False)
-        self.help_thread.terminate()
-        self.end_help_thread.setVisible(False)
-        self.set_btns_Enabled(True)
         self.pgb.setVisible(False)
         self.auto_play_thread.terminate()
         self.end_auto_play_thread.setVisible(False)
+        self.set_btns_Enabled(True)
+        self.pgb_p3.setVisible(False)
+        self.help_thread.terminate()
+        self.end_help_thread.setVisible(False)
+        self.return_to_main_page.setVisible(True)
         self.up_pgb_timer.stop()
         QMessageBox.about(self, "提示", "您可以降低设置中的limit来减少计算时间\n" "但减少limit可能会导致结果不全面")
 
@@ -444,7 +445,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.reload()
         try:
             hwnd = minesweeper_run(self.path)
-        except:
+        except Exception:
             QMessageBox.warning(self, "错误", "请检查设置中扫雷exe的路径是否输入正确")
             self.set_btns_Enabled(True)
             return
@@ -646,7 +647,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.set_btns_Enabled(False)
 
         elif (
-                self.auto_play_thread.isFinished()
+                self.help_thread.isFinished()
                 and self.stackedWidget.currentIndex() == 2
         ):
             self.set_btns_Enabled(True)
@@ -668,7 +669,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
                 self.auto_play_thread.start()
                 self.return_to_main_page.setVisible(False)
                 self.stackedWidget.setCurrentIndex(1)
-            except:
+            except Exception:
                 QMessageBox.warning(self, "错误", "请检查设置中扫雷exe的路径是否输入正确")
                 self.return_to_main_page.setVisible(True)
 
@@ -919,7 +920,7 @@ class EditWindow(QDialog, Ui_Dialog):
             self.get_pos_2.terminate()
         if self.mouse_window:
             self.mouse_window.terminate()
-            del self.mouse_
+            del self.mouse_window
             self.mouse_window = None
         with open(r"cfg.json", "w") as file:
             json.dump(self.cfg, file, cls=MyEncoder)

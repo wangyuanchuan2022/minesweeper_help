@@ -661,21 +661,26 @@ class Solver(AutoPlayThread):
             if mine_num == 0:
                 res += 8 * (1 - self.p) ** num9
                 continue
-            cell_value[j, i] = mine_num
+            test_value = cell_value.copy()
+            test_value[j, i] = mine_num
 
-            appended_pos = set()
-
+            resolved_count = 0
             try:
                 for _ in range(2):
-                    cell_value = self.mine_clear1(cell_value)
-                    cell_value = self.mine_clear3_1(cell_value)
-                cell_value = self.mine_clear1(cell_value)
-            except:
+                    test_value = self.mine_clear1(test_value)
+                    test_value = self.mine_clear3_1(test_value)
+                test_value = self.mine_clear1(test_value)
+                # count cells resolved by deduction (no longer 9)
+                for n in range(j - 1, j + 2):
+                    for m in range(i - 1, i + 2):
+                        if cell_value[n, m] == 9 and test_value[n, m] != 9:
+                            resolved_count += 1
+            except Exception:
                 pass
 
             # 计算结果
             res += (
-                    len(appended_pos)
+                    resolved_count
                     * (1 - self.p) ** (num9 - mine_num + num10)
                     * (self.p) ** (mine_num - num10)
                     * C_num(num9, mine_num - num10)
@@ -1249,7 +1254,7 @@ class Solver(AutoPlayThread):
                 _index = str(_index)
                 _lose, _, _ = self._locate("./image/lose.bmp")
 
-                with open("data.json") as f:
+                with open("data.json", encoding="utf-8") as f:
                     data = json.load(f)
                 try:
                     if _lose:
@@ -1663,7 +1668,6 @@ class Solver(AutoPlayThread):
         num_solve = 0
         o_value = 0
         self.pv_signal.emit(0)
-        solver = Solver()
         for index_list in list_getter:
             # copy 防止改变原数组
             value = cell_value.copy()
@@ -1673,7 +1677,7 @@ class Solver(AutoPlayThread):
 
             flag = 0  # 0 符合条件 -1 不符合条件
             for i, j in cs:
-                if value[j, i] != solver.cell_around(i, j, value)[1]:
+                if value[j, i] != self.cell_around(i, j, value)[1]:
                     flag = -1
                     break
 
@@ -1691,7 +1695,7 @@ class Solver(AutoPlayThread):
                                     num9 += 1
                                 elif value[v, u] == 10:
                                     num10 += 1
-                        can_open = solver.try_solve(i, j, _value, clicks, num9, num10)
+                        can_open = self.try_solve(i, j, _value, clicks, num9, num10)
                         canopen_res[loc] += can_open
 
                 num_solve += 1
@@ -1734,7 +1738,6 @@ class Solver(AutoPlayThread):
         :param cs: 雷的坐标
         :return: 可能的值
         """
-        solver = Solver()
         _cs = defaultdict(list)
         for i, j in clicks:
             for u in range(i - 1, i + 2):
@@ -1856,7 +1859,7 @@ class Solver(AutoPlayThread):
                                 num9 += 1
                             elif value[v, u] == 10:
                                 num10 += 1
-                    can_open = solver.try_solve(i, j, _value, clicks, num9, num10)
+                    can_open = self.try_solve(i, j, _value, clicks, num9, num10)
                     canopen_res[loc] += can_open
 
         num_solve = len(res_l)
@@ -1915,7 +1918,6 @@ class Solver(AutoPlayThread):
             )
         )
         pil_img = np.array(pil_img)
-        pil_img.reshape(self.w * self.cell_width, self.h * self.cell_width, 3)
         self.img = cv.cvtColor(pil_img, cv.COLOR_RGB2BGR)
 
         for y in range(1, self.h + 1):
