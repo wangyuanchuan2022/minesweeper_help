@@ -1,5 +1,10 @@
 opencv-python==4.5.4.60
-PyAutoGUI
+numpy==1.21.6
+Pillow==9.5.0
+PyAutoGUI==0.9.54
 pywin32==302
-tqdm
-pyqt5
+PyQt5==5.15.9
+PyQt5-sip==12.12.1
+networkx==2.6.3
+
+matplotlib==3.5.3

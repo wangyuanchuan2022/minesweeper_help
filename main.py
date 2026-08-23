@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+import warnings
 
 import cv2
 import numpy as np
@@ -39,6 +40,17 @@ from utils import (
     Solver
 )
 import setting
+from logger import get_logger
+
+logger = get_logger(__name__)
+
+# PyQt5 5.15.x 搭配 PyQt5-sip>=12.13 时，定义 Qt 子类会触发 sipPyTypeDict 弃用告警。
+# 这是第三方库版本组合导致的、无法在本项目内根治的提示，此处针对性忽略。
+warnings.filterwarnings(
+    "ignore",
+    message="sipPyTypeDict",
+    category=DeprecationWarning,
+)
 
 gradient_gen = OKLCHGradient()
 oklch_grad = gradient_gen.create_gradient([(1, 0, 0), (0, 1, 0)])
@@ -76,6 +88,19 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
 
         self.setupUi(self)
         self.setWindowIcon(QtGui.QIcon(":/icons/icon.ico"))
+
+        # 左侧功能按钮不接受键盘焦点：启动时 Qt 会把焦点给 tab 序第一个按钮
+        # （setting_2），若此时收到外部注入的按键（如 VK_SELECT，Qt 把它当作
+        # 空格键），焦点按钮会被"按下"导致设置窗口自动弹出。这些按钮只供鼠标
+        # 点击，禁用其键盘焦点即可（auto_play/help_human 的快捷键不受影响）。
+        for _btn in (
+                self.setting_2,
+                self.auto_play,
+                self.help_human,
+                self.screenshot_help,
+        ):
+            _btn.setFocusPolicy(Qt.NoFocus)
+
         self.show()
 
         # 设置plainTextEdit滑动条样式，
@@ -442,7 +467,6 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.mines = []
 
         self.label_p3.setText("")
-        self.reload()
         try:
             hwnd = minesweeper_run(self.path)
         except Exception:
@@ -511,7 +535,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             (i, j) = pos_dict["pos"]
             string = (
                     pos_dict["exp"]
-                    + f"\n({i}, {j})不是雷的概率：{pos_dict['confidence'] * 100:0.2f}%"
+                    + f"\n({i}, {j})不是雷的概率：{pos_dict['confidence'] * 100:0.3f}%"
             )
             i, j = i - 1, j - 1
             confidence = pos_dict["confidence"]
@@ -829,7 +853,8 @@ class EditWindow(QDialog, Ui_Dialog):
             minesweeper_run(self.path)
             self.mouse_window = MouseWindowTread()
             self.mouse_window.start()
-        except:
+        except Exception as e:
+            logger.error("打开扫雷失败: %s", e)
             self.set_btns_enabled(True)
             self.label_bx.setText(str(self.bx))
             QMessageBox.warning(self, "错误", "请检查设置中扫雷exe的路径是否输入正确")
@@ -1035,7 +1060,8 @@ class ScreenShot(QtWidgets.QWidget, Ui_form):
             QMessageBox.about(self, "错误", "找不到扫雷窗口哦。\n将要重新打开扫雷窗口。")
             try:
                 minesweeper_run(self.path)
-            except:
+            except Exception as e:
+                logger.error("打开扫雷失败: %s", e)
                 QMessageBox.warning(self, "错误", "请检查设置中扫雷exe的路径是否输入正确")
         except ValueError as e:
             QMessageBox.about(self, "错误", "横纵坐标都要为整数哦。")

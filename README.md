@@ -47,6 +47,89 @@
   - `mine_clear3_1()`: 高级逻辑推理
   - `number5_1()`: 概率分析与决策
   - `part_solve()`: 分部分枚举求解
+  - `rescan_after_click()`: 点击后的局部重扫（变更检测）
+  - `combination_ratio()`: 组合数比值（概率加权）
+
+## 算法逻辑示意图
+
+> 下图为求解器核心逻辑的详细流程，使用 Mermaid 绘制。
+
+### 1. 整体主循环
+
+```mermaid
+flowchart TD
+    Start([开始]) --> Init["点击中心开局<br/>cell_value 初始化为全未开 9"]
+    Init --> Detect{"检测胜利/失败/弹窗"}
+    Detect -->|"胜/负"| Restart["处理并重开新局"]
+    Restart --> Init
+    Detect -->|"正常"| Scan["complete_scan<br/>截图 + 模板匹配识别棋盘"]
+    Scan --> Basic["mine_clear1 基础推理<br/>number0 计数判断"]
+    Basic --> Adv["mine_clear3_1 高级推理<br/>number_3_1 集合判断"]
+    Adv --> Prog{"推理是否有进展?"}
+    Prog -->|"有进展"| Detect
+    Prog -->|"无进展"| Prob["number5_1 概率枚举决策"]
+    Prob --> Act["点击最优格 / 标记雷"]
+    Act --> Detect
+```
+
+### 2. 图像识别与局部重扫
+
+```mermaid
+flowchart TD
+    A["抓取棋盘区域 ImageGrab"] --> B{"遍历每个格子"}
+    B -->|"是未开格 9"| C["裁剪单格图像 cell_screenshot"]
+    C --> D["compare_img 与 25 个模板匹配<br/>0~8 / 9未开 / 10雷"]
+    D --> E["写回识别结果"]
+    E --> B
+    B -->|"全部完成"| F["得到 cell_value 矩阵"]
+
+    P["某次点击之后"] --> Q["抓取新棋盘"]
+    Q --> R{"变更检测 _cell_changed<br/>新旧格子像素对比"}
+    R -->|"未变化"| S["保持未开值 9"]
+    R -->|"已变化"| T["仅对变化格重新模板匹配"]
+    T --> U["更新 cell_value<br/>可正确处理 flood-fill 大面积更新"]
+```
+
+### 3. 基础推理与高级推理
+
+```mermaid
+flowchart TD
+    subgraph basic["基础推理 number0"]
+        N0["处理数字格"] --> C["统计周围<br/>cnt9 未开数 / cnt10 雷数"]
+        C --> M1{"cnt9 + cnt10 == 数字 ?"}
+        M1 -->|"是"| MM["所有未开格标记为雷 10"]
+        M1 -->|"否"| M2{"cnt10 == 数字 ?"}
+        M2 -->|"是"| SS["所有未开格安全<br/>自动:点击 / 帮助:标记 11"]
+        M2 -->|"否"| NN["无动作"]
+    end
+
+    subgraph advanced["高级推理 number_3_1"]
+        N31["处理两个数字格"] --> SET["集合划分<br/>x_set 仅甲有 / z_set 仅乙有 / y_set 公共"]
+        SET --> D1{"x1 - x2 == len(x_set) ?"}
+        D1 -->|"是"| R1["x_set 全为雷 / z_set 全安全"]
+        D1 -->|"否"| D2{"x2 - x1 == len(z_set) ?"}
+        D2 -->|"是"| R2["z_set 全为雷 / x_set 全安全"]
+        D2 -->|"否"| NN2["无动作"]
+    end
+```
+
+### 4. 概率枚举决策（number5_1）
+
+```mermaid
+flowchart TD
+    P0["number5_1 开始"] --> P1["distanceTransform 划分区域<br/>clicks 边缘格 距数字≤1.5<br/>clicks9 内部格"]
+    P1 --> P2{"clicks 是否为空?"}
+    P2 -->|"是"| P3["随机选择内部格 clicks9"]
+    P2 -->|"否"| P4["按共享数字格分组<br/>组间无公共数字格"]
+    P4 --> P5["逐组枚举 part_solve<br/>缓存已算结果 checked"]
+    P5 --> P6["统计总方案数 total"]
+    P6 --> P7{"limitation ≤ 6 ?"}
+    P7 -->|"是"| P8["win_rate 胜率计算<br/>递归搜索 + 记忆化"]
+    P7 -->|"否"| P9["process_bigger_situation<br/>combination_ratio 组合数加权"]
+    P8 --> P10["选择概率/胜率最高的格子"]
+    P9 --> P10
+    P10 --> P11["点击最优格"]
+```
 
 ## 使用模式
 

@@ -2,6 +2,10 @@ import math
 import colorsys
 from typing import List, Tuple
 
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class OKLCHGradient:
     """
@@ -193,27 +197,27 @@ def example_usage():
     blue = (0, 0, 1)  # RGB蓝色
     red = (1, 0, 0)  # RGB红色
 
-    print("蓝色到红色的OKLCH渐变:")
+    logger.info("蓝色到红色的OKLCH渐变:")
     gradient = gradient_gen.create_gradient([blue, red], steps=5)
 
     for i, color in enumerate(gradient):
         hex_color = gradient_gen.rgb_to_hex(color)
-        print(f"步骤 {i}: RGB{tuple(round(c, 3) for c in color)} -> {hex_color}")
+        logger.info("步骤 %s: RGB%s -> %s", i, tuple(round(c, 3) for c in color), hex_color)
 
-    print("\n" + "=" * 50)
+    logger.info("=" * 50)
 
     # 示例2: 多颜色渐变
     colors_hex = ["#ff0000", "#00ff00", "#0000ff", "#ffff00"]
     colors_rgb = [gradient_gen.hex_to_rgb(hex_color) for hex_color in colors_hex]
 
-    print("红->绿->蓝->黄的多色渐变:")
+    logger.info("红->绿->蓝->黄的多色渐变:")
     multi_gradient = gradient_gen.create_gradient(colors_rgb, steps=8)
 
     for i, color in enumerate(multi_gradient):
         hex_color = gradient_gen.rgb_to_hex(color)
-        print(f"步骤 {i}: {hex_color}")
+        logger.info("步骤 %s: %s", i, hex_color)
 
-    print("\n" + "=" * 50)
+    logger.info("=" * 50)
 
     # 示例3: 与HSL渐变的比较
     def hsl_gradient(colors_rgb, steps):
@@ -246,17 +250,17 @@ def example_usage():
 
         return gradient
 
-    print("OKLCH vs HSL 渐变比较:")
+    logger.info("OKLCH vs HSL 渐变比较:")
     oklch_grad = gradient_gen.create_gradient([blue, red])
     hsl_grad = hsl_gradient([blue, red], steps=5)
 
-    print("OKLCH渐变:")
+    logger.info("OKLCH渐变:")
     for color in oklch_grad:
-        print(f"  RGB{tuple(round(c, 3) for c in color)}")
+        logger.info("  RGB%s", tuple(round(c, 3) for c in color))
 
-    print("HSL渐变:")
+    logger.info("HSL渐变:")
     for color in hsl_grad:
-        print(f"  RGB{tuple(round(c, 3) for c in color)}")
+        logger.info("  RGB%s", tuple(round(c, 3) for c in color))
 
 
 if __name__ == "__main__":
