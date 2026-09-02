@@ -97,7 +97,7 @@ def _wr_feedback(tb, t_start):
         return th
     th = wr.get("t", th)
     budget_ms = DECISION_TIME_BUDGET * 1000.0
-    if wr["ms"] > budget_ms * 0.75:            # 上次 win_rate 超预算 → 惩罚降档
+    if wr["ms"] > budget_ms * 0.75:        # 上次 win_rate 超预算 75% → 惩罚降档
         th = max(6, th - 1)
         tb["wr"]["fast_streak"] = 0
     elif wr["ms"] < budget_ms * 0.25:          # 上次很快 → 累计，3 次后奖励升档（无上限）
@@ -110,14 +110,31 @@ def _wr_feedback(tb, t_start):
 
 
 class ProbabilityMixin:
-    def _estimated_progress_heartbeat(self, predicted_s=None):
-        """速度估计进度心跳：真实进度静默时按预测时长推进进度条。
+    # ---- 决策级单调进度坐标（仅 native.tuned() 的 number5_1 期间生效）----
+    # 所有进度发射统一经 _pv_mapped_emit：操作内 0-100 先按当前阶段区间 [lo,hi]
+    # 线性映射到决策级坐标，再过单调门（低于已显示值的丢弃）——进度条绝不回退。
+    # 阶段区间：预扫描 [0,10) → 枚举（按各组预测耗时加权）[10,80) → 决策 [80,100]。
+    # _pv_state=None（回退模式 / 决策之外 / 直接调用热点方法）时为原样直通。
 
-        背景：视觉扫描/分组构建/win_rate 阶段一等段没有进度回调；C++ 计算段虽已
-        释放 GIL（真实进度可实时送达），这些静默段的进度条仍会停住。本心跳线程按
-        速度估计补位——仅当 pv_signal 超过 0.3s 没有真实发射时，按
-        elapsed/predicted 发射估计值（封顶 95%，真实进度一到自动让位；收尾的
-        100 仍由各阶段的真实 emit(100) 完成）。
+    def _pv_mapped_emit(self, value):
+        """进度发射的单调映射门（见类注释；无状态时保持原始语义）。"""
+        st = getattr(self, "_pv_state", None)
+        if st is None:
+            self._throttled_pv_signal_emit(value)
+            return
+        mapped = st["lo"] + (st["hi"] - st["lo"]) * (value / 100.0)
+        val = int(mapped)
+        if val < st["hwm"]:
+            return  # 单调门：低于已显示进度 → 丢弃（进度条不回退）
+        st["hwm"] = val
+        self._throttled_pv_signal_emit(val)
+
+    def _estimated_progress_heartbeat(self, predicted_s=None):
+        """速度估计进度心跳：真实进度静默时按预测时长推进进度条（受单调门约束）。
+
+        仅当 pv_signal 超过 0.3s 没有真实发射时，按 elapsed/predicted 发射决策级
+        估计值（封顶 94%，收尾 100 由 number5_1 入口的 finally 强制发射）。
+        估计值必须高于当前单调高水位（hwm）才发射——不会造成进度条回退。
 
         predicted_s 缺省取决策时间预算（速度估计的量纲来源）。
         返回 threading.Event，调用方结束后 set() 停止。
@@ -133,10 +150,16 @@ class ProbabilityMixin:
         def _loop():
             while not stop.wait(0.2):
                 try:
+                    st = getattr(slf, "_pv_state", None)
+                    if st is None:
+                        continue
                     # 真实进度静默判定（心跳自己的发射也会刷新时间戳，故实际节奏约 0.5s）
                     if time.time() - getattr(slf, "_last_pv_signal_time", 0.0) > 0.3:
-                        frac = min((time.perf_counter() - t0) / max(predicted_s, 0.1), 0.95)
-                        slf._throttled_pv_signal_emit(int(frac * 100))
+                        est = int(min((time.perf_counter() - t0) / max(predicted_s, 0.1),
+                                      0.94) * 100)
+                        if est > st["hwm"]:
+                            st["hwm"] = est
+                            slf._throttled_pv_signal_emit(est)
                 except Exception:
                     break  # 心跳失败不影响计算
 
@@ -145,13 +168,19 @@ class ProbabilityMixin:
         return stop
 
     def number5_1(self, cell_value):
-        """5.1 数字统计（入口：附带速度估计进度心跳，主体见 _number5_1_core）。"""
-        hb = self._estimated_progress_heartbeat() if native.tuned() else None
+        """5.1 数字统计（入口：决策级单调进度 + 速度估计心跳，主体见 _number5_1_core）。"""
+        hb = None
+        if native.tuned():
+            # 预扫描阶段先占 [0,10)；后续阶段在核心流程中调整区间
+            self._pv_state = {"lo": 0.0, "hi": 10.0, "hwm": 0}
+            hb = self._estimated_progress_heartbeat()
         try:
             return self._number5_1_core(cell_value)
         finally:
             if hb is not None:
                 hb.set()
+                self._pv_state = None
+                self._throttled_pv_signal_emit(100)  # 决策收尾（特殊值直通节流器）
 
     def _number5_1_core(self, cell_value):
         """
@@ -307,6 +336,18 @@ class ProbabilityMixin:
                     limit -= 1
                 logger.debug("limit=%s（预算剩余 %.2fs，预测总耗时 %.2fs）",
                              limit, _rem, _pred_total)
+                # 决策级进度：枚举段 [10,80) 按各组预测耗时加权（速度估计），
+                # 之后逐组把 _pv_state 区间设为该组的 [lo, hi)
+                _pv_sizes = [len(g) for g in click_list if len(g) <= limit + 3]
+                _pv_w = [_ps_predict_ms(_tb, s) for s in _pv_sizes]
+                _pv_wsum = sum(_pv_w) or 1.0
+                _pv_bounds = []
+                _pv_acc = 0.0
+                for wgt in _pv_w:
+                    lo = 10.0 + 70.0 * _pv_acc / _pv_wsum
+                    _pv_acc += wgt
+                    _pv_bounds.append((lo, 10.0 + 70.0 * _pv_acc / _pv_wsum))
+                _pv_k = 0  # 组指针（跳过被移除的组）
             res_list = []
             canopen_res = np.array([])
             ck = []  # res_list中res的长度
@@ -318,14 +359,17 @@ class ProbabilityMixin:
             for index in range(len(click_list)):
                 # 运算
                 try:
-                    self.pv_signal.emit(0)
+                    if _tb is not None and _pv_k < len(_pv_bounds):
+                        self._pv_state["lo"], self._pv_state["hi"] = _pv_bounds[_pv_k]
+                        _pv_k += 1
+                    self._pv_mapped_emit(0)
                     _res, _canopen_res = self.checked[tuple(click_list[index])]
                     _total = len(_res)
                     canopen_res = np.hstack((canopen_res, _canopen_res))
                     total *= _total
                     res_list.append(_res)
                     ck.append(_total)
-                    self.pv_signal.emit(100)
+                    self._pv_mapped_emit(100)
                 except KeyError:
                     _over_budget = (
                         _tb is not None
@@ -341,6 +385,9 @@ class ProbabilityMixin:
                             clicks.remove(pos)
                             clicks9.append(pos)
                     else:
+                        if _tb is not None and _pv_k < len(_pv_bounds):
+                            self._pv_state["lo"], self._pv_state["hi"] = _pv_bounds[_pv_k]
+                            _pv_k += 1
                         for li in list(self.checked.keys()):
                             if len(set(li) & set(tuple(click_list[index]))) != 0:
                                 self.checked.pop(li)
@@ -434,6 +481,8 @@ class ProbabilityMixin:
                     # win_rate 阈值实测反馈（见 _wr_feedback）：超预算降档、连续快则升档
                     wr_threshold = _wr_feedback(_tb, t_decision_start)
                     logger.debug("wr_threshold=%s（limitation=%.2f）", wr_threshold, limitation)
+                    # 决策级进度：进入决策段 [80,100]
+                    self._pv_state["lo"], self._pv_state["hi"] = 80.0, 100.0
 
                 if limitation <= wr_threshold:  # 小情况可以计算胜率
                     _t_wr = time.perf_counter()
@@ -619,7 +668,7 @@ class ProbabilityMixin:
 
         o_value = 0
         num = 0
-        self._throttled_pv_signal_emit(0)
+        self._pv_mapped_emit(0)
         for index_list in A(ck):
             _mine_num = 0  # 一个方案中的雷数
             r = np.array([])
@@ -633,11 +682,11 @@ class ProbabilityMixin:
                 res.append(r)
             n_value = int((num / total) * 100)
             if n_value - o_value >= 1:
-                self._throttled_pv_signal_emit(n_value)
+                self._pv_mapped_emit(n_value)
                 o_value = n_value
             num += 1
 
-        self._throttled_pv_signal_emit(100)
+        self._pv_mapped_emit(100)
         self.Visible_signal.emit(False)
         total = 0
         estimated_mine_num = 0
@@ -669,7 +718,7 @@ class ProbabilityMixin:
                 res, mine_num, total = native.mscore.pbs_compute(
                     total, num10, clicks, clicks9,
                     native.as_groups(res_list), ck, self.a,
-                    self._throttled_pv_signal_emit, self.Visible_signal.emit)
+                    self._pv_mapped_emit, self.Visible_signal.emit)
             except Exception as e:
                 logger.warning("C++ pbs_compute 失败，回退纯 Python 实现：%s", e)
                 res, mine_num, total = self._pbs_compute_python(
@@ -833,7 +882,7 @@ class ProbabilityMixin:
                 _res, _clicks, _total, _clicks2p = native.mscore.win_rate(
                     clicks, clicks9, native.as_groups(res_list), cell_value, ck,
                     num10, self.a, self.w, self.h, self.is_play,
-                    self._throttled_pv_signal_emit)
+                    self._pv_mapped_emit)
                 self.memory = {}
                 return list(_res), list(_clicks), int(_total), dict(_clicks2p)
             except Exception as e:
@@ -933,7 +982,7 @@ class ProbabilityMixin:
             clicks2p[(u, v)] = 1 - len(np.argwhere(np_cell_value_list[:, v, u] == 10)) / total
         clicks = sorted(clicks, key=lambda x: clicks2p[x], reverse=True)
 
-        self._throttled_pv_signal_emit(0)
+        self._pv_mapped_emit(0)
         for i in range(len(clicks)):
             if i > 1 and clicks2p[clicks[i]] < max(res) and self.is_play:  # 剪枝
                 res.append(0)
@@ -956,7 +1005,7 @@ class ProbabilityMixin:
                 win_r = f(new_clicks, new_cell_value_list)
                 win_p += trans_prob * win_r
 
-            self._throttled_pv_signal_emit(int((i + 1) / len(clicks) * 100))
+            self._pv_mapped_emit(int((i + 1) / len(clicks) * 100))
             res.append(win_p)
 
         self.memory = {}
@@ -1000,7 +1049,7 @@ class ProbabilityMixin:
             try:
                 _arr, _num = native.mscore.part_solve_single(
                     clicks, cell_value, cs, num10, num9, self.a, self.w, self.h,
-                    self._throttled_pv_signal_emit)
+                    self._pv_mapped_emit)
                 return list(_arr), int(_num), np.zeros(len(clicks))
             except Exception as e:
                 logger.warning("C++ part_solve_single 失败，回退纯 Python 实现：%s", e)
@@ -1012,7 +1061,7 @@ class ProbabilityMixin:
         num = 0
         num_solve = 0
         o_value = 0
-        self._throttled_pv_signal_emit(0)
+        self._pv_mapped_emit(0)
         for index_list in list_getter:
             # copy 防止改变原数组
             value = cell_value.copy()
@@ -1050,7 +1099,7 @@ class ProbabilityMixin:
 
             n_value = int((num / _total) * 100)
             if n_value - o_value >= 1:
-                self._throttled_pv_signal_emit(n_value)
+                self._pv_mapped_emit(n_value)
                 o_value = n_value
             num += 1
 
@@ -1069,7 +1118,7 @@ class ProbabilityMixin:
         if num_solve != 0:
             canopen_res /= num_solve
 
-        self._throttled_pv_signal_emit(100)
+        self._pv_mapped_emit(100)
         return res_list, len(res_list), canopen_res
 
     def part_solve(self, clicks, cell_value, num10, num9, cs, _try=False):
@@ -1089,7 +1138,7 @@ class ProbabilityMixin:
             try:
                 _arr, _num = native.mscore.part_solve(
                     clicks, cell_value, self.a, self.w, self.h,
-                    self._throttled_pv_signal_emit)
+                    self._pv_mapped_emit)
                 return list(_arr), int(_num), np.zeros(len(clicks))
             except Exception as e:
                 logger.warning("C++ part_solve 失败，回退纯 Python 实现：%s", e)
@@ -1167,7 +1216,7 @@ class ProbabilityMixin:
                 else:
                     completed += 1 / 2 ** depth
 
-                self._throttled_pv_signal_emit(int(completed * 100))
+                self._pv_mapped_emit(int(completed * 100))
 
                 value[y, x] = 10
                 num10 = len(np.argwhere(value == 10))
@@ -1187,7 +1236,7 @@ class ProbabilityMixin:
                     res, completed = f(value.copy(), _state, _clicks, res, completed, depth + 1)
                 else:
                     completed += 1 / 2 ** depth
-                self._throttled_pv_signal_emit(int(completed * 100))
+                self._pv_mapped_emit(int(completed * 100))
 
                 return res, completed
 
