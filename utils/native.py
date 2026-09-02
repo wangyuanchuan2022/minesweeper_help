@@ -58,3 +58,21 @@ def report_load_error():
     """供诊断：打印加载失败原因（仅日志，不影响运行）。"""
     if _load_error is not None:
         logger.info("C++ 加速模块不可用，使用纯 Python 实现：%s", _load_error)
+
+
+# ---------------------------------------------------------------------------
+# 决策阈值放宽（按实测校准，仅 C++ 可用时生效；纯 Python 自动恢复原阈值）
+#
+# 原阈值按纯 Python 耗时标定，C++ 提速后在同等墙钟时间预算下可以搜得更深：
+#   part_solve   提速 ~424x（test_33, 33 格组 976ms → 2.3ms）→ log2≈8.7，取 8 留余量
+#   win_rate     提速 ~6x  （test_4 派生局面 112 板 439ms → 78ms）→ log2≈2.6，取 2
+#
+# 对比测试需要新旧路径决策一致时，设 MSW_NATIVE_TUNE=0 强制保持原阈值。
+# ---------------------------------------------------------------------------
+LIMIT_BONUS_PART_SOLVE = 8   # part_solve 组枚举上限加成（等墙钟时间预算）
+LIMIT_BONUS_WIN_RATE = 2     # win_rate 触发阈值加成（limitation <= 6 → 8）
+
+
+def tuned():
+    """决策阈值是否按 C++ 提速放宽（默认开；MSW_NATIVE_TUNE=0 关闭）。"""
+    return available and os.environ.get("MSW_NATIVE_TUNE", "1") != "0"

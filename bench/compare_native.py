@@ -217,7 +217,7 @@ def main():
 
     print(f"\n累计耗时（本脚本各场景）：C++ {total_n:.3f}s  Python {total_p:.3f}s")
 
-    # ---------------- number5_1 端到端（固定种子） ----------------
+    # ---------------- number5_1 端到端（固定种子；关阈值放宽保证决策可比） ----------------
     if "--skip-e2e" not in sys.argv:
         for ds in ("test_33.json",):
             data = load_test_data(ds)
@@ -239,14 +239,25 @@ def main():
                 return norm, dt
 
             try:
+                os.environ["MSW_NATIVE_TUNE"] = "0"  # 阈值保持原值 → 决策路径一致
                 (out_n, dt_n), (out_p, dt_p) = run_e2e(True), run_e2e(False)
                 check(f"{ds} number5_1 端到端", out_n == out_p,
                       f"{str(out_n)[:120]} vs {str(out_p)[:120]}")
                 print(f"    number5_1 耗时：C++ {dt_n:.2f}s  Python {dt_p:.2f}s")
+
+                # 放宽阈值后的冒烟（win_rate 覆盖更多局面，只验证可正常完成）
+                os.environ.pop("MSW_NATIVE_TUNE")
+                np.random.seed(20240707)
+                s = make_full_solver(w=cv.shape[1] - 2, h=cv.shape[0] - 2, a=A)
+                t0 = time.perf_counter()
+                s.number5_1(cv.copy())
+                dt_t = time.perf_counter() - t0
+                print(f"    number5_1（阈值放宽后）：{dt_t:.2f}s，无异常")
             except Exception:
                 traceback.print_exc()
                 check(f"{ds} number5_1 端到端", False, "执行异常")
             finally:
+                os.environ.pop("MSW_NATIVE_TUNE", None)
                 native.available = True
 
     print()

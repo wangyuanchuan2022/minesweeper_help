@@ -79,6 +79,8 @@ class ProbabilityMixin:
             return cell_value
 
         limitation = 12
+        # win_rate 触发阈值：C++ 提速后按实测放宽（原 6；纯 Python / MSW_NATIVE_TUNE=0 保持 6）
+        wr_threshold = 6 + (native.LIMIT_BONUS_WIN_RATE if native.tuned() else 0)
         if len(clicks) == 0:  # 没有可以判断的格子
             total = 0
             res = []
@@ -155,9 +157,11 @@ class ProbabilityMixin:
                 temp[i] = len(click_list[i])
             temp = temp >= 15
             t_sum = temp.sum()
+            # C++ 提速 ~424x 后按同等墙钟预算放宽组枚举上限（纯 Python 保持原值）
+            base_limit = self.limit + (native.LIMIT_BONUS_PART_SOLVE if native.tuned() else 0)
             limit = (
-                self.limit - int(math.log2(t_sum) / 2) if t_sum != 0 else self.limit
-            )  # 20大约20s 19 10s 18 5s
+                base_limit - int(math.log2(t_sum) / 2) if t_sum != 0 else base_limit
+            )  # 20大约20s 19 10s 18 5s（纯 Python 标定；C++ 下每 +1 约 2 倍算量但仅 ~1/424 耗时）
             res_list = []
             canopen_res = np.array([])
             ck = []  # res_list中res的长度
@@ -264,7 +268,7 @@ class ProbabilityMixin:
                 limitation = len(clicks9) * 0.8 + math.log2(total)
                 logger.debug("limitation: %s", limitation)
 
-                if limitation <= 6:  # 小情况可以计算胜率
+                if limitation <= wr_threshold:  # 小情况可以计算胜率
                     win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
                     win_rate = np.around(win_rate, decimals=5)
                     self.text_signal.emit(f"此局面下的胜率为{max(win_rate): 0.4f}。\n")
@@ -329,7 +333,7 @@ class ProbabilityMixin:
 
                 time.sleep(0.1)
 
-                if limitation <= 6:
+                if limitation <= wr_threshold:
                     confidence = clicks2p[(p[0], p[1])]
 
                 _index = confidence * 100
