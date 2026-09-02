@@ -127,5 +127,44 @@ class TestTimeBudget(unittest.TestCase):
             native.available = saved
 
 
+class TestWrFeedback(unittest.TestCase):
+    """win_rate 阈值的实测反馈调节（无上限升降）。"""
+
+    def test_no_history_returns_start(self):
+        from utils.probability import _wr_feedback
+        th = _wr_feedback({}, 0.0)
+        self.assertEqual(th, 8)  # 起点 6+2
+
+    def test_rises_without_cap(self):
+        from utils import native
+        from utils.probability import _wr_feedback, DECISION_TIME_BUDGET
+        tb = {"wr": {"t": 8, "ms": 10.0, "fast_streak": 0}}
+        saved = native.available
+        native.available = True
+        try:
+            th = 8
+            # 连续多次快速 win_rate → 每 3 次升 1 档，无上限
+            for expected in (8, 8, 9, 9, 9, 10, 10, 10, 11):
+                tb["wr"]["t"] = th
+                tb["wr"]["ms"] = DECISION_TIME_BUDGET * 1000 * 0.1  # 快（<25% 预算）
+                th = _wr_feedback(tb, 0.0)
+                self.assertEqual(th, expected)
+        finally:
+            native.available = saved
+
+    def test_drops_on_overload(self):
+        from utils.probability import _wr_feedback, DECISION_TIME_BUDGET
+        tb = {"wr": {"t": 11, "ms": DECISION_TIME_BUDGET * 1000 * 0.9, "fast_streak": 2}}
+        th = _wr_feedback(tb, 0.0)
+        self.assertEqual(th, 10)  # 超预算（>75%）→ 降一档
+        self.assertEqual(tb["wr"]["fast_streak"], 0)  # 连击清零
+
+    def test_middle_band_holds(self):
+        from utils.probability import _wr_feedback, DECISION_TIME_BUDGET
+        tb = {"wr": {"t": 9, "ms": DECISION_TIME_BUDGET * 1000 * 0.5, "fast_streak": 1}}
+        th = _wr_feedback(tb, 0.0)
+        self.assertEqual(th, 9)  # 25%~75% 区间不动
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -35,15 +35,22 @@ logger = get_logger(__name__)
 # （属性 _time_budget）上跨决策记忆。仅 native.tuned()（C++ 可用且未设
 # MSW_NATIVE_TUNE=0）时启用，纯 Python 回退自动恢复原始静态行为。
 # ---------------------------------------------------------------------------
-DECISION_TIME_BUDGET = 10.0  # number5_1 单次决策总预算（秒，含视觉扫描）
+DECISION_TIME_BUDGET = 30.0  # number5_1 单次决策总预算（秒，含视觉扫描）——用户确认的上限
 _PS_REF_SIZE = 33            # 模型参考组大小（实测标定点：C++ 2.3ms / Python 976ms）
-_PS_SAFETY = 2.0             # 预测安全系数（组形状差异 + 模型误差）
-_PS_RESERVE_S = 2.5          # 枚举阶段为之后的 win_rate / pbs / 决策输出预留的时间（秒）
+_PS_SAFETY = 2.0             # 预测安全系数（组形状差异可达 10x + 模型误差）
+_PS_RESERVE_S = 3.0          # 枚举阶段为之后的 win_rate / pbs / 决策输出预留的时间（秒）
+# win_rate 阈值不设上限（用户要求）：起点 6+2=8，由 _wr_feedback 按实测在预算内
+# 自由升降——快则逐级上爬覆盖更大局面，慢（>预算×0.75）则降档回 pbs。
 
 
 def _ps_default_base_ms():
-    """模型初值：33 格组在当前模式下的典型耗时（毫秒），按实测标定。"""
-    return 5.0 if native.available else 1000.0
+    """模型初值：33 格组在当前模式下的典型耗时（毫秒）。
+
+    C++ 取实测（2.3ms）的约 4 倍作保守初值（10ms），首次遭遇大组时宁可少算一点
+    也不突破预算；随后由实测逐次校准收敛到真实值。Python 侧仅在 native 部分回退
+    场景下由观测自校正，初值影响不大。
+    """
+    return 10.0 if native.available else 1500.0
 
 
 def _ps_base_ms(state):
@@ -61,14 +68,45 @@ def _ps_predict_ms(state, size):
 
 
 def _ps_observe(state, size, ms):
-    """按实测耗时更新模型（指数平滑，新观测权重 0.4）。"""
+    """按实测耗时更新模型（指数平滑，新观测权重 0.5）。"""
     implied = ms / (2.0 ** max(size - _PS_REF_SIZE, -20))
-    state["ps_base_ms"] = 0.6 * _ps_base_ms(state) + 0.4 * implied
+    state["ps_base_ms"] = 0.5 * _ps_base_ms(state) + 0.5 * implied
 
 
 def _budget_remaining(state, t_start):
     """距决策预算截止的剩余秒数（扣除枚举后阶段预留）。"""
     return t_start + DECISION_TIME_BUDGET - _PS_RESERVE_S - time.perf_counter()
+
+
+def _wr_feedback(tb, t_start):
+    """win_rate 阈值的实测反馈调节（native.tuned() 下启用，不设上限）。
+
+    观测：最近一次真正调用 win_rate 的决策耗时（存于 tb["wr"]，见 number5_1）。
+    规则（阈值只影响「limitation 萅过阈值的部分改走 pbs 近似」）：
+      - 上次 win_rate 耗时 > 预算×0.75 → 阈值降到 max(6, 当前阈值−1)：win_rate
+        拖垮了决策，回退到更省的 pbs；
+      - 连续 3 次 win_rate 耗时 < 预算×0.25 → 阈值 +1：算力余量充足，让更优的
+        win_rate 覆盖更大的局面（无上限，逐步上爬）；
+      - 其余情形（预算×0.25 ~ ×0.75 之间）保持不变——控制器自然稳定在该区间。
+    阈值持久化在 tb["wr"]["t"] 中，跨决策记忆。纯 Python（native 不可用）不调用
+    本函数，阈值恒 6。
+    """
+    th = 6 + native.LIMIT_BONUS_WIN_RATE  # 起点：6+2=8
+    wr = tb.get("wr")
+    if wr is None:
+        return th
+    th = wr.get("t", th)
+    budget_ms = DECISION_TIME_BUDGET * 1000.0
+    if wr["ms"] > budget_ms * 0.75:            # 上次 win_rate 超预算 → 惩罚降档
+        th = max(6, th - 1)
+        tb["wr"]["fast_streak"] = 0
+    elif wr["ms"] < budget_ms * 0.25:          # 上次很快 → 累计，3 次后奖励升档（无上限）
+        fast_streak = wr.get("fast_streak", 0) + 1
+        if fast_streak >= 3:
+            th += 1
+            fast_streak = 0
+        tb["wr"]["fast_streak"] = fast_streak
+    return th
 
 
 class ProbabilityMixin:
@@ -303,6 +341,11 @@ class ProbabilityMixin:
 
                         self.checked[tuple(click_list[index])] = (_res, _canopen_res)
 
+            # 阶段计时：辅助定位超预算耗时落在哪一段
+            logger.debug("枚举阶段：%d 组待解，距决策开始 %.0f ms（超时若发生在此段为 part_solve 枚举）",
+                         len(click_list),
+                         (time.perf_counter() - t_decision_start) * 1000.0)
+
             if is_removed and (not self.is_play):
                 self.warning_signal_2.emit(
                     "由于计算量的限制，一部分情况未枚举，结果可能不准确\n"
@@ -345,27 +388,18 @@ class ProbabilityMixin:
                 logger.debug("limitation: %s", limitation)
 
                 if _tb is not None:
-                    # win_rate 反馈调节：上次实测超预算 → 下调一档；远快于预算 → 恢复一档
-                    _wr_last = _tb.get("wr_last")
-                    if _wr_last is not None:
-                        _lt, _lms = _wr_last
-                        _wr_rem = t_decision_start + DECISION_TIME_BUDGET - time.perf_counter()
-                        if _lms > _wr_rem * 1000.0 * 0.8:
-                            wr_threshold = min(wr_threshold, max(6, _lt - 1))
-                        elif _lms < _wr_rem * 1000.0 * 0.1:
-                            wr_threshold = max(
-                                wr_threshold,
-                                min(6 + native.LIMIT_BONUS_WIN_RATE, _lt + 1),
-                            )
-                    logger.debug("wr_threshold=%s（预算剩余 %.2fs）",
-                                 wr_threshold, _wr_rem if _wr_last is not None else float("nan"))
+                    # win_rate 阈值实测反馈（见 _wr_feedback）：超预算降档、连续快则升档
+                    wr_threshold = _wr_feedback(_tb, t_decision_start)
+                    logger.debug("wr_threshold=%s（limitation=%.2f）", wr_threshold, limitation)
 
                 if limitation <= wr_threshold:  # 小情况可以计算胜率
                     _t_wr = time.perf_counter()
                     win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
                     if _tb is not None:
-                        _tb["wr_last"] = (wr_threshold,
-                                          (time.perf_counter() - _t_wr) * 1000.0)
+                        # 记录本次 win_rate 观测（保留 fast_streak 字段，供下次 _wr_feedback 使用）
+                        _wr_d = _tb.setdefault("wr", {})
+                        _wr_d["t"] = wr_threshold
+                        _wr_d["ms"] = (time.perf_counter() - _t_wr) * 1000.0
                     win_rate = np.around(win_rate, decimals=5)
                     self.text_signal.emit(f"此局面下的胜率为{max(win_rate): 0.4f}。\n")
                     where_max = np.where(win_rate == np.max(win_rate), 1, 0)
@@ -411,6 +445,10 @@ class ProbabilityMixin:
                     self.till_now_winrate *= confidence
                     self.text_signal.emit(f"走到此局面，还没死的概率为{self.till_now_winrate: 0.4f}。\n")
 
+        logger.debug("决策完成：limitation=%.1f，总耗时 %.0f ms（预算 %.0fs；超时则检查上方各阶段）",
+                     limitation,
+                     (time.perf_counter() - t_decision_start) * 1000.0,
+                     DECISION_TIME_BUDGET)
         self.text_signal.emit(f"共{total: 0.2f}种解。")
         if total == 0:
             self.text_signal.emit("随机选择。\n")
