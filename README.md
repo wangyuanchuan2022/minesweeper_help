@@ -38,6 +38,26 @@
    - 缓存相同场景的计算结果
    - 仅计算相关数字格子(距离<1.414的格子)
    - 分部分枚举降低计算复杂度
+   - C++ 加速核心(见下文)
+
+## C++ 加速模块（可选）
+
+核心热点（`part_solve` 深度枚举、`win_rate` 胜率搜索、`process_bigger_situation`
+乘积组合计算、`part_solve_single`）已用 C++ (pybind11) 重写，位于 `cpp/mscore.cpp`，
+构建产物为 `utils/mscore.cp310-win_amd64.pyd`（Python 3.10 / Win64）。
+
+- **自动回退（硬性保证）**：`.pyd` 缺失、Python 版本不匹配、依赖缺失或运行期任何
+  异常时，程序自动回退到纯 Python 原实现，功能与结果完全一致（`utils/native.py`
+  负责加载与回退开关）。
+- **强制禁用**：设置环境变量 `MSW_DISABLE_NATIVE=1` 可强制使用纯 Python（用于对比测试）。
+- **重新构建**：在仓库根目录执行 `cpp\build.bat`（需要 MSVC 2022 与 py310 环境，
+  pybind11 头文件已 vendored 在 `cpp/inc/`）。
+- **一致性验证**：`bench/compare_native.py` 在相同输入下逐位对比 C++ 与纯 Python
+  的全部输出（含 `number5_1` 端到端，固定随机种子）；`bench/profile_hotspots.py`
+  用于性能对比。
+- 实测（test_33 局面）：`part_solve` 976ms → 2.3ms（约 420 倍），
+  `number5_1` 端到端 7.9s → 0.3s（约 27 倍，剩余耗时为视觉扫描）。
+
 
 ### 关键类和函数
 
