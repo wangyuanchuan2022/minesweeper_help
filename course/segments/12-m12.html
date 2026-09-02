@@ -1,0 +1,409 @@
+<!-- ============ 模块 12：工程化全景（收官） ============ -->
+<section class="module" id="m12">
+  <header>
+    <h2 class="t-h1">12 · 工程化全景：测试、打包与技术债</h2>
+    <p class="t-body">m11 把配置的地基打牢了，这门课的引擎部分就讲完了。最后一课换个视角——不是「它怎么算」，而是「接手的人怎么活下去」：测试体系怎么搭、Solver 类怎么组装、打包为什么一跑就失败、以及仓库里明码标价的五笔技术债。</p>
+  </header>
+
+  <p class="t-body">测试锚在 tests/ 包：6 个 py 文件（5 个测试文件 + 1 个 helpers），共 71 个测试方法。运行方式：Python 3.7 conda 环境，<code>python -m unittest discover -s tests</code>——py37 环境没装 pytest，用的是标准库 unittest（HANDOFF 文档 §6 的验证策略）。整套体系的地基是一个 34 行的辅助函数。</p>
+
+  <div class="translate-pair" id="pair-m12-mksolver" data-file="tests/helpers.py · L13-L46">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">tests/helpers.py · L13-L46</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>def make_solver(w=5, h=5, a=3, is_play=False):
+    """构造一个「轻量」Solver 实例，用于不发射信号的纯逻辑方法。
+
+    使用 ``Solver.__new__`` 跳过 ``__init__``（避免读取 cfg.json 与加载模板图片），
+    并手动初始化被测方法所需的属性。
+    """
+    solver = Solver.__new__(Solver)</code></pre>
+        <pre class="tp-line" data-i="1"><code>    solver.w = w
+    solver.h = h
+    solver.a = a
+    solver.is_play = is_play
+    solver.cell_width = 24
+    solver.screenshot_w = int(solver.cell_width * 5 / 9)
+    solver.screenshot_h = int(solver.cell_width * 7 / 9)
+    solver.pos_dict_list = []
+    solver.appended_pos = set()
+    solver.num = 0
+    solver.checked = {}
+    solver.memory = {}
+    solver.cell_value = None
+    solver.img = None
+    solver.bx = 0
+    solver.by = 0
+    solver._bx = 0
+    solver._by = 0
+    solver.count = 0
+    solver.p = (a / (w * h)) if (w * h) else 0.0
+    solver.images = None
+    solver._images_cell_width = None
+    solver._images_mtime = None
+    solver._locate_templates = {}
+    solver.stats_data = None
+    solver._stats_updates = 0
+    return solver</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">侧门钥匙：<code>Solver.__new__(Solver)</code> 造出对象但<strong>不跑 __init__</strong>——绕过大门：不读 cfg.json、不加载 25 张模板图片、不初始化 Qt 线程信号。为什么必须绕：__init__ 的每一步都依赖外部世界（文件存在、图片格式正确、Qt 环境），任何一步坏掉，71 个测试会成片崩掉；单元测试要的是「只测被测方法」。</div>
+        <div class="tp-note t-body" data-i="1">摆实验台：手动把被测方法用到的属性一个个摆好——几何（w/h/cell_width/切片尺寸，与真实默认值一致）、推理状态（checked/memory/pos_dict_list）、统计缓存占位。对照 utils/solver.py L53-L93 的 __init__ 正是这份清单的「正门版」；连 p 都按公式手工算（L39，m11 字段表的派生项）。测试与生产走同一套属性约定，只是来源不同。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body">这把侧门钥匙换来的东西看得很清楚：71 个测试全部只依赖内存里摆好的属性，不碰磁盘、不碰屏幕。它们都测什么？</p>
+
+  <div class="viz-scene scene" data-kind="bars">
+    <div class="viz-title t-h3">📊 71 个测试都在测什么（按文件分布）</div>
+    <script type="application/json" class="viz-data">
+    {
+      "unit": "个",
+      "items": [
+        { "label": "组合数学", "value": 34,
+          "note": "C / C_num / A / p_of_c / get_list / combination_ratio —— 纯函数，不碰 Qt、截图与配置，所以最敢多测",
+          "anchor": "grep 清点 tests/test_combinatorics.py 的 def test_ 方法数" },
+        { "label": "推理核心", "value": 21,
+          "note": "cell_around / get_set / number0 / mine_clear1 / open_num5x5 —— m4 / m5 讲过的两层确定性规则",
+          "anchor": "grep 清点 tests/test_solver_core.py 的 def test_ 方法数" },
+        { "label": "扫描与缓存", "value": 12,
+          "note": "_slice_cell / _cell_changed / rescan_after_click / 模板缓存 / 统计缓存 —— m1 / m3 的视觉层机制",
+          "anchor": "grep 清点 tests/test_scan.py 的 def test_ 方法数" },
+        { "label": "概率集成", "value": 4,
+          "note": "part_solve(_single) / number5_1 / win_rate —— 用 tests/data 目录下的真实棋盘 JSON 做集成验证",
+          "anchor": "grep 清点 tests/test_probability.py 的 def test_ 方法数" }
+      ]
+    }
+    </script>
+    <div class="viz-stage" role="group" aria-label="71 个测试按文件的分布"></div>
+    <div class="viz-detail t-muted" hidden></div>
+  </div>
+
+  <p class="t-body">分布本身就是架构的体检报告：越纯的层（组合数学）测试越多、越易测；越集成的层（概率引擎要真实棋盘数据）测试越少但越重。HANDOFF 文档把验收线写死了：§3 的验证结果是 71 个测试全部通过（exit 0），§5 关键约束第 3 条要求每个任务完成后测试套件必须全绿。</p>
+
+  <div class="translate-pair" id="pair-m12-mixin" data-file="utils/solver.py · L50-L79">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/solver.py · L50-L79</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread):
+    def __init__(self):
+        super().__init__()
+        self.memory = {}
+        self.images = None
+        self._images_cell_width = None
+        self._images_mtime = None
+        self._locate_templates = {}
+        self.by = None
+        self.bx = None
+        self.num = 0
+        self.cell_value = None
+        self.img = None</code></pre>
+        <pre class="tp-line" data-i="1"><code>
+        self.count = 0
+        with open("cfg.json", encoding="utf-8") as f:
+            self.cfg = json.load(f)
+        self.w = self.cfg["w"]
+        self.h = self.cfg["h"]
+        self._bx = self.cfg["bx"]  #
+        self._by = self.cfg["by"]  #
+        self.cell_width = self.cfg["cell_width"]
+        self.a = self.cfg["a"]  # 总雷数
+        self.limit = self.cfg["limit"]
+        self.p = self.a / (self.w * self.h)
+        self.speed = self.cfg["speed"]
+
+        self.screenshot_h = int(self.cell_width * 7 / 9)
+        self.screenshot_w = int(self.cell_width * 5 / 9)
+        self.load_img()</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">组合式声明：四个父类按顺序混入——视觉、推理、概率三个 Mixin，加上 AutoPlayThread（QThread 子类，m10 那 8 个信号全在它身上，L30-L47）。所有属性先置 None / 空再赋真值，这份「先占位后赋值」的清单正是 make_solver 摆台的参考系。</div>
+        <div class="tp-note t-body" data-i="1">「开大门」的全程：读 cfg.json、逐项展开成实例属性（m11 的字段表逐一对号）、算两个派生（p 与切片尺寸）、load_img 加载 25 张模板。测试绕开的正是这一段——每行都依赖外部世界，也正是 run() 启动线程时 reload()（L138-L152）重走的同一段路。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="scene">
+    <div class="t-h3">🗼 类的组合链：MRO 一条道走到 QObject</div>
+    <p class="t-body">「Solver 是什么」的完整答案不在这一个文件里，在这条继承链上。方法查找与 super() 都按同一条链走——从 Solver 出发，一条道走到 QObject。</p>
+    <svg viewBox="0 0 720 340" width="100%" role="img" aria-label="Solver 的 MRO 继承链：Solver 到 QObject 共七层">
+      <defs>
+        <marker id="m12-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+      <g>
+        <rect x="40" y="12" width="330" height="36" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="52" y="27" font-size="13" font-weight="bold" fill="currentColor">Solver（组合类，utils/solver.py L50）</text>
+        <text x="52" y="41" font-size="11" fill="currentColor">你实例化的就是它：混入三份能力 + 一条线程</text>
+        <rect x="40" y="60" width="330" height="36" rx="8" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="52" y="75" font-size="13" font-weight="bold" fill="currentColor">BoardVisionMixin</text>
+        <text x="52" y="89" font-size="11" fill="currentColor">vision.py —— 看：load_img / _slice_cell / compare_img / rescan</text>
+        <rect x="40" y="108" width="330" height="36" rx="8" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="52" y="123" font-size="13" font-weight="bold" fill="currentColor">DeductionMixin</text>
+        <text x="52" y="137" font-size="11" fill="currentColor">deduction.py —— 推：cell_around / number0 / number_3_1</text>
+        <rect x="40" y="156" width="330" height="36" rx="8" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="52" y="171" font-size="13" font-weight="bold" fill="currentColor">ProbabilityMixin</text>
+        <text x="52" y="185" font-size="11" fill="currentColor">probability.py —— 算：number5_1 / win_rate / part_solve</text>
+        <rect x="40" y="204" width="330" height="36" rx="8" fill="var(--bg-sidebar)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="52" y="219" font-size="13" font-weight="bold" fill="currentColor">AutoPlayThread（QThread 子类）</text>
+        <text x="52" y="233" font-size="11" fill="currentColor">solver.py L30 —— 8 个 pyqtSignal + set_args</text>
+        <rect x="40" y="252" width="330" height="36" rx="8" fill="var(--bg-sidebar)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="52" y="267" font-size="13" font-weight="bold" fill="currentColor">QThread</text>
+        <text x="52" y="281" font-size="11" fill="currentColor">PyQt5 线程基类</text>
+        <rect x="40" y="300" width="330" height="36" rx="8" fill="var(--bg-sidebar)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="52" y="315" font-size="13" font-weight="bold" fill="currentColor">QObject</text>
+        <text x="52" y="329" font-size="11" fill="currentColor">Qt 万物基类</text>
+      </g>
+      <g>
+        <line x1="205" y1="48" x2="205" y2="58" stroke="var(--accent)" stroke-width="2" marker-end="url(#m12-arrow)"/>
+        <line x1="205" y1="96" x2="205" y2="106" stroke="var(--accent)" stroke-width="2" marker-end="url(#m12-arrow)"/>
+        <line x1="205" y1="144" x2="205" y2="154" stroke="var(--accent)" stroke-width="2" marker-end="url(#m12-arrow)"/>
+        <line x1="205" y1="192" x2="205" y2="202" stroke="var(--accent)" stroke-width="2" marker-end="url(#m12-arrow)"/>
+        <line x1="205" y1="240" x2="205" y2="250" stroke="var(--accent)" stroke-width="2" marker-end="url(#m12-arrow)"/>
+        <line x1="205" y1="288" x2="205" y2="298" stroke="var(--accent)" stroke-width="2" marker-end="url(#m12-arrow)"/>
+      </g>
+      <rect x="404" y="24" width="300" height="296" rx="10" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+      <text x="554" y="50" text-anchor="middle" font-size="14" font-weight="bold" fill="currentColor">MRO 怎么读（HANDOFF 2.3 已验证）</text>
+      <text x="420" y="80" font-size="12" fill="currentColor">super().__init__() 沿这条链找</text>
+      <text x="420" y="102" font-size="12" fill="currentColor">__init__：三个 Mixin 都没定义它，</text>
+      <text x="420" y="124" font-size="12" fill="currentColor">一路穿到 AutoPlayThread.__init__</text>
+      <text x="420" y="146" font-size="12" fill="currentColor">（solver.py L40-L43）再到 QThread。</text>
+      <text x="420" y="180" font-size="12" fill="currentColor">方法查找走同一条链：调</text>
+      <text x="420" y="202" font-size="12" fill="currentColor">self.compare_img()，先 Solver、</text>
+      <text x="420" y="224" font-size="12" fill="currentColor">再 Vision、再 Deduction……</text>
+      <text x="420" y="246" font-size="12" fill="currentColor">第一个命中者胜。</text>
+      <text x="420" y="280" font-size="12" fill="currentColor">Mixin 不单独实例化，全靠宿主属性；</text>
+      <text x="420" y="302" font-size="12" fill="currentColor">vision.py L4-L8 的 docstring 把依赖</text>
+      <text x="420" y="324" font-size="12" fill="currentColor">属性列成了契约清单。</text>
+    </svg>
+  </div>
+
+  <div class="viz-scene scene" data-kind="steps">
+    <div class="viz-title t-h3">🕹️ 两次查找，一条链：compare_img 一击即中，__init__ 直穿到底（同一 MRO 链四帧对比）</div>
+    <div class="viz-stage" role="group" aria-label="MRO 方法查找逐帧回放">
+      <div class="viz-stepdeck">
+        <div class="viz-step" data-caption="第 1 帧：solver.compare_img(...) 发起查找——从 MRO 第 0 站 Solver 自己开始">
+          <svg viewBox="0 0 420 196" width="100%" role="img" aria-label="方法查找从 Solver 开始">
+            <g>
+              <rect x="60" y="8" width="220" height="26" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="60" y="40" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="72" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="104" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="136" width="220" height="26" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+              <rect x="60" y="168" width="220" height="24" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+            </g>
+            <text x="72" y="26" font-size="13" font-weight="bold" fill="currentColor">Solver（组合类）</text>
+            <text x="72" y="58" font-size="13" fill="currentColor">BoardVisionMixin</text>
+            <text x="72" y="90" font-size="13" fill="currentColor">DeductionMixin</text>
+            <text x="72" y="122" font-size="13" fill="currentColor">ProbabilityMixin</text>
+            <text x="72" y="154" font-size="13" fill="currentColor">AutoPlayThread</text>
+            <text x="72" y="185" font-size="13" fill="currentColor">QThread</text>
+            <text x="310" y="26" font-size="13" fill="var(--accent)">① 找 compare_img</text>
+            <text x="310" y="48" font-size="12" fill="currentColor">从第 0 站开查</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 2 帧：Solver 类体里没有 compare_img → 下一站 BoardVisionMixin 命中（vision.py L117），第一个命中者胜">
+          <svg viewBox="0 0 420 196" width="100%" role="img" aria-label="compare_img 在 Vision 命中">
+            <g>
+              <rect x="60" y="8" width="220" height="26" rx="6" fill="var(--accent-soft)" stroke="var(--border)"/>
+              <rect x="60" y="40" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="60" y="72" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="104" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="136" width="220" height="26" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+              <rect x="60" y="168" width="220" height="24" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+            </g>
+            <text x="72" y="26" font-size="13" font-weight="bold" fill="currentColor">Solver（无此方法，跳过）</text>
+            <text x="72" y="58" font-size="13" font-weight="bold" fill="var(--accent)">BoardVisionMixin ✓ 命中</text>
+            <text x="72" y="90" font-size="13" fill="currentColor">DeductionMixin</text>
+            <text x="72" y="122" font-size="13" fill="currentColor">ProbabilityMixin</text>
+            <text x="72" y="154" font-size="13" fill="currentColor">AutoPlayThread</text>
+            <text x="72" y="185" font-size="13" fill="currentColor">QThread</text>
+            <text x="310" y="58" font-size="13" fill="var(--accent)">② 第二站命中</text>
+            <text x="310" y="80" font-size="12" fill="currentColor">后面的站不再看</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 3 帧：另一场查找——solver.__init__(...)：三个 Mixin 都没定义 __init__，一路穿行">
+          <svg viewBox="0 0 420 196" width="100%" role="img" aria-label="init 查找穿行 Mixin">
+            <g>
+              <rect x="60" y="8" width="220" height="26" rx="6" fill="var(--accent-soft)" stroke="var(--border)"/>
+              <rect x="60" y="40" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--accent-3)" stroke-width="2" stroke-dasharray="4 3"/>
+              <rect x="60" y="72" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--accent-3)" stroke-width="2" stroke-dasharray="4 3"/>
+              <rect x="60" y="104" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--accent-3)" stroke-width="2" stroke-dasharray="4 3"/>
+              <rect x="60" y="136" width="220" height="26" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+              <rect x="60" y="168" width="220" height="24" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+            </g>
+            <text x="72" y="26" font-size="13" font-weight="bold" fill="currentColor">Solver（无 __init__）</text>
+            <text x="72" y="58" font-size="13" fill="currentColor">BoardVisionMixin（无，穿过）</text>
+            <text x="72" y="90" font-size="13" fill="currentColor">DeductionMixin（无，穿过）</text>
+            <text x="72" y="122" font-size="13" fill="currentColor">ProbabilityMixin（无，穿过）</text>
+            <text x="72" y="154" font-size="13" fill="currentColor">AutoPlayThread</text>
+            <text x="72" y="185" font-size="13" fill="currentColor">QThread</text>
+            <text x="310" y="26" font-size="13" fill="var(--accent)">③ 找 __init__</text>
+            <text x="310" y="48" font-size="12" fill="currentColor">虚线框 = 穿行不停</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 4 帧：AutoPlayThread.__init__ 命中（solver.py L40-L43，读 cfg.json 摆属性），super() 继续传给 QThread 收尾">
+          <svg viewBox="0 0 420 196" width="100%" role="img" aria-label="init 在 AutoPlayThread 命中">
+            <g>
+              <rect x="60" y="8" width="220" height="26" rx="6" fill="var(--accent-soft)" stroke="var(--border)"/>
+              <rect x="60" y="40" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="72" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="104" width="220" height="26" rx="6" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="136" width="220" height="26" rx="6" fill="var(--bg-sidebar)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="60" y="168" width="220" height="24" rx="6" fill="var(--bg-sidebar)" stroke="var(--border)"/>
+            </g>
+            <text x="72" y="26" font-size="13" font-weight="bold" fill="currentColor">Solver（组合类）</text>
+            <text x="72" y="58" font-size="13" fill="currentColor">BoardVisionMixin</text>
+            <text x="72" y="90" font-size="13" fill="currentColor">DeductionMixin</text>
+            <text x="72" y="122" font-size="13" fill="currentColor">ProbabilityMixin</text>
+            <text x="72" y="154" font-size="13" font-weight="bold" fill="var(--accent)">AutoPlayThread ✓ 命中</text>
+            <text x="72" y="185" font-size="13" fill="currentColor">QThread</text>
+            <text x="310" y="154" font-size="13" fill="var(--accent)">④ 读 cfg 摆属性</text>
+            <text x="310" y="176" font-size="12" fill="currentColor">super() → QThread</text>
+          </svg>
+        </div>
+      </div>
+      <div class="viz-controls">
+        <button class="viz-btn viz-prev" type="button" aria-label="上一帧">◀</button>
+        <span class="viz-pos">1 / 4</span>
+        <button class="viz-btn viz-next" type="button" aria-label="下一帧">▶</button>
+        <button class="viz-btn viz-auto" type="button" aria-pressed="false">▶ 自动播放</button>
+      </div>
+      <div class="viz-caption t-muted">tests/helpers.py 的 make_solver 绕开第 4 帧这条 __init__ 路，用 __new__ 侧门直接摆属性</div>
+    </div>
+  </div>
+
+  <p class="t-body"><strong>为什么这样设计：</strong>另一个极端是单大类——拆分前的 util.py 曾是 2113 行的巨石（HANDOFF §3），视觉、推理、概率、线程全挤在一个类里，改一处要通读全文。T5 拆成 7 个模块 + 37 行薄包装（re-export 全部旧名字，旧导入路径继续可用）后：每个 Mixin 单一职责，纯逻辑层（combinatorics）能独立测试。代价是跨 Mixin 的<strong>隐式依赖</strong>——DeductionMixin 用 self.w、ProbabilityMixin 用 self.checked，这些都不在自己的文件里定义——只能靠文件头 docstring 声明契约（vision.py L4-L8 就是范例），IDE 帮不了你。</p>
+
+  <div class="translate-pair" id="pair-m12-spec" data-file="main.spec · L7-L21">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">main.spec · L7-L21</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>a = Analysis(
+    ['main.py', 'bg_rc.py', 'edit_setting.py', 'mm0.py', 'screenshot.py', 'setting.py', 'utils.py', 'window.py'],
+    pathex=[],
+    binaries=[],
+    datas=[('image/', 'image/')],</code></pre>
+        <pre class="tp-line" data-i="1"><code>    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">搬了家没改门牌：这份入口清单还是拆分前的平铺结构。8 个文件里只有 main.py、setting.py 还在根目录——bg_rc / edit_setting / window / screenshot 已搬进 ui/ 包，mm0 搬进 utils/ 包，utils.py 变成了整个 utils/ 包（T5 拆分）。PyInstaller 按清单找模块，6 个找不到，构建直接失败。datas 的 image/ 路径仍然有效——m1 的 25 张模板身份证必须随包发行。</div>
+        <div class="tp-note t-body" data-i="1">其余是 PyInstaller 样板（隐藏导入、加密、排除项）。修复方向：把入口清单换成真实结构——main.py 一个脚本入口就够，PyInstaller 会顺着 import 语句自动发现 utils/、ui/ 包。教训是<strong>构建脚本也是文档</strong>：代码搬家后，它是第一批要跟着更新的东西，而它恰恰最容易被忘掉。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body">打包只是「搬家没改门牌」的最新受害者。HANDOFF 文档把已知的坑都记了账，接手前值得通读一遍——五笔最大的债如下：</p>
+
+  <div class="scene">
+    <div class="t-h3">🧾 技术债清单（全部锚定 HANDOFF.md）</div>
+    <ul class="t-body">
+      <li><strong>sort_clicks 从未被调用</strong>：utils/clicking.py L11-L45 实现了按最小生成树排序点击坐标（省鼠标跑动）的完整算法，主流程却一处不用（HANDOFF 2.8 第 4 条）——一份写完就搁置的「接线题」，想练手可以从这里开始。</li>
+      <li><strong>num_workers = 8 声明未用</strong>：setting.py L6 定义后，全仓库 grep 仅此一处出现——疑似为多进程预留，从未接线。</li>
+      <li><strong>cell_value 重置双循环重复 11 处</strong>：utils/solver.py 6 处 + utils/probability.py 5 处（HANDOFF 2.7.2）——m2 翻译块里那 5 行初始化代码你见过一次，其实在仓库里出现 11 次；HANDOFF 建议提取 make_unopened_board(w, h) 工具函数。</li>
+      <li><strong>胜负检测四分支结构雷同</strong>：play() 里「游戏胜利窗口 / 游戏失败窗口 / win.bmp / lose.bmp」四段几乎相同（HANDOFF 2.7.3）——m10 走主循环时你已经在同一段代码里读过四遍相似的等待与重置。</li>
+      <li><strong>配置加载分散</strong>：main.py 多处、utils/solver.py 的 __init__ 与 reload、setting.py 在 import 时直接 open（cfg.json 缺失 = import 即崩，HANDOFF 2.4）——m11 的字段表看到的同一份配置，被七零八落地读了很多遍。</li>
+    </ul>
+  </div>
+
+  <div class="scene">
+    <div class="t-h3">🗺️ HANDOFF 路线图：已完成与待办</div>
+    <table>
+      <thead>
+        <tr><th>任务</th><th>内容</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>T1 信号节流</td><td>pv_signal 每 100ms 最多发一次，特殊值直发（m10 的「节水龙头」）</td><td>✅ 已完成</td></tr>
+        <tr><td>T2 模板缓存</td><td>load_img 按 mtime + cell_width 缓存，模板变了自动重载（m1 讲过的缓存指纹）</td><td>✅ 已完成</td></tr>
+        <tr><td>T5 util.py 拆分</td><td>2113 行巨石拆成 7 个模块 + 37 行薄包装 re-export，零功能变更</td><td>✅ 已完成</td></tr>
+        <tr><td>T3 统一配置管理</td><td>新建 config.py 收拢分散加载；setting.py 延迟加载，根治 import 即崩</td><td>⏳ pending</td></tr>
+        <tr><td>T4 GUI 业务解耦</td><td>SolverCore 纯逻辑 + SolverThread Qt 包装，回调替代信号，依赖 T3</td><td>⏳ pending</td></tr>
+        <tr><td>T6 拆分 main.py</td><td>1095 行入口按窗口拆成 gui/ 包（main_window / edit_setting / screenshot 等），依赖 T3</td><td>⏳ pending</td></tr>
+      </tbody>
+    </table>
+    <p class="t-body t-muted">实施顺序（HANDOFF §4）：T3 → T4 →（T5-深度 与 T6 可并行）。每个任务完成的验收线都是同一条：71 个测试全绿。</p>
+  </div>
+
+  <div class="quiz" data-quiz="m12-q1">
+    <div class="quiz-q t-h3">🧪 接手后想重新打包 exe，直接跑 PyInstaller main.spec，会发生什么？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。PyInstaller 的 Analysis 找不到入口清单里的模块文件时在构建阶段就报错退出，不会「带病成功」——上文的 main.spec 翻译块第一段：6 个文件已搬进 ui/ 与 utils/ 包。">A. 能打包成功，只是打出来的 exe 缺文件，运行时才崩</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。spec 的 Analysis 引用 8 个平铺文件，其中 bg_rc / edit_setting / window / screenshot 在 ui/ 包、mm0 在 utils/ 包、utils.py 已变成 utils/ 包（pair-m12-spec 第一段 + HANDOFF §3 的 T5 拆分记录）——PyInstaller 找不到这 6 个模块，构建直接失败。修复方向：入口清单换成真实结构（main.py 单入口，让 PyInstaller 顺着 import 自动发现 utils/、ui/ 包）。">B. 构建直接失败——spec 引用的 6 个平铺文件在 T5 拆分后已不存在，要把清单改成 main.py + 包结构的真实入口</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。PyInstaller 靠 Analysis 的 import 分析决定打包什么，不认手动拷贝；正确方向是改 spec（或用工具重新生成），见 pair-m12-spec 第二段。">C. 把 utils/ 目录整个拷进 dist/ 就能修好</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错（干扰项）。datas 的相对路径 image/ 仍然有效且必要——25 张模板必须随包发行（m1）；过时的是 scripts 清单里的 6 个文件名，不是数据路径。">D. 失败原因是 datas 里的 image/ 路径也过时了，要一并改</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m12-q2">
+    <div class="quiz-q t-h3">🧪 想给数字「7」加一个新模板变体（比如另一种渲染风格的 7_2.bmp），按现有架构要动哪些地方？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。Solver.__init__ 只负责把已登记的模板载进内存（pair-m12-mixin 第二段的 load_img），加载由 _TEMPLATE_LAYOUT 驱动，登记即生效——不用动 Solver，也不用动 make_solver。">A. image/ 放图 + 改 utils/solver.py 的 __init__ 手动注册新模板</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。模板库是「相册分格抽屉」：_TEMPLATE_LAYOUT 每行一个数字、抽屉里放变体文件名（vision.py L23-L36，m1 的 pair-m1-layout 讲过结构）；load_img 按登记表加载，compare_img 对每格的全部变体取最像的（m1 的 pair-m1-compare）。截图质量可先用设置里的「截图帮助」重截。">B. image/ 放新截图 + 在 _TEMPLATE_LAYOUT 的「7」那一行登记文件名——两处就够</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。cfg.json 管的是棋盘几何、位置与游戏路径（m11 的字段表），模板变体不进配置；加开关字段只会多一个没人读的键——就像 setting.py 的 num_workers。">C. image/ 放图 + 在 cfg.json 里加一个变体开关字段</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。测试是质量护栏不是功能入口（本模块 bars 图：tests 只考察既有函数）；加断言只能验证你已登记的模板，不会让运行时多认一张图。">D. image/ 放图 + 在 tests/test_scan.py 加一条断言，程序才会认识新模板</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m12-q3">
+    <div class="quiz-q t-h3">🧪【结业综合】想加「对局复盘导出为 JSON」：自动模式下每局结束，把终局局面与关键决策导出成文件。按本课程讲过的架构，要动哪里？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。对局生命周期的汇聚点在 play()：胜负检测、win/total 统计、text_signal 汇报都在这（utils/solver.py L180-L337），导出调用放这段或抽成新模块；UI 挂在 main.py 的窗口类上（按钮 connect 到槽，模式同 EditWindow 的 L790-L795）；工作线程回主线程走「信号 → 槽」（m10 讲的链路，HANDOFF 2.5 记录了 auto_play_thread 连接的全部 8 个信号）——三处配合正好复刻现有模式。">A. utils/solver.py 的 play() 统计段（或抽新模块）加导出调用 + main.py 加 UI 入口 + 新信号 connect 到主窗口槽</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。ui/ 是 pyuic5 的生成物（HANDOFF 2.2：生成代码、未改动）——直接改生成文件，下次重新生成就被覆盖；要改界面应改 .ui 文件再生成，或在 main.py 的窗口类里动态加控件。">B. 改 ui/window.py 里 pyuic5 生成的布局代码，把导出按钮画进去</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。tests/ 不进运行链路（本模块 bars 图：测试只考察既有函数，不是功能入口）；给不存在的功能写测试，功能也不会因此存在。">C. 在 tests/ 里加导出测试，测试跑通了功能就有了</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错（干扰项）。combinatorics.py 是纯组合数学（C / C_num / get_list，无 IO 无状态，见 bars 图第一栏）；复盘数据在 play() 手里——终局 cell_value、win/total 都在那，不在这一层。">D. 在 utils/combinatorics.py 里加导出函数——它是最底层的模块，放这最合适</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="scene">
+    <div class="t-h3">🧭 课程地图回顾：m1 到 m11 串起来读</div>
+    <ol class="t-body">
+      <li><strong>m1 模板仓库</strong>：25 张数字身份证（compare_img 逐一比对）与 _TEMPLATE_LAYOUT 相册分格抽屉</li>
+      <li><strong>m2 从屏幕到棋盘</strong>：坐标换算链 + 带零边框的 cell_value 数字沙盘</li>
+      <li><strong>m3 增量重扫</strong>：像素指纹变更检测 + flood-fill 多米诺连锁重扫</li>
+      <li><strong>m4 单格判定</strong>：number0 清点包围圈——数字自己能说清的事</li>
+      <li><strong>m5 双格判定</strong>：number_3_1 两份名单互相勾稽</li>
+      <li><strong>m6 区域划分</strong>：涟漪距离变换分出海岸线（clicks）与腹地（clicks9），错题本缓存复用方案</li>
+      <li><strong>m7 回溯枚举</strong>：part_solve 走迷宫留绳，走不通收绳回头</li>
+      <li><strong>m8 胜率与大局面</strong>：win_rate 给局面发身份证查登记簿 + 大场面抽样统计</li>
+      <li><strong>m9 帮助模式</strong>：pos_dict_list 推荐列表 + OKLCH 温度计配色，一套引擎两个驾驶舱</li>
+      <li><strong>m10 自动模式</strong>：play() 主循环、节水龙头信号节流、拉闸急停、data.json 胜率对账</li>
+      <li><strong>m11 设置与校准</strong>：cfg.json 地基 + 图纸描点对齐（防抖取点、整数校验、半格回退）</li>
+    </ol>
+    <p class="t-body">串起来看，这门课只讲了一条链：屏幕像素（m1/m2）→ cell_value 数字沙盘 → 确定性推理（m4/m5）→ 区域划分与回溯枚举（m6/m7）→ 胜率搜索（m8）→ 两种驾驶舱（m9 自动点击 / m10 只给建议），外加贯穿始终的两根支柱：m11 的配置是地基，本模块的测试是护栏。接手三步：跑绿 71 个测试，通读 HANDOFF，从路线图挑 T3 动手——祝你好运。</p>
+  </div>
+</section>

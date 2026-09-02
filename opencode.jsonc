@@ -1,0 +1,14 @@
+{
+  "mcp": {
+    "code-review-graph": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "code-review-graph",
+        "serve",
+        "--repo",
+        "D:\\python\\projects\\minesweeper_help"
+      ]
+    }
+  }
+}

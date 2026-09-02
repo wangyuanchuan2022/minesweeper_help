@@ -1,0 +1,286 @@
+<!-- ============ 模块 4：单格判定 number0（流程族 B「推」· 机制层） ============ -->
+<section class="module" id="m4">
+  <header>
+    <h2 class="t-h1">4 · 单格判定：数字自己就能说清的事</h2>
+    <p class="t-body">棋盘认完了（m1–m3），现在开始「想」。推理引擎一共三层：单格规则 <code>number0</code> → 双格规则 <code>number_3_1</code> → 概率引擎 <code>number5_1</code>。本模块讲第一层——一个数字格自己就能宣布的确定结论，玩家熟悉的「清点包围圈」。</p>
+  </header>
+
+  <p class="t-body">结构层定位：<code>utils/deduction.py</code> 的 <code>DeductionMixin</code>，Solver 的第二个 Mixin。它消费 <code>cell_value</code> 沙盘（m2 的产物），产出两种确定标记——10（是雷）和 11（确认安全但还没点开）。所有方法都围绕一个朴素问题：这个数字周围还剩几个 9、几个 10？</p>
+
+  <div class="translate-pair" id="pair-m4-around" data-file="utils/deduction.py · L14-L24">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/deduction.py · L14-L24</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def cell_around(self, i, j, cell_value):
+        cnt9 = 0
+        cnt10 = 0
+        for n in range(j - 1, j + 2):
+            for m in range(i - 1, i + 2):
+                if 0 &lt;= m &lt;= self.w + 1 and 0 &lt;= n &lt;= self.h + 1:
+                    if cell_value[n, m] == 9:
+                        cnt9 += 1
+                    if cell_value[n, m] == 10:
+                        cnt10 += 1
+        return cnt9, cnt10</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">全项目被调用最多的函数之一：数一数 (i, j) 周围 3×3 里有几个未开（9）几个已标雷（10）。注意它把中心格自己也扫了——中心是数字不会是 9/10，多扫无害，换来循环不用特判。行边界检查 <code>0 &lt;= m &lt;= w+1</code> 看似多余（m2 讲过有零边框），其实兜的是「m 取到 w+1 本身合法」这一侧——边框格永远是 0，同样无害。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="viz-scene scene" data-kind="steps">
+    <div class="viz-title t-h3">🕹️ number0 的两条规则（同一坐标系三帧对比）</div>
+    <div class="viz-stage" role="group" aria-label="number0 两条规则逐步回放">
+      <div class="viz-stepdeck">
+        <div class="viz-step" data-caption="第 1 帧：清点——数字 3 周围还有 3 个未开（9）、0 个已标雷（10）">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="清点数字 3 的周围">
+            <g>
+              <rect x="150" y="30" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="200" y="30" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="250" y="30" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="150" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="200" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="250" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+            </g>
+            <text x="223" y="60" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">3</text>
+            <text x="273" y="60" text-anchor="middle" font-size="16" fill="currentColor">9</text>
+            <text x="173" y="110" text-anchor="middle" font-size="16" fill="currentColor">1</text>
+            <text x="223" y="110" text-anchor="middle" font-size="16" fill="currentColor">9</text>
+            <text x="273" y="110" text-anchor="middle" font-size="16" fill="currentColor">9</text>
+            <text x="173" y="60" text-anchor="middle" font-size="14" fill="var(--text-muted)">2</text>
+            <text x="316" y="55" font-size="12" fill="currentColor">cnt9 = 3</text>
+            <text x="316" y="75" font-size="12" fill="currentColor">cnt10 = 0</text>
+            <text x="316" y="95" font-size="12" fill="currentColor">3 + 0 == 3 ✓</text>
+            <text x="316" y="115" font-size="12" fill="var(--accent)">触发全雷规则</text>
+            <text x="70" y="90" font-size="12" fill="currentColor">清点</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 2 帧：规则一（数字 == 未开 + 已标雷）——3 个未开格全部标记为雷（10）">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="全雷规则触发">
+            <g>
+              <rect x="150" y="30" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="200" y="30" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="250" y="30" width="46" height="46" fill="var(--accent-2)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="150" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="200" y="80" width="46" height="46" fill="var(--accent-2)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="250" y="80" width="46" height="46" fill="var(--accent-2)" stroke="var(--border)" stroke-width="1.5"/>
+            </g>
+            <text x="223" y="60" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">3</text>
+            <text x="273" y="60" text-anchor="middle" font-size="18" fill="var(--accent-2)">10</text>
+            <text x="173" y="110" text-anchor="middle" font-size="16" fill="currentColor">1</text>
+            <text x="223" y="110" text-anchor="middle" font-size="18" fill="var(--accent-2)">10</text>
+            <text x="273" y="110" text-anchor="middle" font-size="18" fill="var(--accent-2)">10</text>
+            <text x="316" y="55" font-size="12" fill="currentColor">规则一：</text>
+            <text x="316" y="75" font-size="12" fill="currentColor">cnt9+cnt10 == 数字</text>
+            <text x="316" y="95" font-size="12" fill="currentColor">剩余未开全是雷</text>
+            <text x="316" y="115" font-size="12" fill="var(--accent-2)">写入 10</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 3 帧：规则二（数字 == 已标雷）——另一个数字 2 已凑满 2 个雷，剩余未开全部安全">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="全安全规则触发">
+            <g>
+              <rect x="150" y="30" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="200" y="30" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="250" y="30" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent-2)" stroke-width="1.5"/>
+              <rect x="150" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="200" y="80" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent-2)" stroke-width="1.5"/>
+              <rect x="250" y="80" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent-2)" stroke-width="1.5"/>
+            </g>
+            <text x="223" y="60" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="273" y="60" text-anchor="middle" font-size="16" fill="var(--accent-2)" transform="translate(0,-4)">11</text>
+            <text x="173" y="55" text-anchor="middle" font-size="14" fill="var(--accent-3)">10</text>
+            <text x="173" y="110" text-anchor="middle" font-size="14" fill="var(--accent-3)">10</text>
+            <text x="223" y="110" text-anchor="middle" font-size="16" fill="var(--accent-2)" transform="translate(0,-4)">11</text>
+            <text x="273" y="110" text-anchor="middle" font-size="16" fill="var(--accent-2)" transform="translate(0,-4)">11</text>
+            <text x="316" y="55" font-size="12" fill="currentColor">规则二：</text>
+            <text x="316" y="75" font-size="12" fill="currentColor">cnt10 == 数字</text>
+            <text x="316" y="95" font-size="12" fill="currentColor">剩余未开全安全</text>
+            <text x="316" y="115" font-size="12" fill="var(--accent)">自动=点击 / 帮助=标 11</text>
+          </svg>
+        </div>
+      </div>
+      <div class="viz-controls">
+        <button class="viz-btn viz-prev" type="button" aria-label="上一帧">◀</button>
+        <span class="viz-pos">1 / 3</span>
+        <button class="viz-btn viz-next" type="button" aria-label="下一帧">▶</button>
+        <button class="viz-btn viz-auto" type="button" aria-pressed="false">▶ 自动播放</button>
+      </div>
+      <div class="viz-caption t-muted">两条规则都只在「刚好相等」时开火——差一个格子都不动</div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m4-number0" data-file="utils/deduction.py · L44-L72">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/deduction.py · L44-L72</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def number0(self, i, j, cell_value):
+        c = False
+        cnt9, cnt10 = self.cell_around(i, j, cell_value)
+        if not cnt10 &lt;= cell_value[j, i] &lt;= cnt9 + cnt10:
+            raise ValueError("识别错误")</code></pre>
+        <pre class="tp-line" data-i="1"><code>        if (cnt9 + cnt10) == cell_value[j, i] and cnt9 != 0:
+            for n in range(j - 1, j + 2):
+                for m in range(i - 1, i + 2):
+                    if cell_value[n, m] == 9:
+                        cell_value[n, m] = 10
+                        if not self.is_play:
+                            if (
+                                    tuple((m, n)) not in self.appended_pos
+                                    and self.cell_value[n, m] != 10
+                            ):
+                                c = True
+                                self.pos_dict_list.append(
+                                    {
+                                        "pos": (m, n),
+                                        "confidence": 0,
+                                        "num": self.num,
+                                        "is_mine": True,
+                                        "is_best": False,
+                                        "exp": f"由({i}, {j})得出",
+                                        "is_recommend": False,
+                                    }
+                                )
+                                self.appended_pos.add(tuple((m, n)))</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">先做一致性体检：真实棋盘里，一个数字周围「已标雷数」不能超过数字本身，「未开 + 已标雷」不能少于数字——违反即识别出了错（合法局面不可能出现）。这个 <code>ValueError</code> 是整个推理层唯一的报警器，两种模式的接法截然不同（见下方赌注）。</div>
+        <div class="tp-note t-body" data-i="1">规则一（全雷）：未开 + 已标雷 == 数字，说明雷全在剩下的未开格里——全部写 10。帮助模式下不点击，只把结论记进 <code>pos_dict_list</code>（置信度 0 = 是雷），<code>appended_pos</code> 防止同一结论重复进列表；<code>self.cell_value</code>（原始扫描快照）还要二次确认这格视觉上真是 9，防止「推理标记」污染「视觉事实」。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bet-scene scene" data-bet-pair="pair-m4-safe">
+    <div class="bet-title t-h3">🎯 押一注：ValueError 炸出来之后，谁优雅谁狼狈</div>
+    <p class="t-body"><code>number0</code> 抛出的「识别错误」在两种模式里走了两条完全不同的 except 路。先押一注再往下看——注意自动模式的 continue 后面，<code>count</code> 并没有加一。</p>
+    <div class="quiz-opts bet-opts" aria-label="押注：两种模式对 ValueError 的处理差异">
+      <button class="quiz-opt" type="button" data-bet-correct="false"
+              data-bet-why="错。帮助模式的 except 在 help() 里（solver.py L365-L368）：弹 warning_signal、Visible_signal(False)、return——干净利落地结束本轮，不重试。">A. 两种模式都弹窗警告，然后各自重试</button>
+      <button class="quiz-opt" type="button" data-bet-correct="true"
+              data-bet-why="对。自动模式 play() 的 except ValueError: continue（solver.py L316-L319）回到 while True 顶部重新 complete_scan——但重扫只认 9（vision.py L163），已经识别成数字的错格不会被修；若误识别持续，循环会一直转而没有告警（count 不在此处累加，L184 的 count&gt;=3 兜底根本走不到）。帮助模式则是弹窗+return 直接止损。实践中的逃生门是 FailSafeException——把鼠标甩到屏幕角落强制急停（m10）。">B. 帮助模式弹窗警告后干净退出；自动模式 continue 无限重试且不计数——一个潜在的无告警死循环</button>
+      <button class="quiz-opt" type="button" data-bet-correct="false"
+              data-bet-why="错。没有任何一方会在识别错误时改写棋盘数据；自动模式的 count 只在 number5_1 的错误路径里累加（probability.py L77/L204/L215/L502），mine_clear1 的 ValueError 路径碰不到它。">C. 自动模式重置整个 cell_value 全盘重扫，count 立即加一</button>
+    </div>
+    <div class="bet-actions">
+      <button class="viz-btn bet-run" type="button" disabled>▶ 运行揭晓</button>
+    </div>
+    <div class="quiz-fb t-body bet-fb" hidden></div>
+  </div>
+
+  <div class="translate-pair" id="pair-m4-safe" data-file="utils/deduction.py · L73-L105">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/deduction.py · L73-L105</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>        elif cnt10 == cell_value[j, i] and cnt9 &gt;= 1:
+            for n in range(j - 1, j + 2):
+                for m in range(i - 1, i + 2):
+                    if cell_value[n, m] == 9:
+                        if self.is_play:
+                            c = True
+                            pyautogui.click(
+                                self.bx + m * self.cell_width,
+                                self.by + n * self.cell_width,
+                            )
+                        else:
+                            if tuple((m, n)) not in self.appended_pos:
+                                c = True
+                                cell_value[n, m] = 11</code></pre>
+        <pre class="tp-line" data-i="1"><code>        if c:
+            if not self.is_play:
+                self.num += 1
+            else:
+                cell_value = self.rescan_after_click(cell_value)
+
+        return cell_value</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">规则二（全安全）：雷已凑满数字，剩余未开格必安全。<code>is_play</code> 在这里分叉两个驾驶舱：自动模式直接 <code>pyautogui.click</code> 屏幕坐标（m2 的换算链），帮助模式写 11 + 记录 pos_dict（置信度 1）。同一个推理函数服务两种交互形态，这就是「一套引擎两个驾驶舱」。</div>
+        <div class="tp-note t-body" data-i="1">收尾同样按模式分叉：帮助模式 <code>num += 1</code>（推理轮次计数，供 GUI 分批显示），自动模式立刻 <code>rescan_after_click</code>（m3 的增量重扫）——点击改变了世界，推理必须马上看到新证据才能继续。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fork-scene scene">
+    <div class="fork-title t-h3">🛤️ 把一条「全安全」结论拖过驾驶舱岔口</div>
+    <p class="t-body">同一个 number0、同一个结论，两种模式的执行路径完全不同。岔路口就是 pair-m4-safe 翻译块里的 <code>if self.is_play</code>——切换驾驶舱投放令牌，看结论分别变成什么动作。</p>
+    <script type="application/json" class="fork-data">
+    {
+      "gate": "闸门：self.is_play 是哪边",
+      "entryTag": "✅ 全安全结论令牌",
+      "tokenPrefix": "🎯",
+      "goLabel": "▶ 投放令牌",
+      "params": [
+        { "id": "mode", "label": "驾驶舱", "type": "radio",
+          "options": [
+            { "value": "auto", "label": "自动模式（is_play=True）" },
+            { "value": "help", "label": "帮助模式（is_play=False）" }
+          ] }
+      ],
+      "branches": [
+        { "id": "b1", "title": "🟢 自动模式：亲自点击 + 立刻重扫",
+          "cond": "if self.is_play:（deduction.py L77）",
+          "when": { "mode": "auto" },
+          "fx": [ "pyautogui.click 屏幕坐标", "rescan_after_click 同步跟进" ],
+          "note": "坐标换算用的是 m2 讲过的链路（bx/by + m×cell_width）。点击后立即调 rescan——推理还在同一轮里继续，新翻开的数字必须马上进场。",
+          "code": [
+            "                        if self.is_play:",
+            "                            c = True",
+            "                            pyautogui.click(",
+            "                                self.bx + m * self.cell_width,",
+            "                                self.by + n * self.cell_width,",
+            "                            )"
+          ] },
+        { "id": "b2", "title": "🟠 帮助模式：标 11 + 记台账，不碰鼠标",
+          "cond": "else:（deduction.py L83，is_play=False）",
+          "when": { "mode": "help" },
+          "fx": [ "cell_value[n, m] = 11", "pos_dict_list 记录置信度 1 + exp 理由", "self.num += 1" ],
+          "note": "帮助模式绝不点击——结论留在沙盘（11）和台账（pos_dict_list）里，等用户自己看按钮网格、自己决定。11 与视觉识别的数字（0–8）刻意区分（见下方设计取舍）。",
+          "code": [
+            "                        else:",
+            "                            if tuple((m, n)) not in self.appended_pos:",
+            "                                c = True",
+            "                                cell_value[n, m] = 11"
+          ] }
+      ]
+    }
+    </script>
+    <div class="fork-board"></div>
+  </div>
+
+  <p class="t-body"><strong>为什么这样设计：</strong>用 11 而不是把安全格改成某个数字，是因为 0–8 属于「视觉识别的事实」，11 属于「推理得出的结论」——两者必须可区分：帮助模式的按钮网格靠这个差别渲染推理产物（m9），<code>complete_scan</code> 靠它知道哪些 9 格已被推理接管。而 <code>is_play</code> 单开关贯穿全部推理代码，代价是推理层混入了 IO（点击）——HANDOFF 文档的 T4「解耦 GUI 和业务逻辑」正是冲着这个来的。</p>
+
+  <div class="quiz" data-quiz="m4-q1">
+    <div class="quiz-q t-h3">🧪 一个数字格显示 2，它周围有 1 个已标雷（10）和 4 个未开（9）。number0 会做什么？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。全雷规则要求 cnt9 + cnt10 == 数字（deduction.py L49），这里是 4 + 1 = 5 ≠ 2，条件不满足，一格都不会标。">A. 把 4 个未开格全部标记为雷</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。cnt10 = 1 ≠ 2，全安全规则（L73 的 cnt10 == 数字）也不满足——1 &lt;= 2 &lt;= 5 的一致性检查通过，所以既不标雷也不点开，安静跳过，等双格规则（m5）或概率引擎（m6）接力。这正是单格规则的「沉默大多数」：大多数数字格在多数时刻不触发任何动作。">B. 什么都不做——两条规则都不满足，留给下一层推理</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。ValueError 只在一致性破坏时抛（cnt10 &gt; 数字或数字 &gt; cnt9 + cnt10，L47-L48）；1 &lt;= 2 &lt;= 5 完全合法，不抛。">C. 抛出 ValueError，触发重扫</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m4-q2">
+    <div class="quiz-q t-h3">🧪 帮助模式里你点了一个「确认安全」格（值 11）想看推荐理由，之后又点了「一键点击」。为什么这格会被点开而不是被跳过？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。帮助模式把安全结论记进 pos_dict_list（deduction.py L87-L97），main.py 的 update_btn_list 把它们收进 self.clicks 列表（L556-L563），click_all_func 统一 pyautogui.click（L627-L640）。11 只是「等待执行的结论」，执行清单一直存在 pos_dict/clicks 这条侧链上。">A. 11 格的位置在推荐时就被收进 self.clicks 清单，一键点击按清单统一执行</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。11 不是视觉状态，compare_img 只产出 0~10（vision.py L117-L131）；识别结果永远不会是 11——它是推理层的私货，视觉层根本不认识它。">B. 因为 11 会被视觉层重新识别成数字 9，然后按未开格处理</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。mine_clear1 每轮都会跑（solver.py L317），但它处理的是 0 &lt; v &lt; 8 的数字格（deduction.py L39），11 本身不是处理对象——不存在「再推一遍」的路径。">C. 一键点击会重新跑一遍 mine_clear1，把 11 重新推成可点格</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+</section>

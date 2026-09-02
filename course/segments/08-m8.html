@@ -1,0 +1,243 @@
+<!-- ============ 模块 8：胜率搜索与大局面（流程族 B「推」· 概率引擎深水区 2/2） ============ -->
+<section class="module" id="m8">
+  <header>
+    <h2 class="t-h1">8 · 胜率搜索与大场面：登记簿与抽样</h2>
+    <p class="t-body">m7 收工时，每组手里有了一张方案表：0/1 向量、每行一种合法摆法，组数连乘出 total。但棋盘要的答案是「下一步点哪」——概率引擎的最后两级：<code>win_rate</code> 的期望胜率递归搜索（精确）与 <code>process_bigger_situation</code> 的组合数加权近似（降级）。谁上场，由 <code>number5_1</code> 的三路决策说了算。</p>
+  </header>
+
+  <p class="t-body">路由规则一句话版：还有没有边缘格是第一道闸（len(clicks) 是否为 0，L81）；有边缘格时算「局面体积」limitation = len(clicks9)×0.8 + log2(total)（L263）——腹地格越多、方案总数越大，这个数就越大——≤ 6 才进精确搜索（L266），否则降级（L307）。把这两个量拨一拨，看令牌掉进哪个岔口：</p>
+
+  <div class="fork-scene scene">
+    <div class="fork-title t-h3">🛤️ number5_1 的三路决策：谁上场算这步棋</div>
+    <p class="t-body">岔路口在 number5_1 里，分支条件与代码行都是真的。沙盘不执行真实代码——路由只是「参数值 → 分支」的预标注匹配表。</p>
+    <script type="application/json" class="fork-data">
+    {
+      "gate": "岔路口：number5_1 的三路决策（probability.py L81 / L266 / L307）",
+      "entryTag": "📦 当前局面令牌",
+      "tokenPrefix": "🎲",
+      "goLabel": "▶ 投放令牌",
+      "params": [
+        { "id": "clicks", "label": "边缘格 len(clicks)（L81 第一道闸）", "type": "radio",
+          "options": [
+            { "value": "0", "label": "0（没有可枚举的边缘格）" },
+            { "value": "1", "label": "大于 0（边缘格已枚举完，方案表就绪）" }
+          ] },
+        { "id": "limitation", "label": "limitation = len(clicks9)×0.8 + log2(total)（L263）", "type": "radio",
+          "options": [
+            { "value": "5.6", "label": "5.6（腹地 2 格、total 16）→ ≤ 6" },
+            { "value": "9.0", "label": "9.0（腹地 5 格、total 32）→ 大于 6" }
+          ] }
+      ],
+      "branches": [
+        { "id": "b1", "title": "⚪ 无边缘格：腹地里赌一格",
+          "cond": "len(clicks) == 0（L81，兜底路）",
+          "when": { "clicks": "0" },
+          "fx": [ "open_num5x5 逐格打分（L749）", "最高分入围后 np.random.choice 随机选一（L92）", "confidence = 1 - (a - num10) / len(clicks9)（L93）" ],
+          "note": "没有任何数字格可借力，枚举无从谈起。退化成在腹地 clicks9 里挑格子赌：对每个候选算 5×5 已开格数——开得多的地方信息多——只保留最高分再随机挑一个。同一套逻辑也兜住「边缘格全被 limit 砍掉」的局面（L232-L245）。",
+          "code": [ "        if len(clicks) == 0:  # 没有可以判断的格子", "            for i, j in clicks9:", "                op5x5_num = self.open_num5x5(cell_value, (i, j))", "                op_num.append(op5x5_num)", "            pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]  # 随机选择" ] },
+        { "id": "b2", "title": "🟢 小场面：win_rate 精确胜率搜索",
+          "cond": "limitation <= 6（L266）",
+          "when": { "clicks": "1", "limitation": "5.6" },
+          "fx": [ "A(ck) 把各组方案表拼成整条边界的假设局面", "f 递归估每格的期望胜率", "MD5 登记簿记忆化 + depth_limit 剪枝" ],
+          "note": "腹地小、方案总数少，精确的期望胜率递归算得动：每个候选格得到「按它走能赢到最后」的真实概率，取最大（并列时均匀随机打破，L270-L272）。",
+          "code": [ "                if limitation <= 6:  # 小情况可以计算胜率", "                    win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)" ] },
+        { "id": "b3", "title": "🟠 大场面：process_bigger_situation 近似",
+          "cond": "limitation > 6（L307，兜底）",
+          "when": {},
+          "fx": [ "进门先看 total 是否超 10000（L404）", "不超：A(ck) 逐方案精确加权（else 分支 L429 起）", "超：combination_ratio 组合数比值定权重（L418）" ],
+          "note": "精确搜索算不动的局面降级——不数全票，按票站抽样统计：total 超 10000 时连整张边界方案表都不展开，直接按组合数比值给每组方案定权重，加权平均得每格的非雷概率。",
+          "code": [ "                else:  # 大情况", "                    pos, confidence, total = self.process_bigger_situation(total, num9, num10, clicks, clicks9,", "                                                                           res_list, ck, cell_value, pos)" ] }
+      ]
+    }
+    </script>
+    <div class="fork-board"></div>
+  </div>
+
+  <div class="translate-pair" id="pair-m8-A" data-file="utils/probability.py · L624-L650">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/probability.py · L624-L650</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
+        cell_value_list = []
+        for index_list in A(ck):
+            _cell_value = cell_value.copy()
+            r = np.array([])
+            for i in range(len(index_list)):
+                r = np.hstack([r, res_list[i][index_list[i]]])
+
+            _cell_value = cell_value.copy()
+            for i in np.argwhere(r == 1):
+                u, v = clicks[i[0]]
+                _cell_value[v, u] = 10</code></pre>
+        <pre class="tp-line" data-i="1"><code>            if self.a - num10 - sum(r) == 0:
+                cell_value_list.append(_cell_value)
+                continue
+            if self.a &gt; num10 + sum(r) + len(clicks9):
+                continue
+
+            gl = get_list(self.a - num10 - sum(r), self.a - num10 - sum(r), len(clicks9))
+            next(gl)
+            for index_l in gl:
+                new_cell_value = _cell_value.copy()
+                for j in index_l:
+                    u, v = clicks9[j]
+                    new_cell_value[v, u] = 10
+                cell_value_list.append(new_cell_value)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">win_rate 的第一步：把「每组的方案表」拼成「整条边界的一种假设局面」。A(ck) 每吐一个索引组合（每组选一行方案），r 就横向拼成整条边界的雷位向量——m7 那张入场券在这里兑现；<code>argwhere(r == 1)</code> 找出这批方案里的雷格，写进沙盘副本（置 10）。</div>
+        <div class="tp-note t-body" data-i="1">两种 continue 各挡掉一类拼法：剩余雷数恰好为 0——边缘就是全部答案，直接收；剩余雷比腹地还多——物理不可能，弃。其余的用 get_list 在腹地 clicks9 里补雷：每种补法都是一个完整的「假设终局」，全部塞进 cell_value_list，交给后面的递归。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m8-hash" data-file="utils/probability.py · L652-L672 ＋ L697-L707">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/probability.py · L652-L672 ＋ L697-L707</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>        depth_limit = 200 / len(clicks)
+
+        self.memory = {}
+
+        def hash_cell_value(l: np.ndarray):
+            __cell_value = np.where(l &gt; 9, 9, l)
+            str_cell_value = __cell_value.tostring()
+            hashed_cell_value = hashlib.md5(str_cell_value).hexdigest()
+            return hashed_cell_value</code></pre>
+        <pre class="tp-line" data-i="1"><code>        def f(clicks: list, _cell_value_list, depth=1):
+            assert len(_cell_value_list) &gt; 0
+            try:
+                return self.memory[hash_cell_value(_cell_value_list[0])]
+            except KeyError:
+                pass
+
+            if len(_cell_value_list) == 1:
+                return 1
+            if depth &gt; depth_limit:  # 防止死循环
+                return 1</code></pre>
+        <pre class="tp-line" data-i="2"><code>                for new_uv_value, new_cell_value_list in new_cell_value_dict.items():
+                    trans_prob = len(new_cell_value_list) / total
+                    new_clicks = clicks.copy()
+                    new_clicks.pop(i)
+                    win_r = f(new_clicks, new_cell_value_list, depth + 1)
+                    win_p += trans_prob * win_r
+                _res.append(win_p)
+
+            self.memory[hash_cell_value(_cell_value_list[0])] = max(_res)
+
+            return max(_res)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">深度预算：<code>depth_limit = 200/len(clicks)</code>——候选格越多，深度上限压得越紧，两者的乘积约恒定 200。self.memory 是登记簿本簿，进门先清空（L654）——它的生命周期是一次搜索，不跨局复用。</div>
+        <div class="tp-note t-body" data-i="1">f 的门口两道闸：先查登记簿——用局面的<strong>身份证号</strong>（哈希）查，命中直接返回存档，整棵等价子树免算；再过深度剪枝——只剩一种局面（没有分歧，当作赢）或 depth 超限（防死循环的乐观截断）都返回 1，不再细分。</div>
+        <div class="tp-note t-body" data-i="2">f 的主体在两段之间（L674-L695，含按胜率排序与逐格剪枝）：把所有假设局面按「点这格会开出什么数字」分桶，每桶按转移概率递归下一层，全部返回后取 max——这格的期望胜率。算完写进登记簿（L705），同样局面下次进门即中。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body"><strong>为什么这样设计：</strong>给每个局面发身份证号，进门先查登记簿。搜索树里大量节点其实是同一个局面的不同到达顺序——先点甲再点乙，与先点乙再点甲，走到中间态时手里往往是同一批剩余局面。等价局面归并成同一个键，等价子树就只算一次：这是把「指数级搜索」压回可解的第二刀（第一刀是 m7 的剪枝）。</p>
+
+  <p class="t-body">身份证能对上号，关键在归一化：矩阵里大于 9 的格子（10=已标雷、11=推理暂定安全）先统一改写成 9 再哈希——标记是过程，雷位才是本质。搜完登记簿再清一次（L745），一局搜索的账不留到下一局。</p>
+
+  <div class="viz-scene scene" data-kind="bars">
+    <div class="viz-title t-h3">📊 递归深度预算怎么随边界规模缩水（depth_limit = 200 / len(clicks)）</div>
+    <script type="application/json" class="viz-data">
+    {
+      "unit": "层",
+      "items": [
+        { "label": "1 格", "value": 200, "note": "200 / 1：只剩一格候选时几乎不设限——搜索树本来就浅", "anchor": "probability.py L652 公式算术" },
+        { "label": "2 格", "value": 100, "note": "200 / 2：两格候选，预算 100 层", "anchor": "probability.py L652 公式算术" },
+        { "label": "4 格", "value": 50, "note": "200 / 4：四格候选，预算 50 层", "anchor": "probability.py L652 公式算术" },
+        { "label": "5 格", "value": 40, "note": "200 / 5 = 40：预算与候选数乘积恒为 200——时间预算的等价切分", "anchor": "probability.py L652 公式算术" },
+        { "label": "8 格", "value": 25, "note": "200 / 8 = 25：候选再多，每条深挖的路就越短", "anchor": "probability.py L652 公式算术" },
+        { "label": "10 格", "value": 20, "note": "200 / 10 = 20：大边界被截得更浅——乐观截断返回 1，误差交给上层取舍", "anchor": "probability.py L652 公式算术（截断见 L671）" }
+      ]
+    }
+    </script>
+    <div class="viz-stage" role="group" aria-label="递归深度预算随候选格数变化的条形图"></div>
+    <div class="viz-detail t-muted" hidden></div>
+  </div>
+
+  <div class="translate-pair" id="pair-m8-bigger" data-file="utils/probability.py · L401-L428">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/probability.py · L401-L428</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def process_bigger_situation(self, total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos):
+        confidence = 0
+
+        if total &gt; 10000:  # total太大全排列计算量太大
+            self.Visible_signal.emit(False)
+            mine_num = 0
+            res = np.array([])
+            for res_l in res_list:</code></pre>
+        <pre class="tp-line" data-i="1"><code>                estimated_mine_num = 0
+                min_mine_cnt = min([sum(x) for x in res_l])
+                _all = len(set(clicks) | set(clicks9)) - len(res_l[0])
+                _all = int(_all)
+                x_min = self.a - min_mine_cnt - num10
+                _total = 0
+                _res_s = []
+                for _res in res_l:
+                    _mine_num = sum(_res)
+                    p = combination_ratio(self.a - _mine_num - num10, x_min, _all)
+                    __res = _res * p
+                    estimated_mine_num += p * _mine_num
+                    _res_s.append(__res)
+                    _total += p
+                res_l = np.array(_res_s)
+                res_l = res_l.sum(axis=0)
+                mine_num += estimated_mine_num / _total
+                res_l /= _total
+                res_l = 1 - res_l
+                res = np.hstack((res, res_l))</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">进门先看 total（各组方案数的连乘）是否超 10000：超了，连「逐方案全排列加权」都算不动——不再生成整张边界方案表，进度条也先藏起来。这是比 limitation 更深一层的降级。</div>
+        <div class="tp-note t-body" data-i="1">组内先找最省雷的方案做基准（min_mine_cnt → x_min）；每个方案按「在剩余未开格里补齐 (a - _mine_num - num10) 颗雷的组合数比值」定权重 p——一个组内方案在全盘意义上「有多少种完整摆法与它兼容」，兼容越多越有分量。combination_ratio（combinatorics.py L231-L246）逐项乘除，避免两个大组合数相除的浮点误差。组内加权平均、跨组拼接，最后 1 - res 翻成每格「不是雷」的概率。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body">这就是<strong>大场面抽样统计</strong>——不数全票，按票站统计：超 10000 时连整张边界方案表都不展开，每个票站（组）内部按组合数比值定权重、加权平均，再跨组拼接。加权后非雷概率 ≥ 0.99 的格子当作确定安全直接点掉（L476-L479）。两条分界线由此各就各位：limitation ≤ 6 防「精确胜率搜索算不动」，total &gt; 10000 防「连逐方案加权都算不动」——一道比一道便宜的降级阶梯。</p>
+
+  <div class="quiz" data-quiz="m8-q1">
+    <div class="quiz-q t-h3">🧪 hash_cell_value 做记忆化键之前，先把矩阵里所有大于 9 的格子统一改写成 9，再 tostring 后取 MD5（L656-L660）。为什么要多这一步归一化？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。md5 对任意字节串都能算——本模块翻译块 pair-m8-hash 第一段里 L659 直接对 tostring() 的结果哈希，归一与否都不报错，只是得到的键不同。">A. 因为 hashlib.md5 不接受包含 10/11 的字节串，不归一化会抛异常</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。10 和 11 是推理过程写下的标记（已标雷 / 暂定安全），不是局面的本质；两个「实际雷位相同、只是部分格子的标记来历不同」的局面，从后续胜率看完全等价。先抹平再哈希，等价局面拿到同一个身份证号，f 进门一查登记簿（L664-L667）就命中，等价子树只算一次（本模块翻译块 pair-m8-hash 与设计取舍段）。">B. 抹掉推理中间态后，等价局面才撞同一个键——登记簿命中率是这套记忆化的命根</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。np.where 复制了一份新矩阵（L657），哈希输入一个字节都没少，MD5 摘要长度也固定；这套设计省的是重复计算，不是内存（设计取舍段）。">C. 为了压缩哈希输入、节省内存</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错，方向反了——归一化恰恰是抹掉 10/11 与 9 的区别（L657 的 np.where(l &gt; 9, 9, l)）；保留它们才会让同一种雷位布局的不同标记历史拆成多个键，等价子树各算各的，登记簿命中率暴跌。">D. 为了把 10 和 11 区分开，让两种状态拿到不同的身份证号</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m8-q2">
+    <div class="quiz-q t-h3">🧪 number5_1 用 limitation = len(clicks9)×0.8 + log2(total) ≤ 6 决定走 win_rate 精确搜索（L263-L266）；process_bigger_situation 内部又有 total &gt; 10000 的分界（L404）。这两条分界线各自防的是什么？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。两条线挡的都是「算不动」，不是「算不准」——limitation 线把期望胜率递归挡在小场面里（腹地格越多，get_list 补雷的组合越爆炸；total 越大，A(ck) 的笛卡尔积越长）；total &gt; 10000 在降级路径里再挡一次：连逐方案精确加权都省掉，直接用组合数比值估算，不再生成整张边界方案表（本模块沙盘 + 翻译块 pair-m8-bigger）。">A. 一道防「精确胜率搜索算不动」，一道防「连逐方案加权都算不动」——两层递进的算力闸门</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。两条线挡的都是计算时间：win_rate 的递归规模随腹地格数与方案总数膨胀，limitation 就是「算不动」的量化门槛（沙盘参数标签里的公式）；process_bigger_situation 里的 10000 线同理——内存不是这两条线要防的东西。">B. limitation 线防精度损失，total 线防内存溢出</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错，方向反了——≤ 6 走的 win_rate 才是精确的期望胜率搜索（沙盘 b2 分支的 L266-L267），大情况分支是算不动时的降级近似（沙盘 b3 分支的 L307-L309）。">C. limitation ≤ 6 时应优先走 process_bigger_situation，因为近似结果更稳</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。KeyError→全盘重扫是 part_solve 缓存路径的异常处理（number5_1 L198-L206，m7 模块讲过）；total&gt;10000 是 process_bigger_situation 内部的正常分叉，走组合数比值那条路，不抛任何异常。">D. total 超过 10000 会触发 KeyError，进而全盘重扫</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <p class="t-body">到这里，概率引擎四级全貌收齐：分组（m6）→ 组内回溯枚举（m7）→ 整边界拼接与三路决策（本模块）。引擎的产出始终是三样：pos（下一步走哪）、confidence（有多稳）、pos_dict_list（逐格推荐档案）。这套产出如何被消费，取决于 <code>is_play</code>——m9 看帮助模式：pos_dict_list 怎么变成 GUI 按钮的颜色分级与 info 弹窗里的推理文本；自动模式的消费链则留给 m10。</p>
+</section>

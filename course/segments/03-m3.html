@@ -1,0 +1,255 @@
+<!-- ============ 模块 3：点击后增量重扫（流程族 A「看」· 流程层） ============ -->
+<section class="module" id="m3">
+  <header>
+    <h2 class="t-h1">3 · 点击后增量重扫：多米诺倒下之后</h2>
+    <p class="t-body">自动模式里程序刚点开一格，扫雷的 flood-fill 可能瞬间翻开一大片——像推倒一张多米诺。下一轮推理需要最新的棋盘，全盘重识别太贵，于是这里有一条「像素指纹」快速通道：只对<strong>真正变了</strong>的格子重新认字。</p>
+  </header>
+
+  <div class="viz-scene scene" data-kind="steps">
+    <div class="viz-title t-h3">🕹️ 点击 → flood-fill → 增量重扫（同一坐标系的四帧对比）</div>
+    <div class="viz-stage" role="group" aria-label="flood-fill 与增量重扫逐帧回放">
+      <div class="viz-stepdeck">
+        <div class="viz-step" data-caption="第 1 帧：点击前——周围一片格子都是未开（9，深色）">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="点击前的未开格子群">
+            <g>
+              <rect x="60" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="186" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="186" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><rect x="186" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="186" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+            </g>
+            <text x="300" y="60" font-size="12" fill="currentColor">深色 = 未开 9</text>
+            <text x="300" y="84" font-size="12" fill="currentColor">高亮格 = 将点击</text>
+            <text x="300" y="108" font-size="12" fill="currentColor">（cell_value 全是 9）</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 2 帧：点击落下——这一格翻开了">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="点击翻开一格">
+            <g>
+              <rect x="60" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="186" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="186" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="48" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/><rect x="186" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="76" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="144" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="186" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="228" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+            </g>
+            <text x="164" y="93" text-anchor="middle" font-size="14" fill="var(--accent)" font-weight="bold">0</text>
+            <text x="300" y="60" font-size="12" fill="currentColor">翻出的是空白 0</text>
+            <text x="300" y="84" font-size="12" fill="currentColor">flood-fill 开始连锁</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 3 帧：flood-fill 多米诺——空白格相邻的空白继续翻开，直到被数字格围住">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="flood-fill 连锁翻开">
+            <g>
+              <rect x="60" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="20" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="144" y="20" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="186" y="20" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="228" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="102" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="144" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="186" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="228" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/>
+              <rect x="60" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="102" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="144" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/><rect x="186" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="228" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/>
+              <rect x="60" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="102" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="144" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="186" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--border)"/><rect x="228" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+            </g>
+            <g font-size="12" fill="var(--accent)">
+              <text x="122" y="37">1</text><text x="164" y="37">0</text><text x="206" y="37">2</text>
+              <text x="80" y="65">0</text><text x="122" y="65">0</text><text x="164" y="65">0</text><text x="206" y="65">1</text><text x="248" y="65">3</text>
+              <text x="80" y="93">1</text><text x="122" y="93">0</text><text x="164" y="93">0</text><text x="206" y="93">0</text><text x="248" y="93">2</text>
+              <text x="80" y="121">0</text><text x="122" y="121">0</text><text x="164" y="121">1</text><text x="206" y="121">0</text><text x="248" y="121">1</text>
+            </g>
+            <text x="300" y="60" font-size="12" fill="currentColor">打开的远不止</text>
+            <text x="300" y="84" font-size="12" fill="currentColor">5×5 窗口——</text>
+            <text x="300" y="108" font-size="12" fill="currentColor">这正是不能只扫</text>
+            <text x="300" y="132" font-size="12" fill="currentColor">点击点周围的原因</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 4 帧：rescan_after_click 对全部 9 格做变更检测，只有真变化的格子才重新模板匹配">
+          <svg viewBox="0 0 400 150" width="100%" role="img" aria-label="增量重扫只识别变化格">
+            <g>
+              <rect x="60" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/><rect x="102" y="20" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="144" y="20" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="186" y="20" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="228" y="20" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+              <rect x="60" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="102" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="144" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="186" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="228" y="48" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+              <rect x="60" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="102" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="144" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/><rect x="186" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="228" y="76" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+              <rect x="60" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="102" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="144" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="186" y="104" width="40" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="228" y="104" width="40" height="26" fill="var(--bg-card)" stroke="var(--border)"/>
+            </g>
+            <g font-size="12" fill="var(--accent)">
+              <text x="122" y="37">1</text><text x="164" y="37">0</text><text x="206" y="37">2</text>
+              <text x="80" y="65">0</text><text x="122" y="65">0</text><text x="164" y="65">0</text><text x="206" y="65">1</text><text x="248" y="65">3</text>
+              <text x="80" y="93">1</text><text x="122" y="93">0</text><text x="164" y="93">0</text><text x="206" y="93">0</text><text x="248" y="93">2</text>
+              <text x="80" y="121">0</text><text x="122" y="121">0</text><text x="164" y="121">1</text><text x="206" y="121">0</text><text x="248" y="121">1</text>
+            </g>
+            <text x="300" y="60" font-size="12" fill="currentColor">边框加亮 = 重识别</text>
+            <text x="300" y="84" font-size="12" fill="currentColor">（diff 均值 &gt; 3.0）</text>
+            <text x="300" y="108" font-size="12" fill="currentColor">角落两格未变——</text>
+            <text x="300" y="132" font-size="12" fill="currentColor">跳过 25 次模板匹配</text>
+          </svg>
+        </div>
+      </div>
+      <div class="viz-controls">
+        <button class="viz-btn viz-prev" type="button" aria-label="上一帧">◀</button>
+        <span class="viz-pos">1 / 4</span>
+        <button class="viz-btn viz-next" type="button" aria-label="下一帧">▶</button>
+        <button class="viz-btn viz-auto" type="button" aria-pressed="false">▶ 自动播放</button>
+      </div>
+      <div class="viz-caption t-muted">增量重扫 = 廉价的指纹比对筛出昂贵识别的目标集合</div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m3-rescan" data-file="utils/vision.py · L168-L186">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/vision.py · L168-L186</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def rescan_after_click(self, cell_value):
+        """点击后重扫：抓取新棋盘，只重新识别发生变化的未开格子。
+
+        扫雷点击空白格会触发 flood-fill，实际打开的区域可能远大于 5×5，
+        因此不能固定扫描 5×5 窗口，而是对「所有仍标记为未开(9)」的格子做变更检测，
+        只对真正变化的格子重新做模板匹配。
+        """</code></pre>
+        <pre class="tp-line" data-i="1"><code>        old_img = self.img
+        self._grab_board()
+        for y in range(1, self.h + 1):
+            for x in range(1, self.w + 1):
+                if cell_value[y, x] == 9:
+                    new_cell = self._slice_cell(self.img, x, y)
+                    old_cell = (
+                        self._slice_cell(old_img, x, y) if old_img is not None else None
+                    )
+                    if self._cell_changed(old_cell, new_cell):
+                        cell_value[y, x] = self.compare_img(new_cell, no_10=True)
+        return cell_value</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">docstring 把设计动机写得明明白白：flood-fill 翻开的区域<strong>不可预测</strong>，固定扫 5×5 会漏，全盘重扫太贵——所以「对所有 9 格做变更检测」是唯一既不漏又不贵的方案。这段文档是接手者读 vision.py 的第一站。</div>
+        <div class="tp-note t-body" data-i="1">两张整盘图（旧 <code>self.img</code>、新抓的）都在内存里，逐格切片比对。注意谁调它：<code>number0</code> 和 <code>number_3_1</code> 在自动模式点击后立刻调用（deduction.py L103 / L239）——推理进行到一半，必须马上看到 flood-fill 送来的新数字，等下一轮主循环就晚了。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bet-scene scene" data-bet-pair="pair-m3-changed">
+    <div class="bet-title t-h3">🎯 押一注：均值差 2.9 的「假未开」会去哪</div>
+    <p class="t-body">flood-fill 实际翻开了某格，但浅色数字「1」和未开背景的像素太接近——新旧切片的均值差只有 2.9，低于阈值 3.0。先押一注：这格接下来会被怎么处理？</p>
+    <div class="quiz-opts bet-opts" aria-label="押注：均值差低于阈值的格子命运">
+      <button class="quiz-opt" type="button" data-bet-correct="false"
+              data-bet-why="错。阈值判断是严格的大于（diff.mean() &gt; threshold），2.9 不超过 3.0 就是「没变」，不会进入 compare_img。">A. 判为变化，重新模板匹配出正确数字</button>
+      <button class="quiz-opt" type="button" data-bet-correct="true"
+              data-bet-why="对。这格被判「未变化」跳过，cell_value 继续留着 9——这是真实的静默数据陈旧点：无报错、无日志，推理层会继续把它当未开格参与计数。好在下一轮主循环的 complete_scan（solver.py L314）只扫 9，也会跳过它；真要等到 count 累计 3 次识别错误才强制全量重置（solver.py L184-L187）。">B. 判为未变化跳过，棋盘数据从此陈旧——一个不报警的暗坑</button>
+      <button class="quiz-opt" type="button" data-bet-correct="false"
+              data-bet-why="错。_cell_changed 只返回布尔值（vision.py L155），不抛异常；ValueError 是推理层 number0 的一致性检查（deduction.py L48）在数据矛盾时才抛。">C. 抛出 ValueError，主循环接住后重扫</button>
+    </div>
+    <div class="bet-actions">
+      <button class="viz-btn bet-run" type="button" disabled>▶ 运行揭晓</button>
+    </div>
+    <div class="quiz-fb t-body bet-fb" hidden></div>
+  </div>
+
+  <div class="translate-pair" id="pair-m3-changed" data-file="utils/vision.py · L149-L155">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/vision.py · L149-L155</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    @staticmethod
+    def _cell_changed(old_cell, new_cell, threshold=3.0):
+        """比较新旧格子图像，判断是否发生变化（用于点击后只重扫变化区域）。"""
+        if old_cell is None or old_cell.shape != new_cell.shape:
+            return True
+        diff = np.abs(old_cell.astype(np.int16) - new_cell.astype(np.int16))
+        return float(diff.mean()) > threshold</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">像素指纹比对：两张切片逐像素做差、取绝对值、再求全图均值——一个标量概括「这格变没变」。先 <code>astype(np.int16)</code> 再相减是防 uint8 的无符号回绕（200 - 250 会绕成 206 而不是 -50）。阈值 3.0 意味着平均每个通道只动 3 个灰阶就算「变了」，抗轻微反光，但挡不住「浅色数字 vs 浅色背景」这种 2.9 的边界情形。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m3-complete" data-file="utils/vision.py · L157-L166">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/vision.py · L157-L166</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def complete_scan(self, cell_value, no_10=True):
+        pyautogui.moveTo(10, 640, _pause=False)
+        self._grab_board()
+
+        for y in range(1, self.h + 1):
+            for x in range(1, self.w + 1):
+                if cell_value[y, x] == 9:
+                    cell_value[y, x] = self.compare_img(self.cell_screenshot(x, y), no_10)
+
+        return cell_value</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">另一台扫描仪——全量版。三处细节值得停一停：①先把鼠标挪到 (10, 640) 且 <code>_pause=False</code> 不吃 0.01 秒节流——悬停高亮会改变格子外观，不挪走就干扰模板匹配；②只认 <code>== 9</code> 的格子，已识别成数字的格子不再重识别（上一节赌注里那个静默坑的另一半正来自这里）；③<code>cell_screenshot</code> 只是 <code>_slice_cell</code> 的薄封装（vision.py L114-L115），两条扫描路径用的是同一把切刀。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body"><strong>为什么这样设计：</strong>变更检测（切片均值差，纯 numpy 毫秒级）替模板匹配（每格 25 次 SQDIFF）当守门员——遍历全部 9 格做廉价检查，只把真变化的送进昂贵通道。兜底是三层：<code>rescan</code> 每轮跑、主循环 <code>complete_scan</code> 只认 9、连续 3 次识别矛盾就全盘重置。3.0 这个数不是推导出来的，是抗噪经验值——动它之前先想清楚赌注揭晓里那个静默陈旧坑。</p>
+
+  <div class="fork-scene scene">
+    <div class="fork-title t-h3">🛤️ 把一次「需要新棋盘」的请求拖过调度岔口</div>
+    <p class="t-body">两台扫描仪服务同一个沙盘，但触发时机完全不同。岔路口在推理层与主循环的交界：点击之后同步走增量，主循环每轮走全量。切换场景投放令牌，看请求分别落进哪台机器。</p>
+    <script type="application/json" class="fork-data">
+    {
+      "gate": "闸门：谁在要新棋盘",
+      "entryTag": "📷 扫描请求令牌",
+      "tokenPrefix": "🎯",
+      "goLabel": "▶ 投放令牌",
+      "params": [
+        { "id": "scene", "label": "触发场景", "type": "radio",
+          "options": [
+            { "value": "after", "label": "推理中刚点完一格" },
+            { "value": "loop", "label": "主循环新一轮开始" }
+          ] }
+      ],
+      "branches": [
+        { "id": "b1", "title": "🟢 增量通道：rescan_after_click",
+          "cond": "number0 / number_3_1 点击之后同步调用（deduction.py L99-L104）",
+          "when": { "scene": "after" },
+          "fx": [ "对全部 9 格做指纹比对（均值差）", "只有变化格做 25 次模板匹配" ],
+          "note": "推理进行到一半，等不起全量重扫——指纹比对筛出变化格，flood-fill 送来的新数字几毫秒内就能进沙盘继续推理。",
+          "code": [
+            "        if c:",
+            "            if not self.is_play:",
+            "                self.num += 1",
+            "            else:",
+            "                cell_value = self.rescan_after_click(cell_value)"
+          ] },
+        { "id": "b2", "title": "🟠 全量通道：complete_scan",
+          "cond": "play() 主循环每轮开头（solver.py L314）",
+          "when": { "scene": "loop" },
+          "fx": [ "鼠标先挪到 (10, 640) 防悬停干扰", "全部 9 格重新模板匹配（不碰已识别数字）" ],
+          "note": "每轮推理前的例行全量：上一轮点击翻开的格子此时以 9 的身份重新识别一遍。它不修复「错认成数字」的格子——那是 count 兜底与人工校准的职责。",
+          "code": [
+            "                cell_value = self.complete_scan(cell_value, True)"
+          ] }
+      ]
+    }
+    </script>
+    <div class="fork-board"></div>
+  </div>
+
+  <div class="quiz" data-quiz="m3-q1">
+    <div class="quiz-q t-h3">🧪 你接手后想优化「点击空白格后的重扫」。同事提议：只扫点击点周围 5×5。这个方案最大的问题是什么？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。完整跑一遍的格子数不是问题——rescan 的循环本来也遍历全部 9 格（vision.py L177-L185），贵的只是变化格的模板匹配，5×5 窗口省的是廉价部分。">A. 5×5 只有 25 格，扫得太少，循环开销没省多少</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。rescan_after_click 的 docstring（vision.py L171-L175）直接点破了这一点：flood-fill 展开的范围由地形决定，可能远大于 5×5——窗口外的翻新格全部漏扫，cell_value 谎报未开，推理层据此算出错误结论甚至点雷。">B. flood-fill 展开范围不受 5×5 限制，窗口外新翻开的格子全被漏掉，棋盘数据从此错误</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。cell_value 的 9 本来就表示未开（m2 的矩阵约定），窗口扫描不改编码约定——问题出在数据陈旧，不在编码。">C. 5×5 扫描会把窗口外格子强制改成 9，破坏棋盘编码约定</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m3-q2">
+    <div class="quiz-q t-h3">🧪 number0 在自动模式判定一格安全并点击之后，为什么「当场」就调 rescan_after_click，而不是等主循环下一轮的 complete_scan？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。点击本身有 pyautogui.PAUSE = 0.01 的节流（utils/__init__.py L7-L8），但没有强制冷却期——这是推理正确性问题，不是时间问题。">A. 因为 pyautogui 点击后强制冷却 0.01 秒，必须用重扫填满这段时间</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。mine_clear1 的一个 pass 会连续处理多个数字格（deduction.py L32-L40），点击后 flood-fill 送来的新数字是同轮后续判定的新证据。等主循环的 complete_scan 意味着本 pass 剩下的推理全基于陈旧棋盘——number0 的计数（cnt9/cnt10）会算错，甚至重复点击已开格。deduction.py L103 的 rescan 调用就是这条「推理中同步」链路。">B. 同一轮推理还在继续，后续 number0 判定需要 flood-fill 刚翻出的新数字；拿旧棋盘推理会算错计数</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。帮助模式 is_play=False 走的是 else 分支只标 11、不点击（deduction.py L77-L98），rescan 只发生在 is_play=True 的点击分支之后（L99-L104）；「保持界面刷新」是 GUI 层的事，跟这题无关。">C. 因为帮助模式不点击，只有自动模式需要保持界面刷新</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+</section>
