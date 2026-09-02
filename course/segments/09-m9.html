@@ -1,0 +1,386 @@
+<!-- ============ 模块 9：帮助模式（模式层 · 用户可见的第一个驾驶舱） ============ -->
+<section class="module" id="m9">
+  <header>
+    <h2 class="t-h1">9 · 帮助模式：一套引擎，两个驾驶舱</h2>
+    <p class="t-body">m8 结束时，概率引擎已经能在死局里给每一格算出胜率。但这些数字躺在 <code>cell_value</code> 矩阵里，用户一个也看不见——本模块讲它们怎么变成屏幕上的东西：用户点下「帮助」按钮后的一次扫描分析、一份 <code>pos_dict_list</code> 推荐清单、一张按概率着色的按钮网格，和一段点开就能看的推理理由。</p>
+  </header>
+
+  <p class="t-body">这是「一套引擎，两个驾驶舱」里的导航舱。m4 在 <code>number0</code> 里已经见过 <code>is_play</code> 开关的分流——自动模式直接 <code>pyautogui.click</code>，帮助模式只标记不代劳；现在把镜头拉远，从整个模式的高度看：主线程点按钮，<code>help_thread</code>（一个 Solver 实例）在后台跑完整套推理，结论通过 Qt 信号送回 GUI，最终等着用户自己决定点不点。引擎完全相同，差别只在结论的出口。</p>
+
+  <div class="flow-scene scene spotlight">
+    <div class="spot-wrap">
+      <svg class="flow-svg" viewBox="0 0 720 140" width="100%" role="group"
+           aria-label="帮助模式从点击按钮到按钮着色的跨文件旅程（可拖动探照灯走读）">
+        <g class="flow-node" data-step="0"
+           data-sp-pair="pair-m9-help" data-sp-line="0" data-sp-file="main.py · L489 启动线程 → utils/solver.py · L339-L358">
+          <circle cx="60" cy="70" r="24"/>
+          <text x="60" y="112" text-anchor="middle">🖱️ 帮助按钮</text></g>
+        <g class="flow-node" data-step="1"
+           data-sp-file="utils/vision.py · L157-L166（m2 已讲）">
+          <circle cx="180" cy="70" r="24"/>
+          <text x="180" y="112" text-anchor="middle">📷 全盘扫描</text></g>
+        <g class="flow-node" data-step="2"
+           data-sp-pair="pair-m9-help" data-sp-line="1" data-sp-file="utils/solver.py · L359-L368（规则本体 m4/m5 已讲）">
+          <circle cx="300" cy="70" r="24"/>
+          <text x="300" y="112" text-anchor="middle">🧠 确定推理</text></g>
+        <g class="flow-node" data-step="3"
+           data-sp-pair="pair-m9-help" data-sp-line="2" data-sp-file="utils/solver.py · L370-L383（引擎内部 m8 已讲）">
+          <circle cx="420" cy="70" r="24"/>
+          <text x="420" y="112" text-anchor="middle">🎲 概率补位</text></g>
+        <g class="flow-node" data-step="4"
+           data-sp-pair="pair-m9-help,pair-m9-color" data-sp-line="2,0" data-sp-file="utils/solver.py · L383 ＋ main.py · L230/L532-L546">
+          <circle cx="540" cy="70" r="24"/>
+          <text x="540" y="112" text-anchor="middle">📤 信号回传</text></g>
+        <g class="flow-node" data-step="5"
+           data-sp-pair="pair-m9-color" data-sp-line="1,2" data-sp-file="main.py · L548-L581">
+          <circle cx="660" cy="70" r="24"/>
+          <text x="660" y="112" text-anchor="middle">🌈 按钮着色</text></g>
+        <path class="flow-path" d="M84,70 L156,70"/>
+        <path class="flow-path" d="M204,70 L276,70"/>
+        <path class="flow-path" d="M324,70 L396,70"/>
+        <path class="flow-path" d="M444,70 L516,70"/>
+        <path class="flow-path" d="M564,70 L636,70"/>
+        <circle class="flow-dot" r="7"/>
+        <text class="flow-label" data-step="0" x="60" y="24" text-anchor="middle">click 事件</text>
+        <text class="flow-label" data-step="1" x="180" y="24" text-anchor="middle">cell_value</text>
+        <text class="flow-label" data-step="2" x="300" y="24" text-anchor="middle">10/11 标记</text>
+        <text class="flow-label" data-step="3" x="420" y="24" text-anchor="middle">pos_dict_list</text>
+        <text class="flow-label" data-step="4" x="540" y="24" text-anchor="middle">跨线程 list</text>
+        <text class="flow-label" data-step="5" x="660" y="24" text-anchor="middle">OKLCH 样式</text>
+      </svg>
+      <button class="spot-lamp" type="button" role="slider"
+              aria-label="执行探照灯：用左右方向键逐站移动，点亮对应文件里的真实代码行"
+              aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="6"
+              aria-valuenow="0" aria-valuetext="未点亮">🔦</button>
+    </div>
+    <div class="flow-caption t-muted">▶ 点击站点，看数据在每一步的形态</div>
+    <div class="spot-caption t-muted" aria-live="polite">🔦 拖动探照灯（或聚焦后按 ←/→）：扫过哪个站点，对应翻译块里的真实代码行就跨文件同时点亮</div>
+  </div>
+
+  <div class="translate-pair" id="pair-m9-help" data-file="utils/solver.py · L339-L383">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/solver.py · L339-L383</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def help(self):
+        try:
+            self.num = 1
+            self.checked = {}
+            self.pos_dict_list = []
+            self.appended_pos = set()
+
+            hwnd = win32gui.FindWindow(None, setting.win_name)
+            self.bx, self.by = ClientToScreen(hwnd, self._bx, self._by)
+
+            w = self.w
+            h = self.h
+
+            # 初始化cell_value
+            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
+            for i in range(1, w + 1):
+                for j in range(1, h + 1):
+                    cell_value[j, i] = 9
+
+            self.cell_value = self.complete_scan(cell_value.copy(), False)</code></pre>
+        <pre class="tp-line" data-i="1"><code>            try:
+                for _ in range(2):
+                    cell_value = self.complete_scan(cell_value)
+                    cell_value = self.mine_clear1(cell_value)
+                    cell_value = self.mine_clear3_1(cell_value)
+                cell_value = self.mine_clear1(cell_value)
+            except ValueError:
+                self.warning_signal.emit("请检查设置中总雷数，宽度，长度是否输入正确")
+                self.Visible_signal.emit(False)
+                return</code></pre>
+        <pre class="tp-line" data-i="2"><code>            if len(self.pos_dict_list) == 0:
+                flag = 4
+                for flag in range(5):
+                    self.num += 1
+                    cell_value = self.number5_1(cell_value)
+                    if len(self.pos_dict_list) != 0:
+                        flag = 0
+                        break
+                if flag == 4:
+                    self.warning_signal.emit("请检查设置中总雷数，宽度，长度是否输入正确")
+                    self.Visible_signal.emit(False)
+                    return
+
+            self.update_btn_list_signal.emit(self.pos_dict_list)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">入场清点：每次点「帮助」都是全新一局——<code>num=1</code>（推理轮次计数，按钮上显示的就是它）、<code>checked</code> 缓存清空、<code>pos_dict_list</code> 与 <code>appended_pos</code> 归零。注意首次扫描 <code>complete_scan(cell_value.copy(), False)</code>：第二个参数 <code>no_10=False</code>，用户手动标的旗（10）不会被塌缩成 9（m1 讲过的 compare_img 参数）——旗子是推理的合法输入。这份扫描快照同时存进 <code>self.cell_value</code>，供推理时二次确认「这格视觉上真是 9」（m4 的防污染检查）。</div>
+        <div class="tp-note t-body" data-i="1">主菜是两轮「扫描 → 单格规则 → 双格规则」，再加一次 <code>mine_clear1</code> 收尾。规则的内部逻辑是 m4/m5 的内容，这里只需要知道分工：<code>mine_clear1</code> 逐格跑 number0，<code>mine_clear3_1</code> 逐对跑 number_3_1，确定结论写进 <code>pos_dict_list</code>（雷，置信度 0）或矩阵 11（安全）。<code>ValueError</code> 是识别错误的报警器——帮助模式的接法是弹窗加 return，干净止损（m4 赌注讲过与自动模式的对比）。</div>
+        <div class="tp-note t-body" data-i="2">清单空了才请概率引擎：最多 5 轮 <code>number5_1</code>，每轮 <code>num += 1</code>，5 轮后仍无结论就弹窗退出——因为有时推理一点火苗都点不着。最后 <code>update_btn_list_signal.emit(self.pos_dict_list)</code>：工作线程不能直接碰 GUI，这份清单跨线程递给主线程（信号与槽的机制在 m10 展开）。同一台引擎，到此为止；点不点，用户说了算。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m9-color" data-file="main.py · L532-L587">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">main.py · L532-L587</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def update_btn_list(self, pos_dict_list):
+        # 根据计算结果更新btn_list
+        for pos_dict in pos_dict_list:
+            (i, j) = pos_dict["pos"]
+            string = (
+                    pos_dict["exp"]
+                    + f"\n({i}, {j})不是雷的概率：{pos_dict['confidence'] * 100:0.3f}%"
+            )
+            i, j = i - 1, j - 1
+            confidence = pos_dict["confidence"]
+            self.btn_list[j][i].setEnabled(True)
+            self.btn_list[j][i].setText(str(pos_dict["num"]))
+            self.btn_list[j][i].clicked.connect(functools.partial(self.info, string))
+
+            cell_color = oklch_grad[int((confidence - 1e-5) * 100)]</code></pre>
+        <pre class="tp-line" data-i="1"><code>            if pos_dict["is_mine"] or confidence &lt;= 0.01:
+                self.mines.append((i + 1, j + 1))
+                self.btn_list[j][i].setStyleSheet(
+                    "QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);"
+                    'background-color:rgba(255, 0, 0, 255);font: 9pt "楷体"}'
+                    "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);"
+                    "color:rgba(210, 210, 210, 0);}"
+                )
+            elif pos_dict["is_best"] or confidence &gt;= 0.99:
+                self.clicks.append((i + 1, j + 1))
+                self.btn_list[j][i].setStyleSheet(
+                    "QPushButton{border-radius:0px; border: 2px solid rgb(0, 0, 255);"
+                    'background-color:rgba(0, 255, 0, 255);font: 9pt "楷体"}'
+                    "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);"
+                    "color:rgba(210, 210, 210, 0);}"
+                )</code></pre>
+        <pre class="tp-line" data-i="2"><code>            elif pos_dict["is_recommend"]:
+                self.btn_list[j][i].setStyleSheet(
+                    f"QPushButton{{border-radius:0px; border: 3px solid rgb(255, 255,"
+                    f" 82);background-color:rgba({cell_color[0]},"
+                    f' {cell_color[1]}, {cell_color[2]}, 255);font: 9pt "楷体"}}'
+                    "QPushButton:disabled{border: none;"
+                    "background-color:rgba(0, 0, 0, 0);"
+                    "color:rgba(210, 210, 210, 0);}"
+                )
+            else:
+                self.btn_list[j][i].setStyleSheet(
+                    f"QPushButton{{border-radius:0px; border: none;"
+                    f"background-color:rgba({cell_color[0]},"
+                    f' {cell_color[1]}, {cell_color[2]}, 255);font: 9pt "楷体"}}'
+                    "QPushButton:disabled{border: none;"
+                    "background-color:rgba(0, 0, 0, 0);"
+                    "color:rgba(210, 210, 210, 0);}"
+                )
+
+        self.click_all.setEnabled(True)
+        self.return_to_main_p3.setVisible(True)
+
+        self.set_btns_Enabled(True)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">主线程的接收端（main.py L230 把信号连到这里）。三个动作一气呵成：坐标 (i, j) 减 1 换算成按钮网格下标；把 <code>exp</code> 推理理由和置信度百分比拼成弹窗文本 <code>string</code>，用 <code>functools.partial</code> 预绑定进点击回调——点这个按钮时才弹窗；按置信度从 100 步渐变里取色：<code>int((confidence - 1e-5) * 100)</code>，0.5 落在第 49 号，1e-5 是防止 1.0 越界的保险。这就是温度计配色的刻度盘。</div>
+        <div class="tp-note t-body" data-i="1">温度计的两端是「定制款」：<code>is_mine</code> 或置信度不高于 0.01，纯红底加蓝色边框，坐标进 <code>self.mines</code> 清单（待右键标雷）；<code>is_best</code> 或置信度不低于 0.99，纯绿底加蓝色边框，进 <code>self.clicks</code> 清单（待一键点击）。两端的颜色写死在 stylesheet 字符串里，不取渐变。</div>
+        <div class="tp-note t-body" data-i="2">中间地带走渐变：<code>is_recommend</code>（概率引擎选中的落点）在渐变底色上再叠一道 3 像素黄色粗边框，其余普通格只有渐变底色。三段 stylesheet 结构几乎相同（HANDOFF 2.7 记录的重复之一），差别只在边框与底色。收尾点亮「一键点击」按钮——着色时清单就已攒好，执行只差一次确认。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="viz-scene scene" data-kind="steps">
+    <div class="viz-title t-h3">🕹️ 温度计取样：同一根红绿渐变上的四个置信度</div>
+    <div class="viz-stage" role="group" aria-label="OKLCH 渐变按 confidence 取色的逐步回放">
+      <div class="viz-stepdeck">
+        <div class="viz-step" data-caption="confidence = 0.03 —— 下标 int((0.03-1e-5)×100)=2：红端深色。几乎确定是雷，但置信度高于 0.01，仍走渐变而非纯红">
+          <svg viewBox="0 0 400 170" width="100%" role="img" aria-label="confidence 0.03 在渐变红端的取样">
+            <defs>
+              <linearGradient id="grad-m9-f1" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="var(--accent-3)"/>
+                <stop offset="1" stop-color="var(--accent-2)"/>
+              </linearGradient>
+            </defs>
+            <text x="200" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="currentColor">confidence = 0.03</text>
+            <text x="200" y="48" text-anchor="middle" font-size="12" fill="currentColor">oklch_grad[2] · 红端：危险</text>
+            <rect x="50" y="112" width="260" height="22" fill="url(#grad-m9-f1)" stroke="var(--border)" stroke-width="1.5"/>
+            <line x1="58" y1="76" x2="58" y2="112" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="58" cy="123" r="9" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="3"/>
+            <text x="50" y="152" font-size="11" fill="currentColor">0.0</text>
+            <text x="180" y="152" text-anchor="middle" font-size="11" fill="currentColor">0.5</text>
+            <text x="310" y="152" text-anchor="middle" font-size="11" fill="currentColor">1.0</text>
+            <text x="368" y="120" font-size="11" fill="currentColor">红 = 雷</text>
+            <text x="368" y="140" font-size="11" fill="currentColor">绿 = 安全</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="confidence = 0.50 —— 下标 49：红绿正中间。OKLCH 感知均匀插值，中段是鲜艳的过渡色而不是一摊脏灰">
+          <svg viewBox="0 0 400 170" width="100%" role="img" aria-label="confidence 0.5 在渐变中段的取样">
+            <defs>
+              <linearGradient id="grad-m9-f2" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="var(--accent-3)"/>
+                <stop offset="1" stop-color="var(--accent-2)"/>
+              </linearGradient>
+            </defs>
+            <text x="200" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="currentColor">confidence = 0.50</text>
+            <text x="200" y="48" text-anchor="middle" font-size="12" fill="currentColor">oklch_grad[49] · 中段：过渡色不脏</text>
+            <rect x="50" y="112" width="260" height="22" fill="url(#grad-m9-f2)" stroke="var(--border)" stroke-width="1.5"/>
+            <line x1="180" y1="76" x2="180" y2="112" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="180" cy="123" r="9" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="3"/>
+            <text x="50" y="152" font-size="11" fill="currentColor">0.0</text>
+            <text x="180" y="152" text-anchor="middle" font-size="11" fill="currentColor">0.5</text>
+            <text x="310" y="152" text-anchor="middle" font-size="11" fill="currentColor">1.0</text>
+            <text x="368" y="120" font-size="11" fill="currentColor">红 = 雷</text>
+            <text x="368" y="140" font-size="11" fill="currentColor">绿 = 安全</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="confidence = 0.95 —— 下标 94：绿端。若 is_recommend=True（概率引擎的落点），再叠加 3 像素黄色粗边框（main.py L564-L572）">
+          <svg viewBox="0 0 400 170" width="100%" role="img" aria-label="confidence 0.95 在渐变绿端的取样">
+            <defs>
+              <linearGradient id="grad-m9-f3" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="var(--accent-3)"/>
+                <stop offset="1" stop-color="var(--accent-2)"/>
+              </linearGradient>
+            </defs>
+            <text x="200" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="currentColor">confidence = 0.95</text>
+            <text x="200" y="48" text-anchor="middle" font-size="12" fill="currentColor">oklch_grad[94] · 绿端＋黄色粗边（推荐落点）</text>
+            <rect x="50" y="112" width="260" height="22" fill="url(#grad-m9-f3)" stroke="var(--border)" stroke-width="1.5"/>
+            <line x1="297" y1="76" x2="297" y2="112" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="297" cy="123" r="9" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="3"/>
+            <text x="50" y="152" font-size="11" fill="currentColor">0.0</text>
+            <text x="180" y="152" text-anchor="middle" font-size="11" fill="currentColor">0.5</text>
+            <text x="310" y="152" text-anchor="middle" font-size="11" fill="currentColor">1.0</text>
+            <text x="368" y="120" font-size="11" fill="currentColor">红 = 雷</text>
+            <text x="368" y="140" font-size="11" fill="currentColor">绿 = 安全</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="confidence = 1.00 且 is_best=True —— 根本不查渐变：直接纯绿底＋2 像素蓝边（main.py L556-L563），坐标同时进 self.clicks 等待一键点击">
+          <svg viewBox="0 0 400 170" width="100%" role="img" aria-label="confidence 1.0 的 is_best 定制样式">
+            <defs>
+              <linearGradient id="grad-m9-f4" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="var(--accent-3)"/>
+                <stop offset="1" stop-color="var(--accent-2)"/>
+              </linearGradient>
+            </defs>
+            <text x="200" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="currentColor">confidence = 1.00（is_best）</text>
+            <text x="200" y="48" text-anchor="middle" font-size="12" fill="currentColor">跳过渐变：纯绿＋蓝边定制款</text>
+            <rect x="50" y="112" width="260" height="22" fill="url(#grad-m9-f4)" stroke="var(--border)" stroke-width="1.5"/>
+            <line x1="310" y1="76" x2="310" y2="112" stroke="var(--accent)" stroke-width="3"/>
+            <circle cx="310" cy="123" r="9" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="3"/>
+            <text x="50" y="152" font-size="11" fill="currentColor">0.0</text>
+            <text x="180" y="152" text-anchor="middle" font-size="11" fill="currentColor">0.5</text>
+            <text x="310" y="152" text-anchor="middle" font-size="11" fill="currentColor">1.0</text>
+            <text x="368" y="120" font-size="11" fill="currentColor">红 = 雷</text>
+            <text x="368" y="140" font-size="11" fill="currentColor">绿 = 安全</text>
+          </svg>
+        </div>
+      </div>
+      <div class="viz-controls">
+        <button class="viz-btn viz-prev" type="button" aria-label="上一帧">◀</button>
+        <span class="viz-pos">1 / 4</span>
+        <button class="viz-btn viz-next" type="button" aria-label="下一帧">▶</button>
+        <button class="viz-btn viz-auto" type="button" aria-pressed="false">▶ 自动播放</button>
+      </div>
+      <div class="viz-caption t-muted">两端定制、中间渐变——置信度越接近 0.5，颜色越「拿不准」</div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m9-exp" data-file="main.py · L588-L607">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">main.py · L588-L607</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def info(self, s):
+        # 提示info
+        template = re.compile(r"\((\d+),\s(\d+)\)")
+        self.list_p = re.findall(template, s.split("\n")[0])
+        if self.list_p:
+            for i, j in self.list_p:
+                i = int(i) - 1
+                j = int(j) - 1
+                self.btn_list[j][i].setEnabled(True)
+                self.btn_list[j][i].setStyleSheet(
+                    "QPushButton{border-radius:0px; border: 3px solid rgb(211, 51, 255);"
+                    'background-color:rgba(0, 0, 0, 0);font: 9pt "楷体"}'
+                    "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);"
+                    "color:rgba(210, 210, 210, 0);}"
+                )
+        self.info_window = MyMessageBox(
+            self, message=s, x=self._x + self.x(), y=self._y + self.y()
+        )
+        self.info_window.signal.connect(self.set_window_xy)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">点开一个推荐格后的弹窗。正则 <code>\((\d+),\s(\d+)\)</code> 只吃 string 的第一行——也就是推理理由——把里面的坐标全挖出来：这些是「下结论的依据格」，逐个亮起紫色边框。结论从哪来的，一眼可见；关掉弹窗后 <code>set_window_xy</code> 回收依据格的高亮（L611-L615），并记住弹窗新位置。弹窗本体 <code>MyMessageBox</code> 只负责显示，不做任何推理。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m9-grad" data-file="color.py · L139-L167（节选）">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">color.py · L139-L167（节选）</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>        for i in range(steps):
+            t = i / (steps - 1)  # 0到1的插值参数
+
+            # 找到当前t在哪个颜色段
+            segment_length = 1.0 / (len(colors_oklch) - 1)
+            segment_index = min(int(t / segment_length), len(colors_oklch) - 2)
+            segment_t = (t - segment_index * segment_length) / segment_length</code></pre>
+        <pre class="tp-line" data-i="1"><code>            # 计算最短的色调路径（考虑360°循环）
+            hue_diff = end_H - start_H
+            if abs(hue_diff) &gt; 180:
+                if hue_diff &gt; 0:
+                    start_H += 360
+                else:
+                    end_H += 360
+
+            # 线性插值
+            L = start_L + (end_L - start_L) * segment_t
+            C = start_C + (end_C - start_C) * segment_t
+            H = start_H + (end_H - start_H) * segment_t
+            H = H % 360  # 确保色调在0-360范围内</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">渐变生成器：100 步，每步算一个 0 到 1 的插值参数 t，先把两端颜色转到 OKLCH 色彩空间（<code>rgb_to_oklch</code>，color.py L20-L62），再在空间里插值。调用方只有一行（main.py L56）：<code>oklch_grad = gradient_gen.create_gradient([(1, 0, 0), (0, 1, 0)])</code>——纯红到纯绿，100 步。</div>
+        <div class="tp-note t-body" data-i="1">插值本身是三个分量各自线性：亮度 L、色度 C、色调 H。色调是 360 度的环，必须走最短路径（否则红到绿可能绕远路经过紫蓝）；OKLCH 的坐标是为人类视觉的正交性设计的——等步长的插值看起来也等步长，这是中段不脏的根源。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body"><strong>为什么这样设计：</strong>温度计为什么不用 RGB 直接插值？纯红 (1,0,0) 和纯绿 (0,1,0) 的 RGB 中点是 (0.5,0.5,0.5)——一摊灰色，既不像红也不像绿；而帮助模式里大量格子恰恰落在渐变中段（五五开的局面最常见），中段失真等于最重要的信息失真。OKLCH 里亮度与色度分离，中段是仍然鲜艳的橙黄过渡。color.py 的 <code>example_usage</code>（L192-L263）还留着与 HSL 渐变的对照实验可自行运行。至于「一键点击」：着色时攒好的两份清单由 <code>click_all_func</code>（main.py L627-L656）统一执行——先遍历 <code>self.clicks</code> 逐格左键点开（L634-L640），再按住 Ctrl 右键遍历 <code>self.mines</code> 把雷旗插上（L642-L650），执行完清空清单、锁按钮，等待下一轮「帮助」。</p>
+
+  <div class="quiz" data-quiz="m9-q1">
+    <div class="quiz-q t-h3">🧪 帮助模式的按钮网格上，某格的推理结论是 confidence = 0.5（不是雷的概率五五开，is_mine 与 is_best 都是 False，is_recommend 也是 False）。update_btn_list 会给它上什么色？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。纯红底加蓝边是 is_mine=True 或置信度不高于 0.01 的专属分支（main.py L548-L555，翻译块 pair-m9-color 第 2 段）。0.5 远高于 0.01，走不到这个分支。">A. 纯红底加蓝色边框——确定是雷的标记</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。取色公式是 oklch_grad[int((confidence - 1e-5) * 100)]（main.py L546，翻译块 pair-m9-color 第 1 段）：0.5 落在下标 49，即 100 步红绿渐变的正中间。is_recommend=False 所以没有黄色粗边，只有渐变底色（L573-L581，第 3 段）。上方 steps 动画的第 2 帧演的就是这个位置：OKLCH 感知均匀插值让中段是鲜艳的过渡色。">B. oklch_grad[49] 的红绿中段过渡色，无额外边框</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。纯绿底加蓝边要求 is_best=True 或置信度不低于 0.99（main.py L556-L563，翻译块 pair-m9-color 第 2 段）。0.5 不满足。">C. 纯绿底加蓝色边框——确定安全的标记</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。elif 链有渐变兜底分支（main.py L573-L581）：两端之外的所有置信度都取渐变色，不存在「不上色」的路径。">D. 保持透明未着色——程序只给两端上色</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m9-q2">
+    <div class="quiz-q t-h3">🧪 你点开一个推荐格，弹窗第一行写着「由(5, 7)得出」，第二行是「(6, 8)不是雷的概率：87.5%」。这两行文本分别是在哪生成的？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。info() 只用正则从传入的 string 里提取坐标来点亮依据格、再把 string 原样塞进弹窗（main.py L588-L607，翻译块 pair-m9-exp）——它不做任何推理，也不回查推理过程。">A. 都由 info() 现场生成——弹窗打开时根据格子坐标反查推理依据</button>
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。第一行是推理那一刻写进 pos_dict 的 exp 字段：单格规则写「由(i, j)得出」（deduction.py L67/L94），双格规则写「由(i, j), (x, y)得出」（L144/L172），概率路径写「胜率计算得出」（probability.py L288）或「枚举得出」（L490）。第二行由 update_btn_list 用 confidence 现场格式化（main.py L536-L539，翻译块 pair-m9-color 第 1 段），两行拼成 string 经 functools.partial 预绑定，点按钮时才递给 info。">B. 第一行在推理时写入 pos_dict 的 exp 字段，第二行由 update_btn_list 按置信度现场拼接</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。help() 只负责收集和 emit（solver.py L383，翻译块 pair-m9-help 第 3 段）——理由在各推理点各自写入，不存在收尾补写的环节。">C. 都在 help() 收尾时统一生成——循环结束后遍历 pos_dict_list 补写理由</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。data.json 的分桶胜率是 m10 讲的概率校准统计（跨局的历史数据）；弹窗里的概率是本局推理或枚举得出的 confidence（probability.py L284 的 round(win_rate, 5)），两者口径完全不同。">D. 第二行来自 data.json 的历史胜率对账</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <p class="t-body">帮助模式的闭环到此完整：点「帮助」→ 引擎推理 → 信号回传 → 温度计着色 → 点格子看理由 → 一键执行。但它终究要用户在场——每一步棋都要人按一次。m10 看另一个驾驶舱：自动模式怎么把整局、甚至连续几十局交给程序自己跑，包括胜负检测、无人值守的重开时序，以及每次概率决策的胜率是怎么被 data.json 记账、回头对账的。</p>
+</section>

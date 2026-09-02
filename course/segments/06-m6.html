@@ -1,0 +1,370 @@
+<!-- ============ 模块 6：区域划分 number5_1 空间分层（流程族 C「算」· 机制层） ============ -->
+<section class="module" id="m6">
+  <header>
+    <h2 class="t-h1">6 · 区域划分：涟漪、海岸线与腹地</h2>
+    <p class="t-body">m5 结束在「公共区 {b,c} 剩 1 雷待定」——确定性推理到此用尽了。主循环看得一清二楚：两层规则跑完，<code>sum3 == sum2</code>，棋盘一个格子都没被改写（solver.py L322-L324，细节 m10 讲）。这时候才轮到概率引擎 <code>number5_1</code> 出场。但在枚举之前，它要先做一件朴素的事：把未开的世界切成两块——数字格「管得着的」和「管不着的」。</p>
+  </header>
+
+  <p class="t-body">这一站不是概率，是地理。全盘未开格一刀两断：<strong>海岸线</strong> clicks——距数字格 ≤1.5，落在某个数字格的 3×3 管辖里，雷数受它约束，可精确枚举；<strong>腹地</strong> clicks9——距数字格 &gt;1.5，没有任何数字格管它，只剩全局雷密度这条统计规律。切完之后海岸线还要按「归哪些数字格管」分组，算过的组记进 checked 这本错题本——同一局面再问，翻到就抄。划分靠一次 OpenCV 距离变换完成：往每个数字格扔一颗石子，看涟漪扩散到哪里。</p>
+
+  <div class="viz-scene scene" data-kind="steps">
+    <div class="viz-title t-h3">🕹️ 涟漪扩散与海岸线成形（同一坐标系四帧）</div>
+    <div class="viz-stage" role="group" aria-label="distanceTransform 分层逐步回放">
+      <div class="viz-stepdeck">
+        <div class="viz-step" data-caption="第 1 帧：涟漪——往每个数字格（橙框）扔一颗石子，distanceTransform 记下每个未开格到最近数字格的距离；实线圈是 1.5 阈值（L67）">
+          <svg viewBox="0 0 560 330" width="100%" role="img" aria-label="涟漪从数字格向外扩散">
+            <rect x="20" y="20" width="280" height="280" fill="var(--bg-card)"/>
+            <path d="M60,20 L60,300 M100,20 L100,300 M140,20 L140,300 M180,20 L180,300 M220,20 L220,300 M260,20 L260,300 M20,60 L300,60 M20,100 L300,100 M20,140 L300,140 M20,180 L300,180 M20,220 L300,220 M20,260 L300,260" stroke="var(--grid-line)" stroke-width="1.5" fill="none"/>
+            <rect x="20" y="20" width="280" height="280" fill="none" stroke="var(--border)" stroke-width="2"/>
+            <circle cx="80" cy="80" r="40" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <circle cx="80" cy="80" r="85" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <circle cx="80" cy="80" r="60" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+            <circle cx="240" cy="240" r="40" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <circle cx="240" cy="240" r="85" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <circle cx="240" cy="240" r="60" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+            <rect x="60" y="60" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <rect x="220" y="220" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <text x="80" y="85" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="240" y="245" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">3</text>
+            <text x="40" y="84" text-anchor="middle" font-size="11" fill="currentColor">1.0</text>
+            <text x="40" y="44" text-anchor="middle" font-size="11" fill="currentColor">1.41</text>
+            <text x="120" y="124" text-anchor="middle" font-size="11" fill="currentColor">1.41</text>
+            <text x="160" y="84" text-anchor="middle" font-size="11" fill="var(--text-muted)">2.0</text>
+            <text x="160" y="164" text-anchor="middle" font-size="11" fill="var(--text-muted)">2.83</text>
+            <text x="330" y="50" font-size="14" fill="currentColor">res[j,i] = 到最近数字格的距离</text>
+            <text x="330" y="80" font-size="14" fill="currentColor">直邻 1.0　对角 1.41</text>
+            <text x="330" y="110" font-size="14" fill="currentColor">隔一整格 2.0　再远更大</text>
+            <text x="330" y="145" font-size="14" fill="var(--accent-text)">实线圈 = 1.5 阈值（L67）</text>
+            <text x="330" y="180" font-size="14" fill="var(--text-muted)">DIST_L12：平方相加开根号（L58）</text>
+            <text x="330" y="210" font-size="14" fill="var(--text-muted)">涟漪从每个数字格向外扩散</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 2 帧：分层——距离 ≤1.5 的格（橙底，16 格）与 >1.5 的格（腹地，31 格）一刀两断；数字格本身是已开格">
+          <svg viewBox="0 0 560 330" width="100%" role="img" aria-label="未开格按距离分层">
+            <rect x="20" y="20" width="280" height="280" fill="var(--bg-card)"/>
+            <path d="M60,20 L60,300 M100,20 L100,300 M140,20 L140,300 M180,20 L180,300 M220,20 L220,300 M260,20 L260,300 M20,60 L300,60 M20,100 L300,100 M20,140 L300,140 M20,180 L300,180 M20,220 L300,220 M20,260 L300,260" stroke="var(--grid-line)" stroke-width="1.5" fill="none"/>
+            <rect x="20" y="20" width="280" height="280" fill="none" stroke="var(--border)" stroke-width="2"/>
+            <circle cx="80" cy="80" r="60" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="8 5"/>
+            <circle cx="240" cy="240" r="60" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="8 5"/>
+            <g fill="var(--accent-soft)">
+              <rect x="20" y="20" width="40" height="40"/><rect x="60" y="20" width="40" height="40"/><rect x="100" y="20" width="40" height="40"/>
+              <rect x="20" y="60" width="40" height="40"/><rect x="100" y="60" width="40" height="40"/>
+              <rect x="20" y="100" width="40" height="40"/><rect x="60" y="100" width="40" height="40"/><rect x="100" y="100" width="40" height="40"/>
+              <rect x="180" y="180" width="40" height="40"/><rect x="220" y="180" width="40" height="40"/><rect x="260" y="180" width="40" height="40"/>
+              <rect x="180" y="220" width="40" height="40"/><rect x="260" y="220" width="40" height="40"/>
+              <rect x="180" y="260" width="40" height="40"/><rect x="220" y="260" width="40" height="40"/><rect x="260" y="260" width="40" height="40"/>
+            </g>
+            <rect x="60" y="60" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <rect x="220" y="220" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <text x="80" y="85" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="240" y="245" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">3</text>
+            <text x="160" y="164" text-anchor="middle" font-size="11" fill="var(--text-muted)">2.83</text>
+            <text x="330" y="50" font-size="14" fill="var(--accent-text)">res ≤ 1.5 → 橙底（16 格）</text>
+            <text x="330" y="80" font-size="14" fill="currentColor">res &gt; 1.5 → 底板色（31 格）</text>
+            <text x="330" y="115" font-size="14" fill="currentColor">1.414 &lt; 1.5 &lt; 2.0：</text>
+            <text x="330" y="140" font-size="14" fill="currentColor">阈值卡在对角与隔格之间</text>
+            <text x="330" y="175" font-size="14" fill="var(--text-muted)">数字格本身是已开格（bg=0），</text>
+            <text x="330" y="200" font-size="14" fill="var(--text-muted)">是涟漪的圆心，不在名单里</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 3 帧：海岸线与腹地——橙底格进 clicks（受约束、可枚举），其余进 clicks9（无约束腹地）">
+          <svg viewBox="0 0 560 330" width="100%" role="img" aria-label="clicks 与 clicks9 的划分结果">
+            <rect x="20" y="20" width="280" height="280" fill="var(--bg-card)"/>
+            <path d="M60,20 L60,300 M100,20 L100,300 M140,20 L140,300 M180,20 L180,300 M220,20 L220,300 M260,20 L260,300 M20,60 L300,60 M20,100 L300,100 M20,140 L300,140 M20,180 L300,180 M20,220 L300,220 M20,260 L300,260" stroke="var(--grid-line)" stroke-width="1.5" fill="none"/>
+            <rect x="20" y="20" width="280" height="280" fill="none" stroke="var(--border)" stroke-width="2"/>
+            <g fill="var(--accent-soft)">
+              <rect x="20" y="20" width="40" height="40"/><rect x="60" y="20" width="40" height="40"/><rect x="100" y="20" width="40" height="40"/>
+              <rect x="20" y="60" width="40" height="40"/><rect x="100" y="60" width="40" height="40"/>
+              <rect x="20" y="100" width="40" height="40"/><rect x="60" y="100" width="40" height="40"/><rect x="100" y="100" width="40" height="40"/>
+              <rect x="180" y="180" width="40" height="40"/><rect x="220" y="180" width="40" height="40"/><rect x="260" y="180" width="40" height="40"/>
+              <rect x="180" y="220" width="40" height="40"/><rect x="260" y="220" width="40" height="40"/>
+              <rect x="180" y="260" width="40" height="40"/><rect x="220" y="260" width="40" height="40"/><rect x="260" y="260" width="40" height="40"/>
+            </g>
+            <rect x="60" y="60" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <rect x="220" y="220" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <text x="80" y="85" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="240" y="245" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">3</text>
+            <text x="160" y="164" text-anchor="middle" font-size="12" fill="var(--text-muted)">腹地</text>
+            <text x="330" y="50" font-size="14" fill="var(--accent-text)">橙底：clicks（海岸线）</text>
+            <text x="330" y="75" font-size="13" fill="currentColor">距数字格 ≤1.5，8 邻域内</text>
+            <text x="330" y="98" font-size="13" fill="currentColor">接触已开区 → 受约束，</text>
+            <text x="330" y="121" font-size="13" fill="currentColor">每组可精确枚举</text>
+            <text x="330" y="160" font-size="14" fill="currentColor">底板：clicks9（腹地）</text>
+            <text x="330" y="185" font-size="13" fill="currentColor">距数字格 &gt;1.5，与任何</text>
+            <text x="330" y="208" font-size="13" fill="currentColor">数字格不搭界 → 只剩</text>
+            <text x="330" y="231" font-size="13" fill="currentColor">全局雷密度，无逐格约束</text>
+            <text x="330" y="270" font-size="13" fill="var(--text-muted)">示意局面：clicks 16 格、</text>
+            <text x="330" y="293" font-size="13" fill="var(--text-muted)">clicks9 31 格</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 4 帧：分组——共享数字格的边缘格连成一组（虚线框）；两组无公共数字格 → 约束互不相通，各自枚举、结果相乘">
+          <svg viewBox="0 0 560 330" width="100%" role="img" aria-label="边缘格按共享数字格分组">
+            <rect x="20" y="20" width="280" height="280" fill="var(--bg-card)"/>
+            <path d="M60,20 L60,300 M100,20 L100,300 M140,20 L140,300 M180,20 L180,300 M220,20 L220,300 M260,20 L260,300 M20,60 L300,60 M20,100 L300,100 M20,140 L300,140 M20,180 L300,180 M20,220 L300,220 M20,260 L300,260" stroke="var(--grid-line)" stroke-width="1.5" fill="none"/>
+            <rect x="20" y="20" width="280" height="280" fill="none" stroke="var(--border)" stroke-width="2"/>
+            <g fill="var(--accent-soft)">
+              <rect x="20" y="20" width="40" height="40"/><rect x="60" y="20" width="40" height="40"/><rect x="100" y="20" width="40" height="40"/>
+              <rect x="20" y="60" width="40" height="40"/><rect x="100" y="60" width="40" height="40"/>
+              <rect x="20" y="100" width="40" height="40"/><rect x="60" y="100" width="40" height="40"/><rect x="100" y="100" width="40" height="40"/>
+              <rect x="180" y="180" width="40" height="40"/><rect x="220" y="180" width="40" height="40"/><rect x="260" y="180" width="40" height="40"/>
+              <rect x="180" y="220" width="40" height="40"/><rect x="260" y="220" width="40" height="40"/>
+              <rect x="180" y="260" width="40" height="40"/><rect x="220" y="260" width="40" height="40"/><rect x="260" y="260" width="40" height="40"/>
+            </g>
+            <rect x="60" y="60" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <rect x="220" y="220" width="40" height="40" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+            <text x="80" y="85" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="240" y="245" text-anchor="middle" font-size="18" font-weight="bold" fill="var(--accent)">3</text>
+            <rect x="14" y="14" width="132" height="132" rx="10" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 4"/>
+            <rect x="174" y="174" width="132" height="132" rx="10" fill="none" stroke="var(--accent-2)" stroke-width="2" stroke-dasharray="7 4"/>
+            <text x="80" y="12" text-anchor="middle" font-size="13" font-weight="bold" fill="var(--accent-text)">组 1</text>
+            <text x="240" y="322" text-anchor="middle" font-size="13" font-weight="bold" fill="var(--accent-2)">组 2</text>
+            <text x="160" y="164" text-anchor="middle" font-size="12" fill="var(--text-muted)">腹地</text>
+            <text x="330" y="50" font-size="14" fill="var(--accent-text)">组 1：共享数字格 (1,1) 的 8 格</text>
+            <text x="330" y="75" font-size="14" fill="var(--accent-2)">组 2：共享数字格 (5,5) 的 8 格</text>
+            <text x="330" y="110" font-size="14" fill="currentColor">两组无公共数字格（L117），</text>
+            <text x="330" y="133" font-size="14" fill="currentColor">约束互不相通 → 各算各的</text>
+            <text x="330" y="170" font-size="13" fill="currentColor">示意局面：各 8 格 → 各</text>
+            <text x="330" y="193" font-size="13" fill="currentColor">2 的 8 次方 = 256 种方案，</text>
+            <text x="330" y="216" font-size="13" fill="currentColor">两组答案直接相乘即可</text>
+            <text x="330" y="255" font-size="13" fill="var(--text-muted)">不用在 2 的 16 次方 = 65536 个</text>
+            <text x="330" y="278" font-size="13" fill="var(--text-muted)">方案里打转，各查 256 次即可</text>
+          </svg>
+        </div>
+      </div>
+      <div class="viz-controls">
+        <button class="viz-btn viz-prev" type="button" aria-label="上一帧">◀</button>
+        <span class="viz-pos">1 / 4</span>
+        <button class="viz-btn viz-next" type="button" aria-label="下一帧">▶</button>
+        <button class="viz-btn viz-auto" type="button" aria-pressed="false">▶ 自动播放</button>
+      </div>
+      <div class="viz-caption t-muted">涟漪定距离，距离定海岸线，共享数字格定组——三刀下去，指数级的全局枚举拆成了各算各的</div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m6-dist" data-file="utils/probability.py · L48-L70">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/probability.py · L48-L70</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>        bg = np.zeros((h, w), dtype=np.uint8)
+        for index in range(w):
+            for j in range(h):
+                if (
+                        cell_value[j + 1, index + 1] == 9
+                        or cell_value[j + 1, index + 1] == 10
+                ):
+                    bg[j, index] = 255
+
+        # 计算255到0的最小距离，以找到最边缘的9与10
+        res = cv.distanceTransform(bg, cv.DIST_L12, 0)  # cv.DIST_L12: 平方相加开根号。</code></pre>
+        <pre class="tp-line" data-i="1"><code>        clicks = []  # 外围未开方格
+        clicks9 = []  # 内部未开方格
+
+        for i in range(w):
+            for j in range(h):
+                if cell_value[j + 1, i + 1] == 9:
+                    num9 += 1
+                if res[j, i] &lt;= 1.5 and cell_value[j + 1, i + 1] == 9:
+                    clicks.append(tuple((i + 1, j + 1)))
+                elif res[j, i] &gt; 1.5 and cell_value[j + 1, i + 1] == 9:
+                    clicks9.append(tuple((i + 1, j + 1)))</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">bg 是「未开世界」的二值画像：每格恰好一个像素，未开（9）或已标雷（10）画 255，已开格留 0——数字格是已开的，所以它们是 0，是涟漪的圆心。distanceTransform 算出每个 255 像素到最近 0 像素的距离；DIST_L12 按行尾注释是「平方相加开根号」，本机实测：直邻 1.0、对角 1.414、隔一整格 2.0——每格记下自己到最近数字格有多远。</div>
+        <div class="tp-note t-body" data-i="1">分类线画在 1.5（L67/L69）：res ≤ 1.5 且是未开格 → clicks（海岸线）；res &gt; 1.5 → clicks9（腹地）。1.5 卡在 1.414 与 2.0 之间，实际判据等价于「与某个已开格横纵差都不超过 1」——直邻与对角都算数，隔一整格就不算（m6-q1 考这个边界）。注意 10 也被画进 bg 的 255：它与 9 一样属于「尚未点开的世界」，但分类循环只挑 == 9——已判定的雷不再需要概率。顺带 num9 数出全部未开格数。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="viz-scene scene" data-kind="bars">
+    <div class="viz-title t-h3">📊 一张真实对局的格子构成：海岸线只有薄薄一圈（test_33.json）</div>
+    <script type="application/json" class="viz-data">
+    {
+      "unit": "格",
+      "items": [
+        { "label": "已开数字格", "value": 333, "note": "值 1–8 的格子：约束的来源，bg 矩阵里的 0", "anchor": "tests/data/test_33.json 按真实对局统计" },
+        { "label": "已开空白格", "value": 79, "note": "值 0 的格子：flood-fill 翻开的空地，不提供约束", "anchor": "tests/data/test_33.json 按真实对局统计" },
+        { "label": "边缘未开 clicks", "value": 43, "note": "距已开区 ≤ 1.5 的 9 格：受数字约束，可枚举——概率引擎只认真处理这些", "anchor": "tests/data/test_33.json 按 L48-L70 规则分类计算" },
+        { "label": "腹地未开 clicks9", "value": 25, "note": "距已开区 &gt; 1.5 的 9 格：没有任何数字够得着，概率同权（剩雷数 ÷ 剩格数）", "anchor": "tests/data/test_33.json 按 L48-L70 规则分类计算" },
+        { "label": "已标雷 10", "value": 79, "note": "推理已判定的雷：画进 bg 的 255 但不进 clicks——已确定的不再算概率", "anchor": "tests/data/test_33.json 按真实对局统计" }
+      ]
+    }
+    </script>
+    <div class="viz-stage" role="group" aria-label="真实对局的格子构成条形图"></div>
+    <div class="viz-detail t-muted" hidden></div>
+  </div>
+
+  <div class="translate-pair" id="pair-m6-group" data-file="utils/probability.py · L106-L149">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/probability.py · L106-L149</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>            # 将clicks分组，组与组之间没有公共区域（没有公共数字格）
+            click_list = [tuple([tuple(clicks[0])])]
+            set_list = [
+                self.get_set_1(clicks[0][0], clicks[0][1], cell_value)
+            ]  # click_list没一个坐标组对应的周边数字格
+            for pos in clicks[1:]:
+                pos = tuple(pos)
+                x, y = pos
+                indexes = []
+                se = self.get_set_1(x, y, cell_value)
+                for index in range(len(click_list)):
+                    if len(se &amp; set_list[index]) &gt; 0:  # &amp;：交集 |：并集
+                        indexes.append(index)</code></pre>
+        <pre class="tp-line" data-i="1"><code>                if len(indexes) == 0:  # 与click_list中的任意一组都没有交集，单分一组
+                    set_list.append(se)
+                    click_list.append(tuple([pos]))
+                else:
+                    # 将所有与pos有交集的组合并
+                    temp = []
+                    b = 0
+                    for index in indexes:
+                        index -= b  # pop掉了b个，故要减去b
+                        for p in click_list.pop(index):
+                            temp.append(p)
+                        b += 1
+                    temp.append(pos)
+                    click_list.append(tuple(temp))
+
+                    # 更新set_list
+                    temp = set()
+                    b = 0
+                    for index in indexes:
+                        index -= b
+                        temp = temp | set_list.pop(index)  # |：并集运算符
+                        b += 1
+                    temp = temp | se
+                    set_list.append(temp)</code></pre>
+        <pre class="tp-line" data-i="2"><code>            # 同序化clicks与click_list
+            clicks = []
+            for poses in click_list:
+                for i, j in poses:
+                    clicks.append(tuple((i, j)))</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">分组标准不是「格子挨着格子」，而是「受同一批数字格管辖」：每个边缘格用 get_set_1（m5 的 pair-m5-getset 里认识的数字格名单）查自己周边的数字格集合 se；只要与某个已有组的数字格名单有交集（L117），它就跟那组连坐——约束会通过共享的数字格互相传导。click_list 装各组的格子，set_list 装各组对应的数字格名单（L110 行内注释把「每个」写成了「没一个」，是仓库里的一处笔误，读时别被带偏）。</div>
+        <div class="tp-note t-body" data-i="1">合并的两种走法：与所有组都无交集就单开一组；有交集则把所有相关的组并成一个大组——坐标串起来、数字格名单并起来。注意 pop 掉 b 个元素后列表索引前移，所以 index 要减 b（L128/L139 的行内注释）。这个循环是动态长大的：A 与 B 有交集、B 又与 C 有交集，最终 A、B、C 连成一片——链式传导不漏组。</div>
+        <div class="tp-note t-body" data-i="2">分组完成后把 clicks 重建为「按组排列」的顺序。后面逐组求解、整组踢出超限组（下个翻译块）时，同组的格子天然连续，操作起来一刀切。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body"><strong>为什么分组？</strong>约束只通过数字格传导：两个组若不共享任何数字格，一组怎么布雷都不影响另一组方案的合法性——组的解空间彼此独立。全局一起枚举要在 2 的 N 次方个方案里打转（N 是全部边缘格数，高级局中期常有二十几个，估）；分组后每组各自枚举，组内几格就是 2 的几次方，组间答案直接相乘（动画第 4 帧：65536 种拆成 256 + 256）。<strong>为什么缓存？</strong>number5_1 一局里会被反复叫进来：play 主循环每轮推理无进展（sum3 == sum2）都来问一次，而点击若发生在别处，本组的方案根本没变——错题本翻到就抄（L172 命中即返回）。失效只有两条路：推理改写了组内格子（下块 L186-L188 的交集 pop），或一局结束时的整体重置（solver.py 胜负分支）。</p>
+
+  <div class="translate-pair" id="pair-m6-cache" data-file="utils/probability.py · L151-L223">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/probability.py · L151-L223</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>            # 计算limit
+            temp = np.zeros(len(click_list))
+            for i in range(len(click_list)):
+                temp[i] = len(click_list[i])
+            temp = temp &gt;= 15
+            t_sum = temp.sum()
+            limit = (
+                self.limit - int(math.log2(t_sum) / 2) if t_sum != 0 else self.limit
+            )  # 20大约20s 19 10s 18 5s</code></pre>
+        <pre class="tp-line" data-i="1"><code>            is_removed = False
+            for index in range(len(click_list)):
+                # 运算
+                try:
+                    self.pv_signal.emit(0)
+                    _res, _canopen_res = self.checked[tuple(click_list[index])]
+                    _total = len(_res)
+                    canopen_res = np.hstack((canopen_res, _canopen_res))
+                    total *= _total
+                    res_list.append(_res)
+                    ck.append(_total)
+                    self.pv_signal.emit(100)
+                except KeyError:
+                    if len(click_list[index]) &gt; limit + 3:  # 大于limit时因为算量过大而无法判断
+                        is_removed = True
+                        for pos in click_list[index]:
+                            clicks.remove(pos)
+                            clicks9.append(pos)</code></pre>
+        <pre class="tp-line" data-i="2"><code>                    else:
+                        for li in list(self.checked.keys()):
+                            if len(set(li) &amp; set(tuple(click_list[index]))) != 0:
+                                self.checked.pop(li)
+                        try:
+                            _res, _total, _canopen_res = self.part_solve(
+                                click_list[index],
+                                cell_value,
+                                num10,
+                                num9 - len(click_list[index]),
+                                set_list[index],
+                                False,
+                            )
+                        except KeyError:
+                            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
+                            for i in range(1, w + 1):
+                                for j in range(1, h + 1):
+                                    cell_value[j, i] = 9
+                            cell_value = self.complete_scan(cell_value)
+                            self.count += 1
+                            self.Visible_signal.emit(False)
+                            return cell_value
+
+                        if len(_res) == 0:
+                            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
+                            for i in range(1, w + 1):
+                                for j in range(1, h + 1):
+                                    cell_value[j, i] = 9
+                            cell_value = self.complete_scan(cell_value)
+                            self.count += 1
+                            self.Visible_signal.emit(False)
+                            return cell_value
+
+                        canopen_res = np.hstack((canopen_res, _canopen_res))
+                        total *= _total
+                        res_list.append(_res)
+                        ck.append(_total)
+
+                        self.checked[tuple(click_list[index])] = (_res, _canopen_res)</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">limit 是枚举的复杂度预算：self.limit 默认 80（cfg.json 可调，m11 讲配置面板），每加 1 计算时间翻倍（下方 is_removed 分支弹窗的原话）。这里还有一道动态收紧：数出 15 格以上的大组个数 t_sum，limit 按以 2 为底的对数折减（行尾注释：20 约 20s、19 约 10s、18 约 5s）——大组越多预算越紧，先保住吞吐再说。</div>
+        <div class="tp-note t-body" data-i="1">逐组结算，第一站先翻错题本：checked 的键是组的坐标 tuple，命中就整组抄答案（无 KeyError，进度条直接 0→100）——同一局面反复询问时省掉整段枚举。超限的组（格数 &gt; limit + 3）不硬算：整组踢出 clicks、降级并进 clicks9 当无约束格，is_removed 记一笔；帮助模式下随后用 warning_signal_2 弹窗明说「结果可能不准确、加 limit 的代价是翻倍」（L225-L230，赌 m6-q2 之外的知识点到 m10 的错误边界分类里还会碰头）。</div>
+        <div class="tp-note t-body" data-i="2">错题本的失效规则：本组格子与任何旧缓存条目有交集就先 pop（L186-L188）——推理把某格改写成 10/11 后，含它的旧组答案已过时，必须作废。然后 part_solve（m7 的回溯枚举）算出该组的全部合法方案，连同「每格可开概率」存回 checked（L223，键 = 新组坐标 tuple）。两处硬边界：part_solve 内部 KeyError 与「算出 0 个方案」都会走全盘重扫 + count 计数 + return（m3 讲过的 complete_scan 重来一遍，识别错误兜底链的一环）。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="quiz" data-quiz="m6-q1">
+    <div class="quiz-q t-h3">🧪 res[j, i] &lt;= 1.5 里的 1.5 是什么意思？为什么取 1.5，而不是 1 或 2？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。L58 注释「平方相加开根号」即欧氏距离（实测：直邻 1.0、对角 1.414、隔一整格 2.0），1.414 &lt; 1.5 &lt; 2.0——1.5 恰好把「与已开区 8 邻域内接触（直邻或对角）」的格全收进 clicks（L67，受数字格约束、可枚举），把连对角都不沾的格留给 clicks9（L69，无约束腹地）。改成 1 会把纯对角接触的边缘格漏进腹地——明明受约束却按无约束算，概率失真；改成 2 会把隔一整格的无关格拉进约束枚举，算量虚胖。">A. 1.5 卡在对角距离 1.414 与隔格距离 2.0 之间——划出「8 邻域内接触已开区」的格，即数字格管得着的格</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。res 的单位是格不是像素：bg 矩阵每格恰好一个像素（L48 的 (h, w)，与 cell_width 无关）；cell_width 只在点击坐标换算（m2 的 bx + m*cell_width）里出场，两套度量不搭界。">B. 1.5 是半个格子宽的像素尺度（cell_width 24 的一半约等于 1.5 格）</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。1.5 只是 clicks/clicks9 的分类阈值（L67/L69），与「哪里最值得点」无关——最优点击目标要等概率与胜率算出来（m7 的 part_solve、m8 的 win_rate）。">C. res 恰好等于 1.5 的格子是最安全的点击目标</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错在「不影响结果」：阈值挪到 1，纯对角接触的格被扔进 clicks9 按无约束处理——它们明明被数字格的账本管着，概率直接算错（正确性问题）；挪到 2 则约束区掺进无关格（算量问题）。它是正确性与算量的分界线，不是纯性能旋钮。">D. 1.5 只是性能旋钮，调成 1 或 2 只影响速度，不影响结果对错</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m6-q2">
+    <div class="quiz-q t-h3">🧪 同一局里，上一轮 number5_1 为某组算过并存进 checked。之后 mine_clear3_1 把该组里的一格改写成了 10（标雷）。这一轮再跑到这组，会发生什么？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。改写成 10 后 L65 的 ==9 不成立，该格进不了这轮的 clicks（也不进 clicks9——10 不参与分类）；同组剩余格重新分组，新组的坐标 tuple 必然与旧键不同 → L172 抛 KeyError → 走 L185 的 else：L186-L188 先把所有与本组有格子交集的旧缓存 pop 作废，part_solve 重算，L223 存回新键。错题本的规矩：局面变了，相关页整页撕掉重写。">A. 该格不再是 9，退出这轮的边缘名单——新组键与旧键不同，KeyError 走重算分支：先 pop 掉有交集的旧缓存，再 part_solve 重算存回</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。缓存键只是组坐标 tuple（L223），本身分不出新旧——但推理改写后该格进不了新组，新组键必然不同，L172 直接 KeyError 走重算分支，根本轮不到「命中过时结果」；防过时的活是 L186-L188 的交集 pop 在重算前干的。">B. 直接命中旧缓存返回过时结果——键只是坐标，分不出新局面旧局面</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。mine_clear3_1（m5 翻译块 pair-m5-loop）只写 cell_value，不碰 checked；checked 的整体重置只发生在一局结束的胜负分支（solver.py L213/L241/L280/L309），组级失效靠 L186-L188 的交集 pop——两层失效机制分工明确。">C. mine_clear3_1 改写格子的同时顺手清空整个 checked</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。KeyError 在这里是被 except 接住的控制流信号（L179「缓存未命中」的正常分支），不是致命错误；真正触发「全盘重扫 + return」的是 part_solve 内部的 KeyError 或算出空方案（L198-L206 / L208-L216）——且那也是重扫重来，不是终止一局。">D. 程序抛出 KeyError，这一局就此终止</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+</section>

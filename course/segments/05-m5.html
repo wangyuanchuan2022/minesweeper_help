@@ -1,0 +1,354 @@
+<!-- ============ 模块 5：双格判定 number_3_1（流程族 B「推」· 机制层） ============ -->
+<section class="module" id="m5">
+  <header>
+    <h2 class="t-h1">5 · 双格判定：两份名单互相勾稽</h2>
+    <p class="t-body">m4 的两条规则只会「清点包围圈」——一个数字格自己就能说清的事。但扫雷里最锋利的确定性推理，往往要两个数字格把各自的账本摊开来互相对：你的名单上有谁、我的名单上有谁、谁被两份名单同时记着。<code>number_3_1</code> 就是玩家口中的 1-1、1-2 模式的程序化——把这种「两份名单互相勾稽」写成三次集合运算。</p>
+  </header>
+
+  <p class="t-body">从一个真实的小局面说起。棋盘一角摆出这样一排：上排两个已开数字格 <strong>1</strong> 和 <strong>2</strong> 肩并肩，下排贴着四个未开格（记作 a、b、c、d）。1 号的名单是 {a, b, c}，2 号的名单是 {b, c, d}——b、c 同时被记在两份名单上，d 只归 2 号管。单格规则逐一试过：1 号周围 3 个未开、0 个已标雷，3 + 0 ≠ 1，凑不出「刚好相等」；2 号同样 3 + 0 ≠ 2。两条规则全部沉默——但两张名单正要开始互相勾稽。</p>
+
+  <div class="viz-scene scene" data-kind="steps">
+    <div class="viz-title t-h3">🕹️ 一次 1-2 模式的完整勾稽（同一坐标系四帧）</div>
+    <div class="viz-stage" role="group" aria-label="number_3_1 双格勾稽逐步回放">
+      <div class="viz-stepdeck">
+        <div class="viz-step" data-caption="第 1 帧：单格规则沉默——1 号与 2 号各自清点，都凑不出「刚好相等」（上排为已开格，下排 a b c d 均为未开 9）">
+          <svg viewBox="0 0 520 170" width="100%" role="img" aria-label="单格规则全部沉默的开局">
+            <g>
+              <rect x="110" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="160" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="210" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="260" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="110" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="160" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="210" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="260" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+            </g>
+            <text x="133" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="183" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">1</text>
+            <text x="233" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="283" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="133" y="108" text-anchor="middle" font-size="16" fill="currentColor">a</text>
+            <text x="183" y="108" text-anchor="middle" font-size="16" fill="currentColor">b</text>
+            <text x="233" y="108" text-anchor="middle" font-size="16" fill="currentColor">c</text>
+            <text x="283" y="108" text-anchor="middle" font-size="16" fill="currentColor">d</text>
+            <text x="330" y="42" font-size="13" fill="currentColor">1 号：cnt9=3, cnt10=0</text>
+            <text x="330" y="62" font-size="13" fill="currentColor">3+0 ≠ 1 → 全雷规则×</text>
+            <text x="330" y="88" font-size="13" fill="currentColor">2 号：cnt9=3, cnt10=0</text>
+            <text x="330" y="108" font-size="13" fill="currentColor">3+0 ≠ 2 → 全雷规则×</text>
+            <text x="330" y="134" font-size="13" fill="var(--text-muted)">cnt10=0 → 全安全规则也×</text>
+            <text x="330" y="154" font-size="13" fill="var(--accent-text)">m4 两条规则全部沉默</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 2 帧：get_set 交出两份名单——1 号的 {a,b,c}（橙圈）与 2 号的 {b,c,d}（绿圈），b、c 同时在两份名单上">
+          <svg viewBox="0 0 520 170" width="100%" role="img" aria-label="两份邻域名单">
+            <g>
+              <rect x="110" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="160" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="210" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="260" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="110" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="160" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="210" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="260" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+            </g>
+            <rect x="104" y="74" width="160" height="58" rx="12" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 4"/>
+            <rect x="154" y="74" width="160" height="58" rx="12" fill="none" stroke="var(--accent-2)" stroke-width="2" stroke-dasharray="6 4"/>
+            <text x="133" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="183" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">1</text>
+            <text x="233" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="283" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="133" y="108" text-anchor="middle" font-size="16" fill="currentColor">a</text>
+            <text x="183" y="108" text-anchor="middle" font-size="16" fill="currentColor">b</text>
+            <text x="233" y="108" text-anchor="middle" font-size="16" fill="currentColor">c</text>
+            <text x="283" y="108" text-anchor="middle" font-size="16" fill="currentColor">d</text>
+            <text x="330" y="42" font-size="13" fill="var(--accent-text)">a 名单 = {a, b, c}（橙圈）</text>
+            <text x="330" y="62" font-size="13" fill="var(--accent-2)">b 名单 = {b, c, d}（绿圈）</text>
+            <text x="330" y="88" font-size="13" fill="currentColor">x1 = 1　x2 = 2</text>
+            <text x="330" y="108" font-size="13" fill="currentColor">b、c 同时在两份名单上</text>
+            <text x="330" y="134" font-size="13" fill="var(--accent-text)">——两份名单开始互相勾稽</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 3 帧：勾稽三区——1 号独占 {a}（x_set）、公共 {b,c}（y_set）、2 号独占 {d}（z_set）；差值 x2−x1 = 1">
+          <svg viewBox="0 0 520 170" width="100%" role="img" aria-label="交并差三区划分">
+            <g>
+              <rect x="110" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="160" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="210" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="260" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="110" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="3" stroke-dasharray="7 4"/>
+              <rect x="160" y="80" width="46" height="46" fill="var(--accent-soft)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="210" y="80" width="46" height="46" fill="var(--accent-soft)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="260" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--accent-2)" stroke-width="3" stroke-dasharray="7 4"/>
+            </g>
+            <text x="133" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="183" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">1</text>
+            <text x="233" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="283" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="133" y="108" text-anchor="middle" font-size="16" fill="currentColor">a</text>
+            <text x="183" y="108" text-anchor="middle" font-size="16" fill="currentColor">b</text>
+            <text x="233" y="108" text-anchor="middle" font-size="16" fill="currentColor">c</text>
+            <text x="283" y="108" text-anchor="middle" font-size="16" fill="currentColor">d</text>
+            <text x="133" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="var(--accent-text)">x_set</text>
+            <text x="208" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="var(--text-muted)">y_set</text>
+            <text x="283" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="var(--accent-2)">z_set</text>
+            <text x="330" y="42" font-size="13" fill="currentColor">bj = a∪b = {a,b,c,d}</text>
+            <text x="330" y="62" font-size="13" fill="currentColor">x_set = bj−b = {a}</text>
+            <text x="330" y="82" font-size="13" fill="currentColor">y_set = a∩b = {b,c}</text>
+            <text x="330" y="102" font-size="13" fill="currentColor">z_set = bj−a = {d}</text>
+            <text x="330" y="128" font-size="13" fill="var(--accent-text)">x2−x1 = 2−1 = 1</text>
+          </svg>
+        </div>
+        <div class="viz-step" data-caption="第 4 帧：x2−x1 == len(z_set) → 2 号独占区 {d} 全是雷（写 10）、1 号独占区 {a} 全安全（点击/标 11）；公共区 {b,c} 恰剩 1 雷待定，交给 m6 概率引擎">
+          <svg viewBox="0 0 520 170" width="100%" role="img" aria-label="差值条件成立后的判定">
+            <g>
+              <rect x="110" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="160" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="210" y="28" width="46" height="46" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.5"/>
+              <rect x="260" y="28" width="46" height="46" fill="var(--bg-card)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="110" y="80" width="46" height="46" fill="var(--bg-card)" stroke="var(--accent-2)" stroke-width="2.5"/>
+              <rect x="160" y="80" width="46" height="46" fill="var(--accent-soft)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="210" y="80" width="46" height="46" fill="var(--accent-soft)" stroke="var(--border)" stroke-width="1.5"/>
+              <rect x="260" y="80" width="46" height="46" fill="var(--accent-3)" stroke="var(--border)" stroke-width="1.5"/>
+            </g>
+            <text x="133" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="183" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">1</text>
+            <text x="233" y="57" text-anchor="middle" font-size="24" font-weight="bold" fill="var(--accent)">2</text>
+            <text x="283" y="56" text-anchor="middle" font-size="15" fill="currentColor">·</text>
+            <text x="133" y="108" text-anchor="middle" font-size="16" fill="var(--accent-2)">11</text>
+            <text x="183" y="108" text-anchor="middle" font-size="16" fill="currentColor">9</text>
+            <text x="233" y="108" text-anchor="middle" font-size="16" fill="currentColor">9</text>
+            <text x="283" y="108" text-anchor="middle" font-size="16" fill="var(--on-accent-3)">10</text>
+            <text x="330" y="42" font-size="13" fill="var(--accent-text)">x2−x1 == len(z_set)</text>
+            <text x="330" y="62" font-size="13" fill="var(--accent-text)">2−1 == 1 ✓</text>
+            <text x="330" y="88" font-size="13" fill="currentColor">z_set {d} 全是雷 → 写 10</text>
+            <text x="330" y="108" font-size="13" fill="currentColor">x_set {a} 全安全 → 点击/标 11</text>
+            <text x="330" y="134" font-size="13" fill="var(--text-muted)">y_set {b,c} 剩 1 雷待定</text>
+            <text x="330" y="154" font-size="13" fill="var(--text-muted)">——概率引擎的事（m6）</text>
+          </svg>
+        </div>
+      </div>
+      <div class="viz-controls">
+        <button class="viz-btn viz-prev" type="button" aria-label="上一帧">◀</button>
+        <span class="viz-pos">1 / 4</span>
+        <button class="viz-btn viz-next" type="button" aria-label="下一帧">▶</button>
+        <button class="viz-btn viz-auto" type="button" aria-pressed="false">▶ 自动播放</button>
+      </div>
+      <div class="viz-caption t-muted">两份名单一勾稽，推不动的局面就动了——条件只在「差值恰好等于独占区大小」时开火</div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m5-sets" data-file="utils/deduction.py · L107-L162">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/deduction.py · L107-L162</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def number_3_1(self, i, j, cell_value):
+        x1 = cell_value[j, i]
+        a, cnt10 = self.get_set(i, j, cell_value)
+        x1 -= cnt10
+        if x1 &lt;= 0:
+            return cell_value
+        for x in range(i - 2, i + 3):
+            for y in range(j - 2, j + 3):
+                x2 = cell_value[y, x]
+                if y &gt; self.h or y &lt; 1 or x &gt; self.w or x &lt; 1 or (x == i and y == j):
+                    continue
+                elif 0 &lt; x2 &lt; 8:</code></pre>
+        <pre class="tp-line" data-i="1"><code>                    c = False
+                    b, cnt10_x2 = self.get_set(x, y, cell_value)
+                    x2 -= cnt10_x2
+                    if x2 &lt; 0:
+                        continue
+                    bj = a | b
+                    x_set = bj - b
+                    z_set = bj - a
+                    y_set = a &amp; b</code></pre>
+        <pre class="tp-line" data-i="2"><code>                    if x1 - x2 == len(x_set):
+                        for u, v in x_set:
+                            cell_value[v, u] = 10
+                            if not self.is_play:
+                                if (
+                                        tuple((u, v)) not in self.appended_pos
+                                        and self.cell_value[v, u] != 10
+                                ):
+                                    c = True
+                                    self.pos_dict_list.append(
+                                        {
+                                            "pos": (u, v),
+                                            "confidence": 0,
+                                            "num": self.num,
+                                            "is_mine": True,
+                                            "is_best": False,
+                                            "exp": f"由({i}, {j}), ({x}, {y})得出\n"
+                                                   f"{list(y_set) if len(y_set) &gt; 0 else str('公共区域')}"
+                                                   f"中至多有{x2}个雷，{list(x_set | y_set)}中"
+                                                   f"有{x1}个雷，所以{list(x_set)}是雷。",
+                                            "is_recommend": False,
+                                        }
+                                    )
+                                    self.appended_pos.add(tuple((u, v)))</code></pre>
+        <pre class="tp-line" data-i="3"><code>                        for u, v in z_set:
+                            if cell_value[v, u] == 9:
+                                if self.is_play:
+                                    pyautogui.click(
+                                        self.bx + u * self.cell_width,
+                                        self.by + v * self.cell_width,
+                                    )
+                                    c = True
+                                else:
+                                    cell_value[v, u] = 11</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">锚点是 (i, j)——例子里那个 1。x1 先做一次「扣除」：get_set 顺手数出它周围已标了几雷（cnt10），从数字里减掉，得到「还有几个雷没着落」；差值 ≤ 0 说明雷已标满，这格没信息量，直接收工（m4 规则二管过的地方不必再来）。然后开一个 5×5 扫描窗逐格找搭档——窗为什么是 5×5 而非 3×3，答案在下方 mine_clear3_1 的翻译块。搭档资格只有一条：是 1 到 7 的数字格（0 是已开空格，9 及以上不是数字）。</div>
+        <div class="tp-note t-body" data-i="1">三行集合算术就是整个算法的核心（对应动画第 3 帧）：bj 是两份名单的并集；x_set = bj − b，即 1 号名单里 2 号名单没有的——1 号独占区；z_set 反过来是 2 号独占区；y_set 是两份名单的重叠区。x2 同样先扣掉自己已标的雷。三区把「谁归谁管」一刀切干净——之后的推理只对这三区做算术，不再关心具体格子长什么样。</div>
+        <div class="tp-note t-body" data-i="2">差值条件是两份账本相减：1 号地盘（x_set ∪ y_set）记 x1 个雷，2 号地盘（y_set ∪ z_set）记 x2 个——公共区 y_set 两边各记一次，相减时自动消掉，得「x_set 与 z_set 的雷数之差 = x1 − x2」。当这个差恰好等于 1 号独占区的格数时，唯一解是 x_set 塞满雷（写 10）。帮助模式顺手把一条「人话证明」记进 pos_dict_list——exp 字段就是 m9 弹窗里原样显示给用户的推理理由。</div>
+        <div class="tp-note t-body" data-i="3">同一枚硬币的反面：x_set 必须满，差值才凑得齐；而 z_set 此刻被挤得一格雷不剩——2 号独占区全部安全。z_set 的格子要逐个确认还是 9 才动手（已被推理写成 10/11 的不重复处理），is_play 在这里分叉「直接点击」或「标 11 + 记推荐」，与 m4 完全同构。对称的另一半在 L182：x2 − x1 == len(z_set)，方向整个反过来——动画第 4 帧演的正是这个镜像条件（例子里 2−1 == 1 = len({d})）。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="translate-pair" id="pair-m5-getset" data-file="utils/deduction.py · L255-L274">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/deduction.py · L255-L274</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def get_set_1(self, i, j, cell_value):
+        result = set()
+        for n in range(j - 1, j + 2):
+            for m in range(i - 1, i + 2):
+                if 0 &lt;= m &lt;= self.w + 1 and 0 &lt;= n &lt;= self.h + 1:
+                    if 0 &lt; cell_value[n, m] &lt; 8:
+                        result.add((m, n))
+        return result</code></pre>
+        <pre class="tp-line" data-i="1"><code>    def get_set(self, i, j, cell_value):
+        result = set()
+        cnt10 = 0
+        for n in range(j - 1, j + 2):
+            for m in range(i - 1, i + 2):
+                if 0 &lt;= m &lt;= self.w + 1 and 0 &lt;= n &lt;= self.h + 1:
+                    if cell_value[n, m] == 9:
+                        result.add((m, n))
+                    elif cell_value[n, m] == 10:
+                        cnt10 += 1
+        return result, cnt10</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">get_set_1 收集的不是格子，是「数字格名单」——(i, j) 周围 3×3 里所有 1 到 7 的数字格坐标。有趣的是它在 deduction.py 里没有任何调用者：全仓库只有 m6 概率引擎的分组循环用它（probability.py L109/L115）。定义放在推理层，用家在概率层——先在这认识它，m6 里它会回来当主角。</div>
+        <div class="tp-note t-body" data-i="1">get_set 是 number_3_1 的原料供应商，一次调用交两样货：周围 3×3 的未开格坐标集合（result），以及已标雷计数（cnt10）。对比 m4 的 cell_around：那边只数个数、回答「几个」，这边交坐标集合、回答「哪些」——双格推理必须知道「谁跟谁重叠」，光有计数勾稽不起来。已标的雷（10）不进名单，只折进 cnt10 直接从数字里扣掉。</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="t-body"><strong>为什么用集合交并差，而不是逐格计数？</strong>因为要证的东西本身就是集合层面的恒等式：x_set ∪ y_set 记 x1 个雷、y_set ∪ z_set 记 x2 个，两笔账一减 y_set 自动消掉——三行运算（L124-L127）就是完整证明，对任何局形成立，不用枚举任何具体格子。换成「对每个格子讨论是不是雷」的写法，同样的结论要嵌套两重循环加一堆边界讨论，还容易把「恰好」写成「至少」。<strong>为什么逐对勾稽，而不是把所有数字格连成一张约束图一次求解？</strong>因为约束满足的搜索空间随格子数指数膨胀——m6 的 limit（每加 1 计算时间翻倍）就是这堵墙的直接证据。逐对勾稽一次只看两个数字格：外层扫一遍棋盘、每个锚点只在 5×5 邻域里找搭档，成本与格子数成正比；全局求解则交给概率引擎，而且还得先分组降维（m6 的主题）。</p>
+
+  <div class="translate-pair" id="pair-m5-loop" data-file="utils/deduction.py · L243-L253">
+    <div class="tp-head">
+      <span class="t-tag">📄 真实代码</span>
+      <span class="t-muted tp-file">utils/deduction.py · L243-L253</span>
+    </div>
+    <div class="tp-body">
+      <div class="tp-code t-code">
+        <pre class="tp-line" data-i="0"><code>    def mine_clear3_1(self, cell_value, clicks=None):
+        if clicks:
+            for i, j in clicks:
+                cell_value = self.number_3_1(i, j, cell_value)
+            return cell_value
+        for i in range(2, self.w):
+            for j in range(2, self.h):
+                if 0 &lt; cell_value[j, i] &lt; 8:
+                    if self.cell_around(i, j, cell_value)[0] &gt; 0:
+                        cell_value = self.number_3_1(i, j, cell_value)
+        return cell_value</code></pre>
+      </div>
+      <div class="tp-plain">
+        <div class="tp-note t-body" data-i="0">驱动器：外层两重循环决定「谁当锚点」——i 从 2 到 w−1、j 从 2 到 h−1，最外圈的数字格不做锚点（配对中只要有一格不在最外圈，这个组合就会被另一半的 5×5 窗扫到）。两道预筛：得是数字格（0 &lt; v &lt; 8），且周围确实还有未开格（cell_around 的 cnt9 &gt; 0——没有 9 的格连名单都交不出来）。过了筛才调 number_3_1，进它自己的 5×5 找搭档。为什么是 5×5：两个数字格要有共同的邻居，各自的 3×3 邻域必须相交——锚点邻域最远伸到 i+1，搭档邻域最近从 x−1 开始，要相遇必须 x−1 ≤ i+1，即 x ≤ i+2（对称得 x ≥ i−2）。距离 3 以上的两个数字格连一个共同格子都没有，勾稽无从谈起，多扫一格都是白费。带 clicks 参数的版本与 m4 的 mine_clear1 同构：定点处理指定格——m6 分组重算时走的正是这条路。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fork-scene scene">
+    <div class="fork-title t-h3">🛤️ 把一对数字格拖过勾稽岔口</div>
+    <p class="t-body">锚点格和搭档格的名单都交上来了（x_set / z_set / y_set），下一步看差值等式站不站得住。岔路口就是 number_3_1 的两个镜像 if（deduction.py L128 与 L182）——选一种差值关系投放令牌，看这对数字格分别落进哪种命运。</p>
+    <script type="application/json" class="fork-data">
+    {
+      "gate": "闸门：差值等式成不成立",
+      "entryTag": "📋 一对数字格的名单令牌",
+      "tokenPrefix": "🎯",
+      "goLabel": "▶ 投放令牌",
+      "params": [
+        { "id": "cond", "label": "差值关系", "type": "radio",
+          "options": [
+            { "value": "ab", "label": "x1 − x2 == len(x_set)" },
+            { "value": "ba", "label": "x2 − x1 == len(z_set)" },
+            { "value": "none", "label": "两个等式都不成立" }
+          ] }
+      ],
+      "branches": [
+        { "id": "b1", "title": "🟢 L128 分支：x_set 全雷、z_set 全安全",
+          "cond": "if x1 - x2 == len(x_set):（deduction.py L128）",
+          "when": { "cond": "ab" },
+          "fx": [ "x_set 每格写 10（全雷）", "z_set 每格点击 / 写 11（全安全）" ],
+          "note": "锚点比搭档多出的雷数，恰好等于只在锚点名单里的格子数（x_set）——雷只能全在那里。镜像分支 L182 同理反着来。",
+          "code": [
+            "                    if x1 - x2 == len(x_set):",
+            "                        for u, v in x_set:",
+            "                            cell_value[v, u] = 10"
+          ] },
+        { "id": "b2", "title": "🟠 L182 分支：z_set 全雷、x_set 全安全",
+          "cond": "if x2 - x1 == len(z_set):（deduction.py L182）",
+          "when": { "cond": "ba" },
+          "fx": [ "z_set 每格写 10（全雷）", "x_set 每格点击 / 写 11（全安全）" ],
+          "note": "搭档多出的雷数恰好等于 z_set 的格子数——和 b1 是同一句话换个方向念。两个分支体几乎逐行对称，正是「两份名单互相勾稽」的两半。",
+          "code": [
+            "                    if x2 - x1 == len(z_set):",
+            "                        for u, v in z_set:",
+            "                            cell_value[v, u] = 10"
+          ] },
+        { "id": "b3", "title": "⚪ 兜底：这对数字格沉默，交给概率引擎",
+          "cond": "两个等式都不成立（隐式落空）",
+          "when": {},
+          "fx": [ "无任何写入", "c 保持 False，连 rescan 都不触发" ],
+          "note": "差值对不上「只差这几个雷」的整数关系，这对数字格就推不出确定结论——不猜、不点，安静返回。沙盘原样传回主循环，若所有确定推理都无进展，就该 m6 的概率引擎出场了。",
+          "code": [
+            "        return cell_value"
+          ] }
+      ]
+    }
+    </script>
+    <div class="fork-board"></div>
+  </div>
+
+  <div class="quiz" data-quiz="m5-q1">
+    <div class="quiz-q t-h3">🧪 number_3_1 里，锚点格扣掉已标雷后还差 x1 个雷、搭档格还差 x2 个（x1 &gt; x2），三区划分满足 x1 − x2 == len(x_set)。此刻能安全宣布的是？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。两笔账相减（x_set∪y_set 记 x1、y_set∪z_set 记 x2），公共区 y_set 被消掉，得 x_set 与 z_set 的雷数差 = x1−x2 = len(x_set)；x_set 最多就 len(x_set) 个雷——要凑出这个差，x_set 必须满、z_set 必须空。代码上 L128 条件触发后 L130 逐格写 10，L153-L162 逐格确认是 9 后点击/标 11。steps 动画第 3→4 帧演的是镜像条件 x2−x1 == len(z_set)（L182），方向相反、逻辑同一条。">A. x_set 每格都是雷，z_set 每格都安全</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错在方向。差值 x1−x2 是锚点多出的雷，只能由锚点独占区 x_set 承担；「x_set 全安全、z_set 全雷」是镜像条件 x2−x1 == len(z_set)（L182 分支）成立时的结论，两个条件互为反向。">B. x_set 全安全，z_set 全是雷</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。公共区 y_set 恰是差值证明里被消掉的部分——两份名单都记着它，相减时贡献抵消；它的雷数此刻推不出任何确定结论（动画第 4 帧里 {b,c} 还剩 1 雷待定），正是 m6 概率引擎的入口。">C. y_set（重叠区）每格都是雷——差值全落在公共区</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。5×5 只是找搭档的搜索窗（L113-L114）；结论只落在两份名单划出的三区上（x_set/z_set 定性，y_set 待定），窗内其他未开格、数字格、已开格都不在结论范围里。">D. 锚点 5×5 范围内的所有未开格都是雷</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+
+  <div class="quiz" data-quiz="m5-q2">
+    <div class="quiz-q t-h3">🧪 number_3_1 找搭档时，为什么搜索窗是 5×5（range(i−2, i+3)），而 m4 的 number0 只看自己 3×3？</div>
+    <div class="quiz-opts">
+      <button class="quiz-opt" type="button" data-correct="true"
+              data-why="对。锚点 (i,j) 的 3×3 邻域最远伸到 i+1，搭档 (x,y) 的邻域最近从 x−1 开始——要有公共格子必须 x−1 ≤ i+1，即 x ≤ i+2（对称得 x ≥ i−2）。「可能共享邻居的两个数字格最大距离是 2」：range(i−2, i+3)（L113-L114）一步框死全部可能搭档，一格不多扫。number0 只判自己，3×3 自然够用——这是单格与双格推理的几何分界。">A. 两个数字格要共享至少一个格子，横纵距离最多是 2——距离 3 以上连共同邻居都没有，勾稽无从谈起</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。搭档资格只看「是不是 1 到 7 的数字格」（L118 的 0 &lt; x2 &lt; 8），与数值大小无关；窗的大小由「共享邻居的几何上限」决定，不由数字值决定——数字 7 的搭档搜索范围和数字 1 的一模一样。">B. 为了把值更大的数字（5、6、7）圈进来——数字越大需要的搜索范围越大</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。零边框（m2 的 (h+2)×(w+2) 约定）的作用是让邻域循环不必判越界；number_3_1 反而在 L116 保留了显式的边界检查（x &gt; self.w or x &lt; 1）。5×5 的动机是配对几何，不是 padding。">C. 为了配合 cell_value 的零边框，避免 5×5 循环越界</button>
+      <button class="quiz-opt" type="button" data-correct="false"
+              data-why="错。cfg.json 里没有这一项（真实字段：w/h/a/bx/by/cell_width/limit/path/win_name 与 speed——见 m6 的 limit 讲解与 m11 配置扩展面）；5×5 是 L113-L114 硬编码的循环边界，不随难度变化。">D. 5×5 是 cfg.json 里可调的参数，随棋盘难度伸缩</button>
+    </div>
+    <div class="quiz-fb t-body" hidden></div>
+  </div>
+</section>
