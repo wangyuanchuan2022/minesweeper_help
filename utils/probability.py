@@ -39,8 +39,13 @@ DECISION_TIME_BUDGET = 30.0  # number5_1 单次决策总预算（秒，含视觉
 _PS_REF_SIZE = 33            # 模型参考组大小（实测标定点：C++ 2.3ms / Python 976ms）
 _PS_SAFETY = 2.0             # 预测安全系数（组形状差异可达 10x + 模型误差）
 _PS_RESERVE_S = 3.0          # 枚举阶段为之后的 win_rate / pbs / 决策输出预留的时间（秒）
-# win_rate 阈值不设上限（用户要求）：起点 6+2=8，由 _wr_feedback 按实测在预算内
-# 自由升降——快则逐级上爬覆盖更大局面，慢（>预算×0.75）则降档回 pbs。
+# win_rate 阈值调节（用户规则：步长 0.5，无上限，下限 0）——起点 6+2=8，
+# 见 _wr_update：升档需边界采样(|limitation-阈值|≤Δ)且耗时<预算×_WR_FAST_FRAC；
+# 降档为安全阀（耗时>预算×_WR_SLOW_FRAC，不要求边界，否则升上去收不回来）
+_WR_STEP = 0.5             # 每次升降 0.5
+_WR_EDGE_DELTA = 0.25      # 升档的“边界采样”邻域
+_WR_FAST_FRAC = 0.25       # 升档耗时上限（预算比例）
+_WR_SLOW_FRAC = 1       # 降档耗时下限（预算比例）
 
 
 def _ps_default_base_ms():
@@ -78,34 +83,43 @@ def _budget_remaining(state, t_start):
     return t_start + DECISION_TIME_BUDGET - _PS_RESERVE_S - time.perf_counter()
 
 
-def _wr_feedback(tb, t_start):
-    """win_rate 阈值的实测反馈调节（native.tuned() 下启用，不设上限）。
+def _wr_current_threshold(tb):
+    """返回当前 win_rate 阈值（无观测时为起点 8；持久化在 tb["wr"]["t"]）。
 
-    观测：最近一次真正调用 win_rate 的决策耗时（存于 tb["wr"]，见 number5_1）。
-    规则（阈值只影响「limitation 萅过阈值的部分改走 pbs 近似」）：
-      - 上次 win_rate 耗时 > 预算×0.75 → 阈值降到 max(6, 当前阈值−1)：win_rate
-        拖垮了决策，回退到更省的 pbs；
-      - 连续 3 次 win_rate 耗时 < 预算×0.25 → 阈值 +1：算力余量充足，让更优的
-        win_rate 覆盖更大的局面（无上限，逐步上爬）；
-      - 其余情形（预算×0.25 ~ ×0.75 之间）保持不变——控制器自然稳定在该区间。
-    阈值持久化在 tb["wr"]["t"] 中，跨决策记忆。纯 Python（native 不可用）不调用
-    本函数，阈值恒 6。
+    仅 native.tuned() 的 number5_1 决策调用；纯 Python（native 不可用）阈值恒 6。
     """
-    th = 6 + native.LIMIT_BONUS_WIN_RATE  # 起点：6+2=8
+    start = 6.0 + native.LIMIT_BONUS_WIN_RATE  # 起点：6+2=8
     wr = tb.get("wr")
     if wr is None:
-        return th
-    th = wr.get("t", th)
+        return start
+    return float(wr.get("t", start))
+
+
+def _wr_update(tb, limitation, ms):
+    """按一次真实的 win_rate 观测更新阈值。
+
+    用户规则（每次只升降 0.5；无上限，下限 0）：
+      升档（须同时满足）：
+        - 本次真实 limitation 落在阈值 ±0.25 之内（边界采样：证明阈值临界处
+          win_rate 也很快，才敢把阈值外推覆盖更大局面）；
+        - 且本次 win_rate 耗时 < 预算×25%。
+        → 阈值 +0.5
+      降档（安全阀，任何情形）：
+        - 耗时 > 预算×75% → 阈值 −0.5（下限 0）。
+        注：降档不要求边界邻域——若降档也要求邻域，阈值被升上去后真实 limitation
+        分布一旦整体低于阈值就再也收不回来（升档只发生在被边界“碰到”时）。
+    其余情形阈值不变。返回更新后的阈值并写入 tb["wr"]（含 limitation 观测）。
+    """
     budget_ms = DECISION_TIME_BUDGET * 1000.0
-    if wr["ms"] > budget_ms * 0.75:        # 上次 win_rate 超预算 75% → 惩罚降档
-        th = max(6, th - 1)
-        tb["wr"]["fast_streak"] = 0
-    elif wr["ms"] < budget_ms * 0.25:          # 上次很快 → 累计，3 次后奖励升档（无上限）
-        fast_streak = wr.get("fast_streak", 0) + 1
-        if fast_streak >= 3:
-            th += 1
-            fast_streak = 0
-        tb["wr"]["fast_streak"] = fast_streak
+    th = _wr_current_threshold(tb)
+    if ms < budget_ms * _WR_FAST_FRAC and abs(limitation - th) <= _WR_EDGE_DELTA:
+        th += 0.5
+    elif ms > budget_ms * _WR_SLOW_FRAC:
+        th = max(0.0, th - 0.5)
+    wr = tb.setdefault("wr", {})
+    wr["t"] = th
+    wr["limitation"] = limitation
+    wr["ms"] = ms
     return th
 
 
@@ -478,8 +492,8 @@ class ProbabilityMixin:
                 logger.debug("limitation: %s", limitation)
 
                 if _tb is not None:
-                    # win_rate 阈值实测反馈（见 _wr_feedback）：超预算降档、连续快则升档
-                    wr_threshold = _wr_feedback(_tb, t_decision_start)
+                    # win_rate 阈值读取（持久化于 _tb["wr"]["t"]；更新发生在观测记录点 _wr_update）
+                    wr_threshold = _wr_current_threshold(_tb)
                     logger.debug("wr_threshold=%s（limitation=%.2f）", wr_threshold, limitation)
                     # 决策级进度：进入决策段 [80,100]
                     self._pv_state["lo"], self._pv_state["hi"] = 80.0, 100.0
@@ -488,10 +502,12 @@ class ProbabilityMixin:
                     _t_wr = time.perf_counter()
                     win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
                     if _tb is not None:
-                        # 记录本次 win_rate 观测（保留 fast_streak 字段，供下次 _wr_feedback 使用）
-                        _wr_d = _tb.setdefault("wr", {})
-                        _wr_d["t"] = wr_threshold
-                        _wr_d["ms"] = (time.perf_counter() - _t_wr) * 1000.0
+                        # 实测反馈：边界采样且快 → +0.5；超时 → −0.5（见 _wr_update）
+                        wr_threshold = _wr_update(_tb, limitation,
+                                                  (time.perf_counter() - _t_wr) * 1000.0)
+                        logger.debug("win_rate 实测 %.0f ms @limitation=%.2f → 阈值 %.1f",
+                                     (time.perf_counter() - _t_wr) * 1000.0, limitation,
+                                     wr_threshold)
                     win_rate = np.around(win_rate, decimals=5)
                     self.text_signal.emit(f"此局面下的胜率为{max(win_rate): 0.4f}。\n")
                     where_max = np.where(win_rate == np.max(win_rate), 1, 0)

@@ -128,42 +128,57 @@ class TestTimeBudget(unittest.TestCase):
 
 
 class TestWrFeedback(unittest.TestCase):
-    """win_rate 阈值的实测反馈调节（无上限升降）。"""
+    """win_rate 阈值反馈：步长 0.5、无上限、下限 0；升档需边界采样且快，降档为安全阀。"""
+
+    def _ms(self, frac):
+        from utils.probability import DECISION_TIME_BUDGET
+        return DECISION_TIME_BUDGET * 1000.0 * frac
 
     def test_no_history_returns_start(self):
-        from utils.probability import _wr_feedback
-        th = _wr_feedback({}, 0.0)
-        self.assertEqual(th, 8)  # 起点 6+2
+        from utils.probability import _wr_current_threshold
+        self.assertEqual(_wr_current_threshold({}), 8.0)
 
-    def test_rises_without_cap(self):
-        from utils import native
-        from utils.probability import _wr_feedback, DECISION_TIME_BUDGET
-        tb = {"wr": {"t": 8, "ms": 10.0, "fast_streak": 0}}
-        saved = native.available
-        native.available = True
-        try:
-            th = 8
-            # 连续多次快速 win_rate → 每 3 次升 1 档，无上限
-            for expected in (8, 8, 9, 9, 9, 10, 10, 10, 11):
-                tb["wr"]["t"] = th
-                tb["wr"]["ms"] = DECISION_TIME_BUDGET * 1000 * 0.1  # 快（<25% 预算）
-                th = _wr_feedback(tb, 0.0)
-                self.assertEqual(th, expected)
-        finally:
-            native.available = saved
+    def test_raise_at_edge_and_fast(self):
+        from utils.probability import _wr_update
+        tb = {}
+        th = _wr_update(tb, limitation=8.0, ms=self._ms(0.10))   # 边界内 + 快
+        self.assertEqual(th, 8.5)
+        th = _wr_update(tb, limitation=8.5, ms=self._ms(0.05))   # 再快 → 逐级爬
+        self.assertEqual(th, 9.0)
 
-    def test_drops_on_overload(self):
-        from utils.probability import _wr_feedback, DECISION_TIME_BUDGET
-        tb = {"wr": {"t": 11, "ms": DECISION_TIME_BUDGET * 1000 * 0.9, "fast_streak": 2}}
-        th = _wr_feedback(tb, 0.0)
-        self.assertEqual(th, 10)  # 超预算（>75%）→ 降一档
-        self.assertEqual(tb["wr"]["fast_streak"], 0)  # 连击清零
+    def test_no_raise_away_from_edge(self):
+        from utils.probability import _wr_update
+        tb = {}
+        th = _wr_update(tb, limitation=3.0, ms=self._ms(0.05))   # 快但远离边界 → 不动
+        self.assertEqual(th, 8.0)
 
-    def test_middle_band_holds(self):
-        from utils.probability import _wr_feedback, DECISION_TIME_BUDGET
-        tb = {"wr": {"t": 9, "ms": DECISION_TIME_BUDGET * 1000 * 0.5, "fast_streak": 1}}
-        th = _wr_feedback(tb, 0.0)
-        self.assertEqual(th, 9)  # 25%~75% 区间不动
+    def test_mid_speed_at_edge_holds(self):
+        from utils.probability import _wr_update
+        tb = {}
+        th = _wr_update(tb, limitation=8.0, ms=self._ms(0.50))   # 边界内但中速 → 不动
+        self.assertEqual(th, 8.0)
+
+    def test_drop_on_slow_anywhere(self):
+        from utils.probability import _wr_update
+        tb = {}
+        th = _wr_update(tb, limitation=3.0, ms=self._ms(0.90))   # 远离边界但超时 → 仍降
+        self.assertEqual(th, 7.5)
+
+    def test_floor_is_zero(self):
+        from utils.probability import _wr_update
+        tb = {}
+        th = 8.0
+        for _ in range(30):  # 连续超时一路降到 0，不再为负
+            th = _wr_update(tb, limitation=8.0, ms=self._ms(0.90))
+        self.assertEqual(th, 0.0)
+
+    def test_no_upper_bound(self):
+        from utils.probability import _wr_update
+        tb = {}
+        th = 8.0
+        for _ in range(20):  # 边界内连续快 → 逐级 +0.5，无上限
+            th = _wr_update(tb, limitation=th, ms=self._ms(0.10))
+        self.assertEqual(th, 18.0)
 
 
 if __name__ == "__main__":
