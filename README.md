@@ -50,6 +50,10 @@
   异常时，程序自动回退到纯 Python 原实现，功能与结果完全一致（`utils/native.py`
   负责加载与回退开关）。
 - **强制禁用**：设置环境变量 `MSW_DISABLE_NATIVE=1` 可强制使用纯 Python（用于对比测试）。
+- **决策阈值自适应放宽**：C++ 可用时，按实测提速校准放宽两处按 Python 耗时标定的阈值
+  （`part_solve` 组枚举上限 +8（提速 ~424x），win_rate 触发阈值 `limitation <= 6 → 8`
+  （提速 ~6x）），同等墙钟时间下搜索更深、结果更优；纯 Python 回退时自动恢复原阈值。
+  设 `MSW_NATIVE_TUNE=0` 可强制保持原阈值（新旧实现决策对比时使用）。
 - **重新构建**：在仓库根目录执行 `cpp\build.bat`（需要 MSVC 2022 与 py310 环境，
   pybind11 头文件已 vendored 在 `cpp/inc/`）。
 - **一致性验证**：`bench/compare_native.py` 在相同输入下逐位对比 C++ 与纯 Python
