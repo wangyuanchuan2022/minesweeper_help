@@ -7,3 +7,10 @@ build/
 __pycache__/
 *.pyc
 logs/
+
+# C++ 构建过程产物（提权进程创建，沙箱不可读，不入库）
+cpp/.tmp/
+cpp/vendor/
+*.obj
+*.exp
+*.lib

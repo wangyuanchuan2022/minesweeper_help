@@ -22,6 +22,7 @@ import cv2 as cv
 
 from logger import get_logger
 from .combinatorics import A, C_num, combination_ratio, get_list
+from . import native
 
 logger = get_logger(__name__)
 
@@ -398,9 +399,11 @@ class ProbabilityMixin:
         res /= num9 + 1
         return res
 
-    def process_bigger_situation(self, total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos):
-        confidence = 0
+    def _pbs_compute_python(self, total, num10, clicks, clicks9, res_list, ck):
+        """process_bigger_situation 的纯 Python 计算核心（C++ 不可用/失败时的回退路径）。
 
+        与 C++ mscore.pbs_compute 语义逐位一致；返回 (res, mine_num, total)。
+        """
         if total > 10000:  # total太大全排列计算量太大
             self.Visible_signal.emit(False)
             mine_num = 0
@@ -426,52 +429,73 @@ class ProbabilityMixin:
                 res_l /= _total
                 res_l = 1 - res_l
                 res = np.hstack((res, res_l))
+            return res, mine_num, total
+
+        res = []
+        _total = 0
+        min_val = self.a - len(clicks9)
+        mine_num = []
+
+        o_value = 0
+        num = 0
+        self._throttled_pv_signal_emit(0)
+        for index_list in A(ck):
+            _mine_num = 0  # 一个方案中的雷数
+            r = np.array([])
+            for i in range(len(index_list)):
+                _mine_num += res_list[i][index_list[i]].sum()
+                r = np.hstack([r, res_list[i][index_list[i]]])
+
+            if min_val <= (_mine_num + num10) <= self.a:
+                mine_num.append(_mine_num)
+                _total += 1
+                res.append(r)
+            n_value = int((num / total) * 100)
+            if n_value - o_value >= 1:
+                self._throttled_pv_signal_emit(n_value)
+                o_value = n_value
+            num += 1
+
+        self._throttled_pv_signal_emit(100)
+        self.Visible_signal.emit(False)
+        total = 0
+        estimated_mine_num = 0
+        min_mine_cnt = min(mine_num)
+        x_min = self.a - min_mine_cnt - num10
+        __res = np.zeros(len(clicks), dtype=np.float32)
+
+        for i in range(len(mine_num)):
+            p = combination_ratio(self.a - mine_num[i] - num10, x_min, len(clicks9))
+            estimated_mine_num += p * mine_num[i]
+            if i == 0:
+                __res = res[i].astype(np.float32) * p
+            else:
+                __res += res[i].astype(np.float32) * p
+            total += p
+        res = __res.copy()
+        res = res / total
+        res = 1 - res
+        mine_num = estimated_mine_num / total
+
+        return res, mine_num, total
+
+    def process_bigger_situation(self, total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos):
+        confidence = 0
+
+        # 计算核心：优先 C++（mscore.pbs_compute），失败/不可用自动回退纯 Python
+        if native.available:
+            try:
+                res, mine_num, total = native.mscore.pbs_compute(
+                    total, num10, clicks, clicks9,
+                    native.as_groups(res_list), ck, self.a,
+                    self._throttled_pv_signal_emit, self.Visible_signal.emit)
+            except Exception as e:
+                logger.warning("C++ pbs_compute 失败，回退纯 Python 实现：%s", e)
+                res, mine_num, total = self._pbs_compute_python(
+                    total, num10, clicks, clicks9, res_list, ck)
         else:
-            res = []
-            _total = 0
-            min_val = self.a - len(clicks9)
-            mine_num = []
-
-            o_value = 0
-            num = 0
-            self._throttled_pv_signal_emit(0)
-            for index_list in A(ck):
-                _mine_num = 0  # 一个方案中的雷数
-                r = np.array([])
-                for i in range(len(index_list)):
-                    _mine_num += res_list[i][index_list[i]].sum()
-                    r = np.hstack([r, res_list[i][index_list[i]]])
-
-                if min_val <= (_mine_num + num10) <= self.a:
-                    mine_num.append(_mine_num)
-                    _total += 1
-                    res.append(r)
-                n_value = int((num / total) * 100)
-                if n_value - o_value >= 1:
-                    self._throttled_pv_signal_emit(n_value)
-                    o_value = n_value
-                num += 1
-
-            self._throttled_pv_signal_emit(100)
-            self.Visible_signal.emit(False)
-            total = 0
-            estimated_mine_num = 0
-            min_mine_cnt = min(mine_num)
-            x_min = self.a - min_mine_cnt - num10
-            __res = np.zeros(len(clicks), dtype=np.float32)
-
-            for i in range(len(mine_num)):
-                p = combination_ratio(self.a - mine_num[i] - num10, x_min, len(clicks9))
-                estimated_mine_num += p * mine_num[i]
-                if i == 0:
-                    __res = res[i].astype(np.float32) * p
-                else:
-                    __res += res[i].astype(np.float32) * p
-                total += p
-            res = __res.copy()
-            res = res / total
-            res = 1 - res
-            mine_num = estimated_mine_num / total
+            res, mine_num, total = self._pbs_compute_python(
+                total, num10, clicks, clicks9, res_list, ck)
 
         if 1 in res:  # 有确定不为雷的地方
             for index in range(len(res)):
@@ -622,6 +646,18 @@ class ProbabilityMixin:
         return pos, confidence, total
 
     def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
+        # 优先 C++（mscore.win_rate），失败/不可用自动回退纯 Python
+        if native.available:
+            try:
+                _res, _clicks, _total, _clicks2p = native.mscore.win_rate(
+                    clicks, clicks9, native.as_groups(res_list), cell_value, ck,
+                    num10, self.a, self.w, self.h, self.is_play,
+                    self._throttled_pv_signal_emit)
+                self.memory = {}
+                return list(_res), list(_clicks), int(_total), dict(_clicks2p)
+            except Exception as e:
+                logger.warning("C++ win_rate 失败，回退纯 Python 实现：%s", e)
+
         cell_value_list = []
         for index_list in A(ck):
             _cell_value = cell_value.copy()
@@ -777,6 +813,17 @@ class ProbabilityMixin:
         :param cs: 雷的坐标
         :return: 可能的值
         """
+        # 优先 C++（mscore.part_solve_single），失败/不可用自动回退纯 Python；
+        # _try=True 路径依赖 try_solve（Python 侧逻辑），不加速
+        if not _try and native.available:
+            try:
+                _arr, _num = native.mscore.part_solve_single(
+                    clicks, cell_value, cs, num10, num9, self.a, self.w, self.h,
+                    self._throttled_pv_signal_emit)
+                return list(_arr), int(_num), np.zeros(len(clicks))
+            except Exception as e:
+                logger.warning("C++ part_solve_single 失败，回退纯 Python 实现：%s", e)
+
         canopen_res = np.zeros(len(clicks))
         res_list = []
         list_getter = get_list(self.a - num10 - num9, self.a - num10, len(clicks))
@@ -855,6 +902,17 @@ class ProbabilityMixin:
         :param cs: 雷的坐标
         :return: 可能的值
         """
+        # 优先 C++（mscore.part_solve），失败/不可用自动回退纯 Python；
+        # _try=True 路径依赖 try_solve（Python 侧逻辑），不加速
+        if not _try and native.available:
+            try:
+                _arr, _num = native.mscore.part_solve(
+                    clicks, cell_value, self.a, self.w, self.h,
+                    self._throttled_pv_signal_emit)
+                return list(_arr), int(_num), np.zeros(len(clicks))
+            except Exception as e:
+                logger.warning("C++ part_solve 失败，回退纯 Python 实现：%s", e)
+
         _cs = defaultdict(list)
         for i, j in clicks:
             for u in range(i - 1, i + 2):
