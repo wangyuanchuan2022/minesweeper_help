@@ -110,7 +110,50 @@ def _wr_feedback(tb, t_start):
 
 
 class ProbabilityMixin:
+    def _estimated_progress_heartbeat(self, predicted_s=None):
+        """速度估计进度心跳：真实进度静默时按预测时长推进进度条。
+
+        背景：视觉扫描/分组构建/win_rate 阶段一等段没有进度回调；C++ 计算段虽已
+        释放 GIL（真实进度可实时送达），这些静默段的进度条仍会停住。本心跳线程按
+        速度估计补位——仅当 pv_signal 超过 0.3s 没有真实发射时，按
+        elapsed/predicted 发射估计值（封顶 95%，真实进度一到自动让位；收尾的
+        100 仍由各阶段的真实 emit(100) 完成）。
+
+        predicted_s 缺省取决策时间预算（速度估计的量纲来源）。
+        返回 threading.Event，调用方结束后 set() 停止。
+        """
+        import threading
+
+        stop = threading.Event()
+        if predicted_s is None:
+            predicted_s = DECISION_TIME_BUDGET
+        t0 = time.perf_counter()
+        slf = self
+
+        def _loop():
+            while not stop.wait(0.2):
+                try:
+                    # 真实进度静默判定（心跳自己的发射也会刷新时间戳，故实际节奏约 0.5s）
+                    if time.time() - getattr(slf, "_last_pv_signal_time", 0.0) > 0.3:
+                        frac = min((time.perf_counter() - t0) / max(predicted_s, 0.1), 0.95)
+                        slf._throttled_pv_signal_emit(int(frac * 100))
+                except Exception:
+                    break  # 心跳失败不影响计算
+
+        th = threading.Thread(target=_loop, daemon=True, name="est-progress")
+        th.start()
+        return stop
+
     def number5_1(self, cell_value):
+        """5.1 数字统计（入口：附带速度估计进度心跳，主体见 _number5_1_core）。"""
+        hb = self._estimated_progress_heartbeat() if native.tuned() else None
+        try:
+            return self._number5_1_core(cell_value)
+        finally:
+            if hb is not None:
+                hb.set()
+
+    def _number5_1_core(self, cell_value):
         """
         5.1 数字统计
         :param cell_value:格子值

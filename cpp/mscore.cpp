@@ -186,15 +186,18 @@ inline void cell_around(const Board& b, int w, int h, int W2, int i, int j,
     cnt10 = c10;
 }
 
-// 进度回调：仅整数值变化时触发（Python 侧 _throttled_pv_signal_emit 自带 100ms 节流）
+// 进度回调：仅整数值变化时触发（Python 侧 _throttled_pv_signal_emit 自带 100ms 节流）。
+// 计算段释放 GIL 时（见各入口的 py::gil_scoped_release），每次回调需短暂重取 GIL，
+// 否则主线程 UI（进度条）拿不到 GIL、事件堆积到调用结束——进度条冻结的根因。
 struct Progress {
-    py::object cb;  // callable(int) 或 None
+    py::object cb;   // callable(int) 或 None
+    bool cb_none;    // 构造时（持有 GIL）判定，避免无 GIL 期间触碰 Python 对象
     int last = -1;
-    explicit Progress(py::object c) : cb(std::move(c)) {}
+    explicit Progress(py::object c) : cb(std::move(c)), cb_none(cb.is_none()) {}
     void emit(int pct) {
-        if (cb.is_none()) return;
-        if (pct == last) return;
+        if (cb_none || pct == last) return;
         last = pct;
+        py::gil_scoped_acquire acq;  // 计算段已释放 GIL，回调瞬间重取
         cb(py::int_(pct));
     }
 };
@@ -265,18 +268,28 @@ double C_num(int a, int b) {
     return result;
 }
 
-// combination_ratio(x, x_min, n)：对应 combinatorics.py（含 assert 前置校验）
-double combination_ratio(int x, int x_min, int n) {
-    if (!(0 <= x && x <= x_min && x_min <= n)) {
-        PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
-        throw py::error_already_set();
-    }
+// combination_ratio(x, x_min, n)：对应 combinatorics.py（浮点逐步乘除）。
+// 断言失败不直接抛 Python 异常（抛异常需 GIL，而调用点位于释放 GIL 的计算段），
+// 由调用方在重取 GIL 后统一抛出。
+static bool combination_ratio_checked(int x, int x_min, int n, double* out) {
+    if (!(0 <= x && x <= x_min && x_min <= n)) return false;
     double res = 1.0;
     for (int i = 0; i < x_min - x; ++i) {
         res *= (double)(x + 1 + i);
         res /= (double)(n - x - i);
     }
-    return res;
+    *out = res;
+    return true;
+}
+
+// 在持有 GIL 的上下文中使用（保留原语义：AssertionError）
+double combination_ratio(int x, int x_min, int n) {
+    double out;
+    if (!combination_ratio_checked(x, x_min, n, &out)) {
+        PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
+        throw py::error_already_set();
+    }
+    return out;
 }
 
 // get_list 的尺寸范围钳制（start=0, stop=-1 路径——win_rate / part_solve_single 均如此调用）
@@ -485,7 +498,12 @@ py::tuple py_part_solve(py::sequence clicks_seq,
         ctx.cs[k] = it->second;
     }
 
-    ctx.recurse(0, 1);
+    {
+        // 深度枚举期间释放 GIL：长调用不再饿死主线程 UI（进度事件可实时送达），
+        // 进度回调在 Progress::emit 内短暂重取 GIL
+        py::gil_scoped_release unlock;
+        ctx.recurse(0, 1);
+    }
 
     // 输出解矩阵 [num_solutions × n]（int32）
     const size_t n = ctx.clicks.size();
@@ -538,23 +556,26 @@ py::tuple py_part_solve_single(
     int64_t num = 0, o_value = 0;
 
     prog.emit(0);
-    for (int s : sizes) {
-        ComboIter it((int)n, s);
-        while (it.next(combo)) {
-            board = base;
-            for (int loc : combo)
-                board[(size_t)clicks[(size_t)loc].second * W2 + clicks[(size_t)loc].first] = 10;
-            if (check_cs(board)) {
-                std::vector<int32_t> row(n, 0);
-                for (int loc : combo) row[(size_t)loc] += 1;
-                rows.push_back(std::move(row));
+    {
+        py::gil_scoped_release unlock;  // 组合枚举期间释放 GIL（进度回调内部自行重取）
+        for (int s : sizes) {
+            ComboIter it((int)n, s);
+            while (it.next(combo)) {
+                board = base;
+                for (int loc : combo)
+                    board[(size_t)clicks[(size_t)loc].second * W2 + clicks[(size_t)loc].first] = 10;
+                if (check_cs(board)) {
+                    std::vector<int32_t> row(n, 0);
+                    for (int loc : combo) row[(size_t)loc] += 1;
+                    rows.push_back(std::move(row));
+                }
+                int n_value = (int)(((double)num / (double)total_count) * 100.0);
+                if (n_value - o_value >= 1) {
+                    prog.emit(n_value);
+                    o_value = n_value;
+                }
+                ++num;
             }
-            int n_value = (int)(((double)num / (double)total_count) * 100.0);
-            if (n_value - o_value >= 1) {
-                prog.emit(n_value);
-                o_value = n_value;
-            }
-            ++num;
         }
     }
 
@@ -715,141 +736,159 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
 
     WinRateCtx ctx(w, h, a, is_play, std::move(progress_cb));
 
-    // ---- 阶段 1：枚举所有完整局面 ----
-    std::vector<Board> cell_value_list;
+    std::vector<Coord> all_clicks;   // 阶段 2 排序后的 clicks（传出计算段）
+    std::vector<double> cp;          // 与 all_clicks 对齐的安全概率
+    std::vector<double> res;         // 各 click 的胜率
+    std::vector<Coord> orig_clicks;  // clicks2p 的原始（排序前）插入序
+    std::vector<double> orig_cp;
+    size_t total = 0;
+
     {
-        Odometer od(std::move(ck));
-        std::vector<int> index_list;
-        while (od.next(index_list)) {
-            Board b = base;
-            int64_t mine_total = 0;  // 对应 Python sum(r)（行内求和，含全部值）
-            std::vector<int32_t> r;
-            for (size_t i = 0; i < index_list.size(); ++i) {
-                const auto& row = groups[i][(size_t)index_list[i]];
-                for (int32_t v : row) {
-                    r.push_back(v);
-                    mine_total += v;
-                }
-            }
-            for (size_t i = 0; i < r.size(); ++i) {
-                if (r[i] == 1) {
-                    int u = clicks[i].first, v = clicks[i].second;
-                    b[(size_t)v * W2 + u] = 10;
-                }
-            }
-            int64_t rem = (int64_t)a - num10 - mine_total;
-            if (rem == 0) {
-                cell_value_list.push_back(std::move(b));
-                continue;
-            }
-            if ((int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) {
-                continue;
-            }
-            // get_list(rem, rem, len(clicks9))：钳制后逐尺寸枚举
-            auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
-            std::vector<int> index_l;
-            for (int s : sizes) {
-                ComboIter it((int)clicks9.size(), s);
-                while (it.next(index_l)) {
-                    Board nb = b;
-                    for (int j : index_l) {
-                        int u = clicks9[(size_t)j].first, v = clicks9[(size_t)j].second;
-                        nb[(size_t)v * W2 + u] = 10;
+        // 计算段（阶段 1 + 阶段 2）释放 GIL：长调用不饿死 UI 线程（进度条冻结的根因）；
+        // 进度回调（Progress::emit 内部）与异常抛出点在此段内短暂重取 GIL
+        py::gil_scoped_release unlock;
+
+        // ---- 阶段 1：枚举所有完整局面 ----
+        std::vector<Board> cell_value_list;
+        {
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list)) {
+                Board b = base;
+                int64_t mine_total = 0;  // 对应 Python sum(r)（行内求和，含全部值）
+                std::vector<int32_t> r;
+                for (size_t i = 0; i < index_list.size(); ++i) {
+                    const auto& row = groups[i][(size_t)index_list[i]];
+                    for (int32_t v : row) {
+                        r.push_back(v);
+                        mine_total += v;
                     }
-                    cell_value_list.push_back(std::move(nb));
+                }
+                for (size_t i = 0; i < r.size(); ++i) {
+                    if (r[i] == 1) {
+                        int u = clicks[i].first, v = clicks[i].second;
+                        b[(size_t)v * W2 + u] = 10;
+                    }
+                }
+                int64_t rem = (int64_t)a - num10 - mine_total;
+                if (rem == 0) {
+                    cell_value_list.push_back(std::move(b));
+                    continue;
+                }
+                if ((int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) {
+                    continue;
+                }
+                // get_list(rem, rem, len(clicks9))：钳制后逐尺寸枚举
+                auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
+                std::vector<int> index_l;
+                for (int s : sizes) {
+                    ComboIter it((int)clicks9.size(), s);
+                    while (it.next(index_l)) {
+                        Board nb = b;
+                        for (int j : index_l) {
+                            int u = clicks9[(size_t)j].first, v = clicks9[(size_t)j].second;
+                            nb[(size_t)v * W2 + u] = 10;
+                        }
+                        cell_value_list.push_back(std::move(nb));
+                    }
                 }
             }
         }
+
+        total = cell_value_list.size();
+        // Python：depth_limit = 200 / len(clicks)（clicks 为空 → ZeroDivisionError）
+        if (clicks.empty()) {
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            throw py::error_already_set();
+        }
+        double depth_limit = 200.0 / (double)clicks.size();
+        if (total == 0) {
+            // Python：clicks2p 计算中 /total → ZeroDivisionError
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            throw py::error_already_set();
+        }
+
+        // ---- 阶段 2：外层（clicks += clicks9，稳定排序后逐格评估）----
+        all_clicks = clicks;
+        all_clicks.insert(all_clicks.end(), clicks9.begin(), clicks9.end());
+
+        cp.assign(all_clicks.size(), 0.0);
+        for (size_t k = 0; k < all_clicks.size(); ++k) {
+            int u = all_clicks[k].first, v = all_clicks[k].second;
+            size_t cnt10 = 0;
+            for (const auto& b : cell_value_list)
+                if (b[(size_t)v * W2 + u] == 10) ++cnt10;
+            cp[k] = 1.0 - (double)cnt10 / (double)total;
+        }
+        orig_clicks = all_clicks;
+        orig_cp = cp;
+        {
+            std::vector<size_t> order(all_clicks.size());
+            for (size_t k = 0; k < all_clicks.size(); ++k) order[k] = k;
+            std::stable_sort(order.begin(), order.end(),
+                             [&](size_t p, size_t q) { return cp[p] > cp[q]; });
+            std::vector<Coord> nc(all_clicks.size());
+            std::vector<double> ncp(all_clicks.size());
+            for (size_t k = 0; k < all_clicks.size(); ++k) {
+                nc[k] = all_clicks[order[k]];
+                ncp[k] = cp[order[k]];
+            }
+            all_clicks.swap(nc);
+            cp.swap(ncp);
+        }
+
+        ctx.progress.emit(0);
+        double running_max = 0.0;
+        bool has_max = false;
+        for (size_t i = 0; i < all_clicks.size(); ++i) {
+            if (i > 1 && cp[i] < running_max && is_play) {
+                res.push_back(0.0);
+                continue;
+            }
+            const int u = all_clicks[i].first, v = all_clicks[i].second;
+            // 分组（保持首次出现顺序）
+            std::vector<std::vector<Board>> gb_all;
+            std::unordered_map<int, size_t> val_slot;
+            for (const auto& b : cell_value_list) {
+                if (b[(size_t)v * W2 + u] != 10) {
+                    Board nb = b;
+                    int c9, c10;
+                    cell_around(nb, w, h, W2, u, v, c9, c10);
+                    nb[(size_t)v * W2 + u] = c10;
+                    auto it = val_slot.find(c10);
+                    if (it == val_slot.end()) {
+                        val_slot.emplace(c10, gb_all.size());
+                        gb_all.emplace_back();
+                        gb_all.back().push_back(std::move(nb));
+                    } else {
+                        gb_all[it->second].push_back(std::move(nb));
+                    }
+                }
+            }
+            double win_p = 0.0;
+            for (size_t g = 0; g < gb_all.size(); ++g) {
+                double trans_prob = (double)gb_all[g].size() / (double)total;
+                std::vector<Coord> new_clicks = all_clicks;
+                new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
+                double win_r =
+                    wr_f(ctx, std::move(new_clicks), std::move(gb_all[g]), 1, depth_limit);
+                win_p += trans_prob * win_r;
+            }
+            ctx.progress.emit((int)(((double)(i + 1) / (double)all_clicks.size()) * 100.0));
+            res.push_back(win_p);
+            running_max = has_max ? std::max(running_max, win_p) : win_p;
+            has_max = true;
+        }
     }
 
-    const size_t total = cell_value_list.size();
-    // Python：depth_limit = 200 / len(clicks)（clicks 为空 → ZeroDivisionError）
-    if (clicks.empty()) {
-        PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
-        throw py::error_already_set();
-    }
-    double depth_limit = 200.0 / (double)clicks.size();
-    if (total == 0) {
-        // Python：clicks2p 计算中 /total → ZeroDivisionError
-        PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
-        throw py::error_already_set();
-    }
-
-    // ---- 阶段 2：外层（clicks += clicks9，稳定排序后逐格评估）----
-    std::vector<Coord> all_clicks = clicks;
-    all_clicks.insert(all_clicks.end(), clicks9.begin(), clicks9.end());
-
-    std::vector<double> cp(all_clicks.size());
-    for (size_t k = 0; k < all_clicks.size(); ++k) {
-        int u = all_clicks[k].first, v = all_clicks[k].second;
-        size_t cnt10 = 0;
-        for (const auto& b : cell_value_list)
-            if (b[(size_t)v * W2 + u] == 10) ++cnt10;
-        cp[k] = 1.0 - (double)cnt10 / (double)total;
-    }
+    // ---- 以下重新持有 GIL：构建返回对象 ----
     // clicks2p 按原始（排序前）插入序构建 —— 与 Python 在 sorted 之前建 dict 一致
     py::dict clicks2p;
-    for (size_t k = 0; k < all_clicks.size(); ++k)
-        clicks2p[py::make_tuple(all_clicks[k].first, all_clicks[k].second)] = py::float_(cp[k]);
-    {
-        std::vector<size_t> order(all_clicks.size());
-        for (size_t k = 0; k < all_clicks.size(); ++k) order[k] = k;
-        std::stable_sort(order.begin(), order.end(),
-                         [&](size_t p, size_t q) { return cp[p] > cp[q]; });
-        std::vector<Coord> nc(all_clicks.size());
-        std::vector<double> ncp(all_clicks.size());
-        for (size_t k = 0; k < all_clicks.size(); ++k) {
-            nc[k] = all_clicks[order[k]];
-            ncp[k] = cp[order[k]];
-        }
-        all_clicks.swap(nc);
-        cp.swap(ncp);
-    }
-
-    ctx.progress.emit(0);
-    std::vector<double> res;
-    double running_max = 0.0;
-    bool has_max = false;
-    for (size_t i = 0; i < all_clicks.size(); ++i) {
-        if (i > 1 && cp[i] < running_max && is_play) {
-            res.push_back(0.0);
-            continue;
-        }
-        const int u = all_clicks[i].first, v = all_clicks[i].second;
-        // 分组（保持首次出现顺序）
-        std::vector<std::vector<Board>> gb_all;
-        std::unordered_map<int, size_t> val_slot;
-        for (const auto& b : cell_value_list) {
-            if (b[(size_t)v * W2 + u] != 10) {
-                Board nb = b;
-                int c9, c10;
-                cell_around(nb, w, h, W2, u, v, c9, c10);
-                nb[(size_t)v * W2 + u] = c10;
-                auto it = val_slot.find(c10);
-                if (it == val_slot.end()) {
-                    val_slot.emplace(c10, gb_all.size());
-                    gb_all.emplace_back();
-                    gb_all.back().push_back(std::move(nb));
-                } else {
-                    gb_all[it->second].push_back(std::move(nb));
-                }
-            }
-        }
-        double win_p = 0.0;
-        for (size_t g = 0; g < gb_all.size(); ++g) {
-            double trans_prob = (double)gb_all[g].size() / (double)total;
-            std::vector<Coord> new_clicks = all_clicks;
-            new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
-            double win_r = wr_f(ctx, std::move(new_clicks), std::move(gb_all[g]), 1, depth_limit);
-            win_p += trans_prob * win_r;
-        }
-        ctx.progress.emit((int)(((double)(i + 1) / (double)all_clicks.size()) * 100.0));
-        res.push_back(win_p);
-        running_max = has_max ? std::max(running_max, win_p) : win_p;
-        has_max = true;
-    }
-
-    // 返回：res（float 列表）、排序后 clicks、total、clicks2p（dict，原始插入序）
+    for (size_t k = 0; k < orig_clicks.size(); ++k)
+        clicks2p[py::make_tuple(orig_clicks[k].first, orig_clicks[k].second)] =
+            py::float_(orig_cp[k]);
     py::list res_py;
     for (double v : res) res_py.append(py::float_(v));
     py::list clicks_py;
@@ -891,8 +930,11 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
     for (auto g : res_list) groups.push_back(parse_group(g));
 
     Progress prog(std::move(progress_cb));
-    auto visible = [&visible_cb](bool v) {
-        if (!visible_cb.is_none()) visible_cb(py::bool_(v));
+    const bool visible_none = visible_cb.is_none();  // 持有 GIL 时判定，计算段不触碰 Python 对象
+    auto visible = [&visible_cb, visible_none](bool v) {
+        if (visible_none) return;
+        py::gil_scoped_acquire acq;  // 计算段释放 GIL 时回调需短暂重取
+        visible_cb(py::bool_(v));
     };
 
     if (total > 10000) {
@@ -902,7 +944,10 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
 
         // |set(clicks) ∪ set(clicks9)|
         int64_t union_size;
+        std::vector<double> res_out;
         {
+            py::gil_scoped_release unlock;  // 计算段释放 GIL
+            {
             std::vector<uint64_t> seen;
             seen.reserve(clicks.size() + clicks9.size());
             for (const auto& c : clicks)
@@ -914,9 +959,9 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
             union_size = (int64_t)seen.size();
         }
 
-        std::vector<double> res_out;
         for (const auto& res_l : groups) {
             if (res_l.empty()) {
+                py::gil_scoped_acquire acq;
                 PyErr_SetString(PyExc_ValueError, "min() arg is an empty sequence");
                 throw py::error_already_set();
             }
@@ -935,7 +980,12 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
             for (const auto& row : res_l) {
                 int _mine_num = 0;
                 for (int32_t v : row) _mine_num += v;
-                double p = combination_ratio(a - _mine_num - (int)num10, x_min, _all);
+                double p;
+                if (!combination_ratio_checked(a - _mine_num - (int)num10, x_min, _all, &p)) {
+                    py::gil_scoped_acquire acq;
+                    PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
+                    throw py::error_already_set();
+                }
                 for (size_t c = 0; c < row.size(); ++c)
                     col_sum[c] += (double)row[c] * p;  // int 数组 * Python float → float64
                 estimated_mine_num += p * (double)_mine_num;
@@ -947,6 +997,7 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
             }
             mine_num += estimated_mine_num / _total;
             res_out.insert(res_out.end(), col_sum.begin(), col_sum.end());
+        }
         }
         py::array_t<double> res_arr((py::ssize_t)res_out.size());
         std::copy(res_out.begin(), res_out.end(), res_arr.mutable_data());
@@ -960,70 +1011,84 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
     int64_t o_value = 0, num = 0;
 
     prog.emit(0);
-    if (total == 0) {
-        // Python 在首个迭代的 int((num / total) * 100) 处抛 ZeroDivisionError
-        PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
-        throw py::error_already_set();
-    }
-    {
-        Odometer od(std::move(ck));
-        std::vector<int> index_list;
-        while (od.next(index_list)) {
-            int64_t _mine_num = 0;
-            std::vector<int32_t> r;
-            for (size_t i = 0; i < index_list.size(); ++i) {
-                const auto& row = groups[i][(size_t)index_list[i]];
-                int s = 0;
-                for (int32_t v : row) s += v;
-                _mine_num += s;
-                r.insert(r.end(), row.begin(), row.end());
-            }
-            if (min_val <= (_mine_num + num10) && (_mine_num + num10) <= a) {
-                mine_num.push_back((int)_mine_num);
-                res_rows.push_back(std::move(r));
-            }
-            int n_value = (int)(((double)num / (double)total) * 100.0);
-            if (n_value - o_value >= 1) {
-                prog.emit(n_value);
-                o_value = n_value;
-            }
-            ++num;
-        }
-    }
-    prog.emit(100);
-    visible(false);
-
-    if (mine_num.empty()) {
-        // Python：min(mine_num) → ValueError
-        PyErr_SetString(PyExc_ValueError, "min() arg is an empty sequence");
-        throw py::error_already_set();
-    }
-    int min_mine_cnt = *std::min_element(mine_num.begin(), mine_num.end());
-    int x_min = a - min_mine_cnt - (int)num10;
-
-    double estimated_mine_num = 0.0;
     double total_w = 0.0;
-    std::vector<float> acc(res_rows[0].size(), 0.0f);
-    for (size_t i = 0; i < mine_num.size(); ++i) {
-        double p = combination_ratio(a - mine_num[i] - (int)num10, x_min, (int)clicks9.size());
-        estimated_mine_num += p * (double)mine_num[i];
-        const auto& row = res_rows[i];
-        if (i == 0) {
-            // __res = res[0].astype(float32) * p
-            for (size_t c = 0; c < row.size(); ++c)
-                acc[c] = (float)((float)row[c] * (float)p);  // float32 标量语义
-        } else {
-            // __res += res[i].astype(float32) * p
-            for (size_t c = 0; c < row.size(); ++c)
-                acc[c] += (float)((float)row[c] * (float)p);
+    double mine_num_out = 0.0;
+    std::vector<float> acc;
+    {
+        py::gil_scoped_release unlock;  // 计算段释放 GIL（进度回调内部自行重取）
+
+        if (total == 0) {
+            // Python 在首个迭代的 int((num / total) * 100) 处抛 ZeroDivisionError
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            throw py::error_already_set();
         }
-        total_w += p;
+        {
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list)) {
+                int64_t _mine_num = 0;
+                std::vector<int32_t> r;
+                for (size_t i = 0; i < index_list.size(); ++i) {
+                    const auto& row = groups[i][(size_t)index_list[i]];
+                    int s = 0;
+                    for (int32_t v : row) s += v;
+                    _mine_num += s;
+                    r.insert(r.end(), row.begin(), row.end());
+                }
+                if (min_val <= (_mine_num + num10) && (_mine_num + num10) <= a) {
+                    mine_num.push_back((int)_mine_num);
+                    res_rows.push_back(std::move(r));
+                }
+                int n_value = (int)(((double)num / (double)total) * 100.0);
+                if (n_value - o_value >= 1) {
+                    prog.emit(n_value);
+                    o_value = n_value;
+                }
+                ++num;
+            }
+        }
+        prog.emit(100);
+        visible(false);
+
+        if (mine_num.empty()) {
+            // Python：min(mine_num) → ValueError
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ValueError, "min() arg is an empty sequence");
+            throw py::error_already_set();
+        }
+        int min_mine_cnt = *std::min_element(mine_num.begin(), mine_num.end());
+        int x_min = a - min_mine_cnt - (int)num10;
+
+        double estimated_mine_num = 0.0;
+        acc.assign(res_rows[0].size(), 0.0f);
+        for (size_t i = 0; i < mine_num.size(); ++i) {
+            double p;
+            if (!combination_ratio_checked(a - mine_num[i] - (int)num10, x_min,
+                                           (int)clicks9.size(), &p)) {
+                py::gil_scoped_acquire acq;
+                PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
+                throw py::error_already_set();
+            }
+            estimated_mine_num += p * (double)mine_num[i];
+            const auto& row = res_rows[i];
+            if (i == 0) {
+                // __res = res[0].astype(float32) * p
+                for (size_t c = 0; c < row.size(); ++c)
+                    acc[c] = (float)((float)row[c] * (float)p);  // float32 标量语义
+            } else {
+                // __res += res[i].astype(float32) * p
+                for (size_t c = 0; c < row.size(); ++c)
+                    acc[c] += (float)((float)row[c] * (float)p);
+            }
+            total_w += p;
+        }
+        for (size_t c = 0; c < acc.size(); ++c) {
+            acc[c] = acc[c] / (float)total_w;  // float32 数组 / Python float
+            acc[c] = 1.0f - acc[c];
+        }
+        mine_num_out = estimated_mine_num / total_w;
     }
-    for (size_t c = 0; c < acc.size(); ++c) {
-        acc[c] = acc[c] / (float)total_w;  // float32 数组 / Python float
-        acc[c] = 1.0f - acc[c];
-    }
-    double mine_num_out = estimated_mine_num / total_w;
 
     py::array_t<float> res_arr((py::ssize_t)acc.size());
     std::copy(acc.begin(), acc.end(), res_arr.mutable_data());
@@ -1053,10 +1118,15 @@ PYBIND11_MODULE(mscore, m) {
           "process_bigger_situation 纯计算部分：返回 (res, mine_num, total)");
     m.def("md5",
           [](py::bytes data) {
-              std::string s = data;
-              MD5 md5;
-              md5.update(reinterpret_cast<const unsigned char*>(s.data()), s.size());
-              return py::bytes(md5.final());
+              std::string s = data;  // 拷贝需持有 GIL
+              std::string out;
+              {
+                  py::gil_scoped_release unlock;  // 大输入摘要期间释放 GIL
+                  MD5 md5;
+                  md5.update(reinterpret_cast<const unsigned char*>(s.data()), s.size());
+                  out = md5.final();
+              }
+              return py::bytes(out);
           },
           py::arg("data"),
           "MD5 摘要（16 字节二进制），与 hashlib.md5 一致（诊断/测试用）");
