@@ -90,5 +90,42 @@ class TestWinRate(unittest.TestCase):
         self.assertIsInstance(clicks2p, dict)
 
 
+class TestTimeBudget(unittest.TestCase):
+    """决策耗时预算的指数模型辅助函数。"""
+
+    def _solver(self):
+        return make_full_solver(w=5, h=5, a=3)
+
+    def test_predict_monotonic(self):
+        from utils.probability import _ps_predict_ms, _ps_observe, _ps_base_ms
+        st = {}
+        t_small = _ps_predict_ms(st, 20)
+        t_big = _ps_predict_ms(st, 33)
+        # 指数模型：大组预测显著更大
+        self.assertGreater(t_big, t_small * 100)
+
+    def test_observe_calibrates(self):
+        from utils.probability import _ps_predict_ms, _ps_observe
+        st = {}
+        # 模拟实测远慢于初值（如一次 33 格组耗时 1000ms）
+        _ps_observe(st, 33, 1000.0)
+        self.assertGreater(_ps_predict_ms(st, 33), 500.0)
+
+    def test_mode_change_resets_model(self):
+        from utils import native
+        from utils.probability import _ps_predict_ms, _ps_observe, _ps_base_ms
+        st = {}
+        _ps_observe(st, 33, 0.001)  # 记录为极快（C++ 模式）
+        self.assertEqual(st.get("ps_native"), native.available)
+        # 模拟模式切换后自动重置为默认基准
+        saved = native.available
+        native.available = not saved
+        try:
+            _ps_base_ms(st)  # 触发重置
+            self.assertNotEqual(st.get("ps_native"), saved)
+        finally:
+            native.available = saved
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

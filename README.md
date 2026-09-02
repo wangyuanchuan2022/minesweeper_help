@@ -54,6 +54,11 @@
   （`part_solve` 组枚举上限 +8（提速 ~424x），win_rate 触发阈值 `limitation <= 6 → 8`
   （提速 ~6x）），同等墙钟时间下搜索更深、结果更优；纯 Python 回退时自动恢复原阈值。
   设 `MSW_NATIVE_TUNE=0` 可强制保持原阈值（新旧实现决策对比时使用）。
+- **总耗时预算控制（≤10s）**：`number5_1` 单次决策从入口计时，part_solve 按
+  指数模型 `t(L) ≈ base·2^(L-33)` 预测各组耗时并逐次实测校准（状态挂在 solver
+  实例上跨决策记忆）：预计超预算的组自动降级（移入未枚举区，行为同超限组），
+  win_rate 也按上次实测反馈在 6–8 档间调节；总计算时间稳定控制在 10 秒内。
+  同样仅在 `native.tuned()` 时启用，纯 Python 自动关闭。
 - **重新构建**：在仓库根目录执行 `cpp\build.bat`（需要 MSVC 2022 与 py310 环境，
   pybind11 头文件已 vendored 在 `cpp/inc/`）。
 - **一致性验证**：`bench/compare_native.py` 在相同输入下逐位对比 C++ 与纯 Python

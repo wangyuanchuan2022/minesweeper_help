@@ -26,6 +26,50 @@ from . import native
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# 决策耗时预算控制：把 number5_1 单次决策的总计算时间控制在 10 秒以内。
+#
+# part_solve 按组大小呈指数增长（每 +1 格约 ×2），用指数模型
+#   t(L) ≈ base_ms · 2^(L - 33)
+# 预测各组耗时，并按实测在线校准（指数平滑）；模型状态挂在 solver 实例
+# （属性 _time_budget）上跨决策记忆。仅 native.tuned()（C++ 可用且未设
+# MSW_NATIVE_TUNE=0）时启用，纯 Python 回退自动恢复原始静态行为。
+# ---------------------------------------------------------------------------
+DECISION_TIME_BUDGET = 10.0  # number5_1 单次决策总预算（秒，含视觉扫描）
+_PS_REF_SIZE = 33            # 模型参考组大小（实测标定点：C++ 2.3ms / Python 976ms）
+_PS_SAFETY = 2.0             # 预测安全系数（组形状差异 + 模型误差）
+_PS_RESERVE_S = 2.5          # 枚举阶段为之后的 win_rate / pbs / 决策输出预留的时间（秒）
+
+
+def _ps_default_base_ms():
+    """模型初值：33 格组在当前模式下的典型耗时（毫秒），按实测标定。"""
+    return 5.0 if native.available else 1000.0
+
+
+def _ps_base_ms(state):
+    """读取模型基准耗时；模式切换（C++↔纯 Python）时重置。"""
+    base = state.get("ps_base_ms")
+    if base is None or state.get("ps_native") is not native.available:
+        base = _ps_default_base_ms()
+        state["ps_native"] = native.available
+    return base
+
+
+def _ps_predict_ms(state, size):
+    """预测 size 格组的 part_solve 耗时（毫秒）。"""
+    return _ps_base_ms(state) * (2.0 ** max(size - _PS_REF_SIZE, -20)) * _PS_SAFETY
+
+
+def _ps_observe(state, size, ms):
+    """按实测耗时更新模型（指数平滑，新观测权重 0.4）。"""
+    implied = ms / (2.0 ** max(size - _PS_REF_SIZE, -20))
+    state["ps_base_ms"] = 0.6 * _ps_base_ms(state) + 0.4 * implied
+
+
+def _budget_remaining(state, t_start):
+    """距决策预算截止的剩余秒数（扣除枚举后阶段预留）。"""
+    return t_start + DECISION_TIME_BUDGET - _PS_RESERVE_S - time.perf_counter()
+
 
 class ProbabilityMixin:
     def number5_1(self, cell_value):
@@ -37,6 +81,11 @@ class ProbabilityMixin:
         confidence = 0
         w = cell_value.shape[1] - 2
         h = cell_value.shape[0] - 2
+        # 耗时预算控制（仅 tuned 模式启用；状态跨决策记忆，见模块级说明）
+        t_decision_start = time.perf_counter()
+        if native.tuned() and not hasattr(self, "_time_budget"):
+            self._time_budget = {}
+        _tb = getattr(self, "_time_budget", None) if native.tuned() else None
 
         num9 = 0  # 所有未开方格的数量
         num10 = 0
@@ -162,6 +211,21 @@ class ProbabilityMixin:
             limit = (
                 base_limit - int(math.log2(t_sum) / 2) if t_sum != 0 else base_limit
             )  # 20大约20s 19 10s 18 5s（纯 Python 标定；C++ 下每 +1 约 2 倍算量但仅 ~1/424 耗时）
+            if _tb is not None:
+                # 预算控制：按指数模型预测各组耗时，压缩 limit 直到总预测 ≤ 剩余预算
+                _rem = _budget_remaining(_tb, t_decision_start)
+                _pred_total = float("nan")
+                while limit > 5:
+                    _pred_total = sum(
+                        _ps_predict_ms(_tb, s) / 1000.0
+                        for s in (len(g) for g in click_list)
+                        if s <= limit + 3
+                    )
+                    if _pred_total <= _rem:
+                        break
+                    limit -= 1
+                logger.debug("limit=%s（预算剩余 %.2fs，预测总耗时 %.2fs）",
+                             limit, _rem, _pred_total)
             res_list = []
             canopen_res = np.array([])
             ck = []  # res_list中res的长度
@@ -182,7 +246,15 @@ class ProbabilityMixin:
                     ck.append(_total)
                     self.pv_signal.emit(100)
                 except KeyError:
-                    if len(click_list[index]) > limit + 3:  # 大于limit时因为算量过大而无法判断
+                    _over_budget = (
+                        _tb is not None
+                        and _ps_predict_ms(_tb, len(click_list[index])) / 1000.0
+                        > t_decision_start + DECISION_TIME_BUDGET - _PS_RESERVE_S
+                        - time.perf_counter()
+                    )
+                    if (
+                        len(click_list[index]) > limit + 3 or _over_budget
+                    ):  # 大于limit/超出预算时因为算量过大而无法判断
                         is_removed = True
                         for pos in click_list[index]:
                             clicks.remove(pos)
@@ -192,6 +264,7 @@ class ProbabilityMixin:
                             if len(set(li) & set(tuple(click_list[index]))) != 0:
                                 self.checked.pop(li)
                         try:
+                            _t_ps = time.perf_counter()
                             _res, _total, _canopen_res = self.part_solve(
                                 click_list[index],
                                 cell_value,
@@ -200,6 +273,9 @@ class ProbabilityMixin:
                                 set_list[index],
                                 False,
                             )
+                            if _tb is not None:
+                                _ps_observe(_tb, len(click_list[index]),
+                                            (time.perf_counter() - _t_ps) * 1000.0)
                         except KeyError:
                             cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                             for i in range(1, w + 1):
@@ -268,8 +344,28 @@ class ProbabilityMixin:
                 limitation = len(clicks9) * 0.8 + math.log2(total)
                 logger.debug("limitation: %s", limitation)
 
+                if _tb is not None:
+                    # win_rate 反馈调节：上次实测超预算 → 下调一档；远快于预算 → 恢复一档
+                    _wr_last = _tb.get("wr_last")
+                    if _wr_last is not None:
+                        _lt, _lms = _wr_last
+                        _wr_rem = t_decision_start + DECISION_TIME_BUDGET - time.perf_counter()
+                        if _lms > _wr_rem * 1000.0 * 0.8:
+                            wr_threshold = min(wr_threshold, max(6, _lt - 1))
+                        elif _lms < _wr_rem * 1000.0 * 0.1:
+                            wr_threshold = max(
+                                wr_threshold,
+                                min(6 + native.LIMIT_BONUS_WIN_RATE, _lt + 1),
+                            )
+                    logger.debug("wr_threshold=%s（预算剩余 %.2fs）",
+                                 wr_threshold, _wr_rem if _wr_last is not None else float("nan"))
+
                 if limitation <= wr_threshold:  # 小情况可以计算胜率
+                    _t_wr = time.perf_counter()
                     win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
+                    if _tb is not None:
+                        _tb["wr_last"] = (wr_threshold,
+                                          (time.perf_counter() - _t_wr) * 1000.0)
                     win_rate = np.around(win_rate, decimals=5)
                     self.text_signal.emit(f"此局面下的胜率为{max(win_rate): 0.4f}。\n")
                     where_max = np.where(win_rate == np.max(win_rate), 1, 0)
