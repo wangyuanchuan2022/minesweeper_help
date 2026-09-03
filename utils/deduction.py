@@ -23,7 +23,7 @@ class DeductionMixin:
                         cnt10 += 1
         return cnt9, cnt10
 
-    def mine_clear1(self, cell_value, clicks=None):
+    def mine_clear1(self, cell_value, total=0, win=0, clicks=None):
         if clicks:
             for i, j in clicks:
                 cell_value = self.number0(i, j, cell_value)
@@ -38,6 +38,7 @@ class DeductionMixin:
                 for i in range(1, self.w + 1):
                     if 0 < cell_value[j, i] < 8:
                         cell_value = self.number0(i, j, cell_value)
+                self._emit_heatmap(cell_value, total, win)
 
         return cell_value
 
@@ -240,7 +241,7 @@ class DeductionMixin:
 
         return cell_value
 
-    def mine_clear3_1(self, cell_value, clicks=None):
+    def mine_clear3_1(self, cell_value, total=0, win=0, clicks=None):
         if clicks:
             for i, j in clicks:
                 cell_value = self.number_3_1(i, j, cell_value)
@@ -250,6 +251,8 @@ class DeductionMixin:
                 if 0 < cell_value[j, i] < 8:
                     if self.cell_around(i, j, cell_value)[0] > 0:
                         cell_value = self.number_3_1(i, j, cell_value)
+
+            self._emit_heatmap(cell_value, total, win)
         return cell_value
 
     def get_set_1(self, i, j, cell_value):

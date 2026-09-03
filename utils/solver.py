@@ -29,10 +29,13 @@ logger = get_logger(__name__)
 
 class AutoPlayThread(QThread):
     pv_signal = QtCore.pyqtSignal(int)
-    text_signal = QtCore.pyqtSignal(str)
     Visible_signal = QtCore.pyqtSignal(bool)
     warning_signal = QtCore.pyqtSignal(str)
     update_btn_list_signal = QtCore.pyqtSignal(list)
+    # 热力图数据：唯一发射口 _emit_heatmap，payload 结构统一
+    # {"prob": 候选格概率dict(新局清空时为空表), "best", "total",
+    #  "cell_value", "played", "win"}——概率与数字同帧到达、同步刷新。
+    heatmap_signal = QtCore.pyqtSignal(dict)
     start_signal = QtCore.pyqtSignal(tuple)
     end_signal = QtCore.pyqtSignal(str)
     warning_signal_2 = QtCore.pyqtSignal(str)
@@ -187,21 +190,20 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     return
 
                 if win32gui.FindWindow(None, "游戏胜利") > 0:
-                    time.sleep(1.2)
-                    win += 1
-                    total += 1
-                    exit_i, exit_j = self.locate_exit()
-                    pyautogui.click(exit_i, exit_j)
-                    self.text_signal.emit(
-                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
-                        f"{str(round(win / total, 4) * 100)}%\n"
-                    )
-                    if total == limit:
-                        break
+                    self._last_heatmap = {}
                     cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
+                    win += 1
+                    total += 1
+
+                    time.sleep(1.2)
+                    exit_i, exit_j = self.locate_exit()
+                    pyautogui.click(exit_i, exit_j)
+                    if total == limit:
+                        break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
@@ -216,20 +218,19 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     time.sleep(0.1)
 
                 elif win32gui.FindWindow(None, "游戏失败") > 0:
-                    time.sleep(1.2)
-                    exit_i, exit_j = self.locate_exit()
-                    pyautogui.click(exit_i, exit_j)
-                    total += 1
-                    self.text_signal.emit(
-                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
-                        f"{str(round(win / total, 4) * 100)}%\n"
-                    )
-                    if total == limit:
-                        break
+                    self._last_heatmap = {}
                     cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
+                    total += 1
+
+                    time.sleep(1.2)
+                    exit_i, exit_j = self.locate_exit()
+                    pyautogui.click(exit_i, exit_j)
+                    if total == limit:
+                        break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
@@ -255,20 +256,19 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
 
                 _win, x, y = self._locate("./image/win.bmp", screen)
                 if _win:
-                    time.sleep(1.2)
-                    win += 1
-                    total += 1
-                    pyautogui.click(x, y)
-                    self.text_signal.emit(
-                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
-                        f"{str(round(win / total, 4) * 100)}%\n"
-                    )
-                    if total == limit:
-                        break
+                    self._last_heatmap = {}
                     cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
+                    win += 1
+                    total += 1
+
+                    time.sleep(1.2)
+                    pyautogui.click(x, y)
+                    if total == limit:
+                        break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
@@ -285,19 +285,18 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
 
                 _lose, x, y = self._locate("./image/lose.bmp", screen)
                 if _lose:
-                    time.sleep(1.2)
-                    pyautogui.click(x, y)
-                    total += 1
-                    self.text_signal.emit(
-                        f"已玩 {str(total)} 局。 {str(win)} 局获胜。胜率："
-                        f"{str(round(win / total, 4) * 100)}%\n"
-                    )
-                    if total == limit:
-                        break
+                    self._last_heatmap = {}
                     cell_value = np.zeros((h + 2, w + 2), dtype="int32")
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
+                    total += 1
+
+                    time.sleep(1.2)
+                    pyautogui.click(x, y)
+                    if total == limit:
+                        break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
                     win32gui.ShowWindow(hwnd, 1)
@@ -314,16 +313,29 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                 cell_value = self.complete_scan(cell_value, True)
                 sum2 = np.sum(cell_value)
                 try:
-                    cell_value = self.mine_clear1(cell_value)
+                    cell_value = self.mine_clear1(cell_value, total, win)
+                    self._emit_heatmap(cell_value, total, win)
                 except ValueError:
                     continue
-                cell_value = self.mine_clear3_1(cell_value)
+                cell_value = self.mine_clear3_1(cell_value, total, win)
+                self._emit_heatmap(cell_value, total, win)
                 sum3 = np.sum(cell_value)
                 if sum3 == sum2:
                     try:
+                        _pre_flags = cell_value.copy()  # 入参含推理标记（10=雷/11=安全）
                         cell_value = self.number5_1(cell_value)
+                        # number5_1 内部会重扫棋盘，重扫只认屏幕、内存推理标记会丢失——
+                        # 把仍处于未开状态(9)的旧标记恢复回来，否则下一帧概率渲染会把
+                        # 推理红雷覆盖成浅灰/概率色
+                        for _flag in (10, 11):
+                            _m = (_pre_flags == _flag) & (cell_value == 9)
+                            cell_value[_m] = _flag
                     except ImportError:
                         pass
+                # 每一轮实时刷新热力图：决策轮=刚算出的新概率；纯推理轮=沿用最近
+                # 一次决策的概率（推理只确定格子，旧概率对仍未开格依旧有效），
+                # 新开的格由界面按数字渲染、无概率格落回浅灰半透明底。
+                self._emit_heatmap(cell_value, total, win)
 
         except pyautogui.FailSafeException:
             self.pv_signal.emit(0)
@@ -335,6 +347,25 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
             return
         finally:
             self._flush_stats()
+
+    def _emit_heatmap(self, cell_value, played, win, clear=False):
+        """热力图唯一发射口：决策/推理/新局胜负共用，payload 结构统一。
+
+        概率/最佳点击/总局面数沿用最近一次决策（number5_1 写入 _last_heatmap）：
+        推理只确定格子，旧概率对仍未开的格依旧有效；新开的格由界面按
+        cell_value 渲染成数字、无概率格落回浅灰半透明底。
+        clear=True（每局胜负后）：概率清空——新局从全浅灰开始，等首次决策上色。
+        概率与数字在同一 payload 原子到达，界面一帧内同步刷新。
+        """
+        _hm = {} if clear else (getattr(self, "_last_heatmap", None) or {})
+        self.heatmap_signal.emit({
+            "prob": _hm.get("prob", {}),
+            "best": _hm.get("best"),
+            "total": _hm.get("total", 0.0),
+            "cell_value": cell_value,
+            "played": played,
+            "win": win,
+        })
 
     def help(self):
         try:
