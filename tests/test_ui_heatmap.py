@@ -25,6 +25,19 @@ class TestHeatmapUI(unittest.TestCase):
         cls.win = main.MyMainWindow()
         cls.h, cls.w = cls.win.h, cls.win.w
 
+    def setUp(self):
+        # 每个用例从干净初始状态开始（共享窗口实例，避免用例间样式污染）
+        self.win.heatmap_frame.setUpdatesEnabled(False)
+        for row in self.win.heatmap_btn_list:
+            for btn in row:
+                btn.setText("")
+                btn.setStyleSheet(self.win._HM_BASE)
+        self.win.heatmap_frame.setUpdatesEnabled(True)
+        self.win._hm_last = {
+            id(b): (self.win._HM_BASE, "")
+            for row in self.win.heatmap_btn_list for b in row
+        }
+
     def test_grid_built_with_transparent_base(self):
         self.assertEqual(len(self.win.heatmap_btn_list), self.h)
         self.assertEqual(len(self.win.heatmap_btn_list[0]), self.w)
@@ -84,7 +97,7 @@ class TestHeatmapUI(unittest.TestCase):
         self.win.update_heatmap(payload)                   # 相同 payload：缓存应零变化
         self.assertEqual(self.win._hm_last, before)
 
-    def test_clear_payload_renders_all_gray(self):
+    def test_clear_payload_renders_white_transparent(self):
         cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
         prob = {(i, j): 0.5 for i in range(1, self.w + 1)
                 for j in range(1, self.h + 1)}
@@ -93,7 +106,8 @@ class TestHeatmapUI(unittest.TestCase):
         self.win.update_heatmap({"prob": {}, "best": None, "total": 0.0,
                                  "cell_value": cv, "played": 2, "win": 1})
         btn = self.win.heatmap_btn_list[0][0]
-        self.assertIn("rgba(208, 208, 214, 100)", btn.styleSheet())  # 概率清空 → 浅灰
+        # 概率清空后：未开无概率格 → 白色半透明（用户设定的无数据格样式）
+        self.assertIn("rgba(255, 255, 255, 180)", btn.styleSheet())
         self.assertEqual(btn.text(), "")
 
 

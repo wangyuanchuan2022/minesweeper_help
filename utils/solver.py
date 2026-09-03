@@ -8,6 +8,7 @@
 - ``utils.probability.ProbabilityMixin``：概率枚举与胜率
 """
 import json
+import os
 import time
 
 import numpy as np
@@ -25,6 +26,37 @@ from .deduction import DeductionMixin
 from .probability import ProbabilityMixin
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 对局统计落盘：累计总局数/赢局数跨进程持久（state/game_stats.json）
+# ---------------------------------------------------------------------------
+_GS_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "state", "game_stats.json",
+)
+
+
+def _gs_load():
+    """启动时恢复累计对局统计（played=总局数 / win=赢局数）；缺失/损坏返回空表。"""
+    try:
+        with open(_GS_STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _gs_save(played, win):
+    """累计对局统计原子落盘；失败仅记日志，绝不影响自动扫雷流程。"""
+    try:
+        os.makedirs(os.path.dirname(_GS_STATE_PATH), exist_ok=True)
+        _tmp = _GS_STATE_PATH + ".tmp"
+        with open(_tmp, "w", encoding="utf-8") as f:
+            json.dump({"played": int(played), "win": int(win)}, f, ensure_ascii=False)
+        os.replace(_tmp, _GS_STATE_PATH)
+    except (OSError, ValueError) as e:
+        logger.debug("对局统计落盘失败（忽略）: %s", e)
 
 
 class AutoPlayThread(QThread):
@@ -180,8 +212,12 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
 
-            win = 0
-            total = 0
+            # 对局统计跨进程累计：从 state/game_stats.json 恢复历史值；
+            # limit（本次要玩的总局数）按"本次新增局数"计数，与历史累计解耦
+            _gs = _gs_load()
+            win = int(_gs.get("win", 0))
+            total = int(_gs.get("played", 0))
+            _start_total = total
 
             while True:
                 if self.count >= 3:
@@ -195,6 +231,7 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._gs_save(total, win)  # 对局统计累计落盘
                     self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     win += 1
                     total += 1
@@ -202,7 +239,7 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     time.sleep(1.2)
                     exit_i, exit_j = self.locate_exit()
                     pyautogui.click(exit_i, exit_j)
-                    if total == limit:
+                    if total - _start_total == limit:
                         break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
@@ -223,13 +260,14 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._gs_save(total, win)  # 对局统计累计落盘
                     self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     total += 1
 
                     time.sleep(1.2)
                     exit_i, exit_j = self.locate_exit()
                     pyautogui.click(exit_i, exit_j)
-                    if total == limit:
+                    if total - _start_total == limit:
                         break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
@@ -261,13 +299,14 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._gs_save(total, win)  # 对局统计累计落盘
                     self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     win += 1
                     total += 1
 
                     time.sleep(1.2)
                     pyautogui.click(x, y)
-                    if total == limit:
+                    if total - _start_total == limit:
                         break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
@@ -290,12 +329,13 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
+                    self._gs_save(total, win)  # 对局统计累计落盘
                     self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     total += 1
 
                     time.sleep(1.2)
                     pyautogui.click(x, y)
-                    if total == limit:
+                    if total - _start_total == limit:
                         break
                     time.sleep(1.0)
                     hwnd = win32gui.FindWindow(None, setting.win_name)
@@ -356,16 +396,21 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
         cell_value 渲染成数字、无概率格落回浅灰半透明底。
         clear=True（每局胜负后）：概率清空——新局从全浅灰开始，等首次决策上色。
         概率与数字在同一 payload 原子到达，界面一帧内同步刷新。
+        发射失败（如测试用 __new__ 轻量实例未初始化 Qt、或界面异常）只记日志
+        并静默跳过——UI 故障绝不打断推理/决策主流程。
         """
         _hm = {} if clear else (getattr(self, "_last_heatmap", None) or {})
-        self.heatmap_signal.emit({
-            "prob": _hm.get("prob", {}),
-            "best": _hm.get("best"),
-            "total": _hm.get("total", 0.0),
-            "cell_value": cell_value,
-            "played": played,
-            "win": win,
-        })
+        try:
+            self.heatmap_signal.emit({
+                "prob": _hm.get("prob", {}),
+                "best": _hm.get("best"),
+                "total": _hm.get("total", 0.0),
+                "cell_value": cell_value,
+                "played": played,
+                "win": win,
+            })
+        except Exception as e:  # noqa: BLE001 —— UI 隔离：任何发射故障都不外泄
+            logger.debug("热力图发射失败（忽略）: %s", e)
 
     def help(self):
         try:

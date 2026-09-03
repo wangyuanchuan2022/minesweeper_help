@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tests.helpers import make_solver, make_board
+from tests.helpers import make_solver, make_full_solver, make_board
 
 
 class TestCellAround(unittest.TestCase):
@@ -156,7 +156,9 @@ class TestOpenNum5x5(unittest.TestCase):
 
 class TestNumber0(unittest.TestCase):
     def setUp(self):
-        self.solver = make_solver(w=5, h=5, is_play=False)
+        # mine_clear1/number_3_1 内含实时热力图发射，需要完整初始化的 Qt 实例
+        self.solver = make_full_solver(w=5, h=5)
+        self.solver.appended_pos = set()
 
     def test_all_mines(self):
         cell_value = make_board(5, 5)
@@ -191,7 +193,9 @@ class TestNumber0(unittest.TestCase):
 
 class TestMineClear1(unittest.TestCase):
     def setUp(self):
-        self.solver = make_solver(w=5, h=5, is_play=False)
+        # mine_clear1/number_3_1 内含实时热力图发射，需要完整初始化的 Qt 实例
+        self.solver = make_full_solver(w=5, h=5)
+        self.solver.appended_pos = set()
 
     def test_with_clicks(self):
         cell_value = make_board(5, 5)
@@ -214,7 +218,9 @@ class TestNumber31(unittest.TestCase):
     """number_3_1 高级推理的基础用例。"""
 
     def setUp(self):
-        self.solver = make_solver(w=5, h=5, is_play=False)
+        # mine_clear1/number_3_1 内含实时热力图发射，需要完整初始化的 Qt 实例
+        self.solver = make_full_solver(w=5, h=5)
+        self.solver.appended_pos = set()
 
     def test_no_change_when_satisfied(self):
         # 数字已经满足时不应修改棋盘
