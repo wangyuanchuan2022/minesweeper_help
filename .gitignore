@@ -14,3 +14,9 @@ cpp/vendor/
 *.obj
 *.exp
 *.lib
+
+# 运行时数据（实测样本/模型状态/对局诊断/覆盖率工具），不入库
+data_time.json
+diagnostics
+state/
+.tools/
