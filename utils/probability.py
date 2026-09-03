@@ -12,7 +12,9 @@
 ``_throttled_pv_signal_emit`` 与各 Qt 信号。
 """
 import hashlib
+import json
 import math
+import os
 import time
 from collections import defaultdict
 
@@ -29,10 +31,11 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # 决策耗时预算控制：把 number5_1 单次决策的总计算时间控制在 10 秒以内。
 #
-# part_solve 按组大小呈指数增长（每 +1 格约 ×2），用指数模型
-#   t(L) ≈ base_ms · 2^(L - 33)
+# part_solve 按组大小呈指数增长，用指数模型
+#   t(L) ≈ base_ms · k^(L - 33)（k 由历史实测样本自动拟合，见 _ps_refit_k）
 # 预测各组耗时，并按实测在线校准（指数平滑）；模型状态挂在 solver 实例
-# （属性 _time_budget）上跨决策记忆。仅 native.tuned()（C++ 可用且未设
+# （属性 _time_budget）上跨决策记忆，并经 _tb_save 落盘 state/time_budget.json
+# 跨进程持久。仅 native.tuned()（C++ 可用且未设
 # MSW_NATIVE_TUNE=0）时启用，纯 Python 回退自动恢复原始静态行为。
 # ---------------------------------------------------------------------------
 DECISION_TIME_BUDGET = 30.0  # number5_1 单次决策总预算（秒，含视觉扫描）——用户确认的上限
@@ -45,7 +48,7 @@ _PS_RESERVE_S = 3.0          # 枚举阶段为之后的 win_rate / pbs / 决策�
 _WR_STEP = 0.5             # 每次升降 0.5
 _WR_EDGE_DELTA = 0.25      # 升档的“边界采样”邻域
 _WR_FAST_FRAC = 0.25       # 升档耗时上限（预算比例）
-_WR_SLOW_FRAC = 1       # 降档耗时下限（预算比例）
+_WR_SLOW_FRAC = 1       # 降档耗时下限（预算比例）；=1 即 win_rate 真超总预算才降档（安全阀，勿按旧版 75% 理解）
 
 
 def _ps_default_base_ms():
@@ -59,7 +62,15 @@ def _ps_default_base_ms():
 
 
 def _ps_base_ms(state):
-    """读取模型基准耗时；模式切换（C++↔纯 Python）时重置。"""
+    """读取模型基准耗时；模式切换（C++↔纯 Python）时重置。
+
+    ⚠️ base 是"按增长模型折算回 33 格参考点的等效耗时"，纯数学抽象：
+    小组（size≪33）观测经 k^-(size-33) 折算会把 base 推到百万毫秒级，
+    这是正常现象——predict 用同一因子逆向展开后预测值仍然准确。
+    切勿把 base 当成"33 格组的真实耗时"去校验或手动改小；预测的正确性
+    由 predict/observe 使用同一增长因子保证（历史上两者因子不一致
+    ——predict 1.2 / observe 2.0——曾导致预测爆炸成几十秒，见 _ps_k）。
+    """
     base = state.get("ps_base_ms")
     if base is None or state.get("ps_native") is not native.available:
         base = _ps_default_base_ms()
@@ -67,15 +78,165 @@ def _ps_base_ms(state):
     return base
 
 
+_PS_K_DEFAULT = 1.1                # 增长因子缺省（实测标定 2026-09-03：size≥30 对中位数≈1.08；运行中由自动拟合覆盖）
+_PS_K_MIN, _PS_K_MAX = 1.05, 2.0   # 拟合值夹限：防小样本噪声外推
+_PS_FIT_MIN_SIZE = 30              # 拟合只用大组样本（小组耗时被固定开销/形状噪声主导，不含指数信息）
+_PS_SAMPLES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data_time.json",
+)
+
+
+def _ps_k(state):
+    """当前增长因子：自动拟合值优先（state["ps_k"]），无则用缺省。"""
+    k = state.get("ps_k")
+    return float(k) if k else _PS_K_DEFAULT
+
+
 def _ps_predict_ms(state, size):
-    """预测 size 格组的 part_solve 耗时（毫秒）。"""
-    return _ps_base_ms(state) * (2.0 ** max(size - _PS_REF_SIZE, -20)) * _PS_SAFETY
+    """预测 size 格组的 part_solve 耗时（毫秒）。
+
+    max(size-33, -20) 的下限把极小组的折算倍率钳在 k^-20（约 1/10），
+    防止指数下溢到 0；_ps_observe 的折算用同样的截断，两侧对称抵消。
+    """
+    return _ps_base_ms(state) * (_ps_k(state) ** max(size - _PS_REF_SIZE, -20)) * _PS_SAFETY
+
+
+def _ps_record_ms(size, ms):
+    """把一次实测 (size, ms) 样本记录到 data_time.json（标准 JSON 数组）。
+
+    供自动拟合增长因子用（_ps_refit_k）；过滤明显非真实的观测（非有限值/
+    亚毫秒构造值）。读-改-写整文件并原子替换（文件始终是合法 JSON），写失败
+    仅记日志，绝不影响决策主流程。成功返回最新样本列表（供拟合复用），
+    被过滤或失败返回 None。
+    """
+    try:
+        # ms≥0.5 的下限：剔除单测构造值（0.001ms）与物理上不可能的观测
+        if not (math.isfinite(ms) and ms >= 0.5 and int(size) >= 1):
+            return None
+        try:
+            with open(_PS_SAMPLES_PATH, "r", encoding="utf-8") as f:
+                _rows = json.load(f)
+            if not isinstance(_rows, list):
+                _rows = []
+        except (OSError, ValueError):
+            _rows = []
+        _rows.append({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "size": int(size),
+            "ms": round(float(ms), 3),
+            "native": bool(native.available),
+        })
+        _tmp = _PS_SAMPLES_PATH + ".tmp"
+        with open(_tmp, "w", encoding="utf-8") as f:
+            json.dump(_rows, f, ensure_ascii=False, indent=1)
+        os.replace(_tmp, _PS_SAMPLES_PATH)
+        return _rows
+    except (OSError, ValueError) as e:
+        logger.debug("实测耗时记录失败（忽略）: %s", e)
+        return None
 
 
 def _ps_observe(state, size, ms):
-    """按实测耗时更新模型（指数平滑，新观测权重 0.5）。"""
-    implied = ms / (2.0 ** max(size - _PS_REF_SIZE, -20))
+    """按实测耗时更新模型（base 指数平滑；k 用全部历史样本自动重拟合）。"""
+    _rows = _ps_record_ms(size, ms)
+    k = _ps_k(state)
+    implied = ms / (k ** max(size - _PS_REF_SIZE, -20))
     state["ps_base_ms"] = 0.5 * _ps_base_ms(state) + 0.5 * implied
+    if _rows is not None:
+        _ps_refit_k(state, _rows)
+    _tb_save(state)
+
+
+def _ps_read_samples():
+    """读取历史实测样本（data_time.json，JSON 数组）；缺失/损坏返回空表。"""
+    try:
+        with open(_PS_SAMPLES_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        return rows if isinstance(rows, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _ps_fit_k(rows, native_flag):
+    """由历史样本拟合增长因子 k（t(L)=base·k^(L-33)，base 不可观故用样本对消去）。
+
+    log k = (log t2 − log t1) / (L2 − L1)，对所有 |ΔL|≥3 的样本对取中位数
+    （稳健抗形状噪声：同 size 组形状差异可达 10x）。仅用与当前模式一致的样本
+    （native/纯 Python 耗时差 3 个量级，不可混），且优先取
+    size≥_PS_FIT_MIN_SIZE 的大组样本对（小组不含指数信息）；有效样本对
+    不足 3 返回 None。
+    """
+    def _pairs(min_size):
+        pts = []
+        for r in rows:
+            try:
+                if (r.get("native") is native_flag and r.get("ms") and r.get("size")
+                        and int(r["size"]) >= min_size):
+                    pts.append((int(r["size"]), float(r["ms"])))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        ks = []
+        for i in range(len(pts)):
+            for j in range(i + 1, len(pts)):
+                d_l = pts[j][0] - pts[i][0]
+                if abs(d_l) >= 3:
+                    ks.append(math.log(pts[j][1] / pts[i][1]) / d_l)
+        return ks
+
+    ks = _pairs(_PS_FIT_MIN_SIZE)   # 大组样本对比值才含指数信息
+    if len(ks) < 3:
+        ks = _pairs(1)              # 大组不足 3 对 → 回退全量（聊胜于无）
+    if len(ks) < 3:
+        return None
+    ks.sort()
+    k = math.exp(ks[len(ks) // 2])
+    return min(max(k, _PS_K_MIN), _PS_K_MAX)
+
+
+def _ps_refit_k(state, rows=None):
+    """用全部历史样本重新拟合 k 写入 state["ps_k"]（样本不足保持原值）。
+
+    只取最近 200 条（rows[-200:]）：k 反映当前机器/程序的实时状态，
+    久远样本反而拖慢收敛；调用时机为程序启动与每次观测落盘后。
+    """
+    if rows is None:
+        rows = _ps_read_samples()
+    k = _ps_fit_k(rows[:], native.available)
+    if k is not None:
+        state["ps_k"] = k
+    logger.debug(f"k:{k}")
+
+
+# ---------------------------------------------------------------------------
+# 预算模型状态落盘：ps_base_ms / win_rate 阈值等跨进程持久（state/time_budget.json）
+# ---------------------------------------------------------------------------
+_TB_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "state", "time_budget.json",
+)
+
+
+def _tb_load():
+    """启动时恢复模型状态（base 校准值 / wr 阈值）；文件缺失或损坏返回空。"""
+    try:
+        with open(_TB_STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _tb_save(state):
+    """模型状态变化后原子落盘；失败仅记日志，不影响决策主流程。"""
+    try:
+        os.makedirs(os.path.dirname(_TB_STATE_PATH), exist_ok=True)
+        _tmp = _TB_STATE_PATH + ".tmp"
+        with open(_tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+        os.replace(_tmp, _TB_STATE_PATH)
+    except (OSError, ValueError) as e:
+        logger.debug("模型状态落盘失败（忽略）: %s", e)
 
 
 def _budget_remaining(state, t_start):
@@ -105,7 +266,7 @@ def _wr_update(tb, limitation, ms):
         - 且本次 win_rate 耗时 < 预算×25%。
         → 阈值 +0.5
       降档（安全阀，任何情形）：
-        - 耗时 > 预算×75% → 阈值 −0.5（下限 0）。
+        - 耗时 > 预算×_WR_SLOW_FRAC（当前 =1，真超预算）→ 阈值 −0.5（下限 0）。
         注：降档不要求边界邻域——若降档也要求邻域，阈值被升上去后真实 limitation
         分布一旦整体低于阈值就再也收不回来（升档只发生在被边界“碰到”时）。
     其余情形阈值不变。返回更新后的阈值并写入 tb["wr"]（含 limitation 观测）。
@@ -120,6 +281,7 @@ def _wr_update(tb, limitation, ms):
     wr["t"] = th
     wr["limitation"] = limitation
     wr["ms"] = ms
+    _tb_save(tb)
     return th
 
 
@@ -208,7 +370,8 @@ class ProbabilityMixin:
         # 耗时预算控制（仅 tuned 模式启用；状态跨决策记忆，见模块级说明）
         t_decision_start = time.perf_counter()
         if native.tuned() and not hasattr(self, "_time_budget"):
-            self._time_budget = {}
+            self._time_budget = _tb_load()
+            _ps_refit_k(self._time_budget)   # 每次运行启动：用历史样本自动拟合 k
         _tb = getattr(self, "_time_budget", None) if native.tuned() else None
 
         num9 = 0  # 所有未开方格的数量
@@ -255,6 +418,7 @@ class ProbabilityMixin:
         # win_rate 触发阈值：C++ 提速后按实测放宽（原 6；纯 Python / MSW_NATIVE_TUNE=0 保持 6）
         wr_threshold = 6 + (native.LIMIT_BONUS_WIN_RATE if native.tuned() else 0)
         if len(clicks) == 0:  # 没有可以判断的格子
+            _prob = {}  # 随机分支无概率数据（热力图由界面浅灰底兜底）
             total = 0
             res = []
             op_num = []
@@ -457,6 +621,10 @@ class ProbabilityMixin:
                     "每增加1计算所需的时间增加1倍"
                 )
 
+            _prob = {}  # 兜底：候选格概率字典（1-based 坐标 → 不是雷概率），各决策分支会覆盖
+            # ⚠️ 不是死代码：外层 else（443 行）已保证 len(clicks) > 0，但分支中又对clicks进行了修改；
+            # 真正的随机分支在 419 行外层（曾因把 _prob 兜底误加在这里导致随机分支
+            # UnboundLocalError）。保留仅为避免误删历史逻辑。
             if len(clicks) == 0:
                 self.Visible_signal.emit(False)
                 res = []
@@ -509,7 +677,6 @@ class ProbabilityMixin:
                                      (time.perf_counter() - _t_wr) * 1000.0, limitation,
                                      wr_threshold)
                     win_rate = np.around(win_rate, decimals=5)
-                    self.text_signal.emit(f"此局面下的胜率为{max(win_rate): 0.4f}。\n")
                     where_max = np.where(win_rate == np.max(win_rate), 1, 0)
                     p = where_max / where_max.sum()
                     arg = np.random.choice(np.arange(len(clicks)), p=p)
@@ -547,24 +714,31 @@ class ProbabilityMixin:
                                     )
                                     self.appended_pos.add(tuple(clicks[p]))
 
+                    # 热力图：win_rate 的逐格"不是雷"概率（键与决策坐标同为 1-based）
+                    _prob = {tuple(k): float(v) for k, v in clicks2p.items()}
+
                 else:  # 大情况
-                    pos, confidence, total = self.process_bigger_situation(total, num9, num10, clicks, clicks9,
-                                                                           res_list, ck, cell_value, pos)
+                    pos, confidence, total, _prob = self.process_bigger_situation(
+                        total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos)
                     self.till_now_winrate *= confidence
-                    self.text_signal.emit(f"走到此局面，还没死的概率为{self.till_now_winrate: 0.4f}。\n")
 
         logger.debug("决策完成：limitation=%.1f，总耗时 %.0f ms（预算 %.0fs；超时则检查上方各阶段）",
                      limitation,
                      (time.perf_counter() - t_decision_start) * 1000.0,
                      DECISION_TIME_BUDGET)
-        self.text_signal.emit(f"共{total: 0.2f}种解。")
-        if total == 0:
-            self.text_signal.emit("随机选择。\n")
-            self.text_signal.emit("您可以通过增加设置中的limit使枚举更加全面，但limit每增加1计算所需的时间增加1倍")
-        else:
-            self.text_signal.emit("\n")
-        self.text_signal.emit(str(pos))
-        self.text_signal.emit(f" confidence: {(confidence * 100): 0.2f}%\n")
+        # 组装热力图数据（自动模式界面渲染用）：候选格概率（1-based 坐标）
+        # + 最佳点击 + 总局面数。_prob 已由各决策分支就地设置：
+        #   win_rate 分支=clicks2p、pbs 分支=process_bigger_situation 第 4 元返回、
+        #   随机分支=空表（界面用均匀先验兜底）。
+        # ⚠️ 不要在这里重新判断 limitation <= wr_threshold：win_rate 观测会经
+        # _wr_update 实时升降阈值，组装段可能因此走到与决策分支不同的路径；
+        # 也不要从 zip(clicks, res) 重建——本作用域没有可靠的标量概率数组 res
+        # （曾致 TypeError: only size-1 arrays can be converted）。
+        self._last_heatmap = {
+            "prob": _prob,
+            "best": tuple(pos[0]) if len(pos) else None,
+            "total": float(total),
+        }
 
         for p in pos:
             if self.is_play:
@@ -889,7 +1063,9 @@ class ProbabilityMixin:
                             )
                             self.appended_pos.add(tuple(clicks[p]))
 
-        return pos, confidence, total
+        # 附带候选点击格概率字典（1-based 坐标 → 不是雷概率），供热力图渲染
+        _prob = {tuple(c): float(r) for c, r in zip(clicks, res)}
+        return pos, confidence, total, _prob
 
     def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
         # 优先 C++（mscore.win_rate），失败/不可用自动回退纯 Python

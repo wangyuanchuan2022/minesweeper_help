@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -96,13 +97,20 @@ class TestTimeBudget(unittest.TestCase):
     def _solver(self):
         return make_full_solver(w=5, h=5, a=3)
 
+    def setUp(self):
+        # 隔离文件系统：不写样本/状态文件，也不用真实历史样本拟合
+        p1 = mock.patch("utils.probability._ps_record_ms", return_value=None)
+        p2 = mock.patch("utils.probability._tb_save")
+        p1.start(); p2.start()
+        self.addCleanup(p1.stop); self.addCleanup(p2.stop)
+
     def test_predict_monotonic(self):
-        from utils.probability import _ps_predict_ms, _ps_observe, _ps_base_ms
-        st = {}
+        from utils.probability import _ps_predict_ms
+        st = {"ps_base_ms": 10.0, "ps_native": True, "ps_k": 1.2}
         t_small = _ps_predict_ms(st, 20)
         t_big = _ps_predict_ms(st, 33)
-        # 指数模型：大组预测显著更大
-        self.assertGreater(t_big, t_small * 100)
+        # 指数模型：大组预测显著更大（13 格差 ×1.2^13≈10.7）
+        self.assertGreater(t_big, t_small * 5)
 
     def test_observe_calibrates(self):
         from utils.probability import _ps_predict_ms, _ps_observe
@@ -129,6 +137,11 @@ class TestTimeBudget(unittest.TestCase):
 
 class TestWrFeedback(unittest.TestCase):
     """win_rate 阈值反馈：步长 0.5、无上限、下限 0；升档需边界采样且快，降档为安全阀。"""
+
+    def setUp(self):
+        # 隔离文件系统：_wr_update 的 _tb_save 不写真实状态文件
+        p = mock.patch("utils.probability._tb_save")
+        p.start(); self.addCleanup(p.stop)
 
     def _ms(self, frac):
         from utils.probability import DECISION_TIME_BUDGET
@@ -161,15 +174,15 @@ class TestWrFeedback(unittest.TestCase):
     def test_drop_on_slow_anywhere(self):
         from utils.probability import _wr_update
         tb = {}
-        th = _wr_update(tb, limitation=3.0, ms=self._ms(0.90))   # 远离边界但超时 → 仍降
+        th = _wr_update(tb, limitation=3.0, ms=self._ms(1.20))   # 远离边界但超预算（>×_WR_SLOW_FRAC=1）→ 仍降
         self.assertEqual(th, 7.5)
 
     def test_floor_is_zero(self):
         from utils.probability import _wr_update
         tb = {}
         th = 8.0
-        for _ in range(30):  # 连续超时一路降到 0，不再为负
-            th = _wr_update(tb, limitation=8.0, ms=self._ms(0.90))
+        for _ in range(30):  # 连续超预算一路降到 0，不再为负
+            th = _wr_update(tb, limitation=8.0, ms=self._ms(1.20))
         self.assertEqual(th, 0.0)
 
     def test_no_upper_bound(self):
@@ -179,6 +192,33 @@ class TestWrFeedback(unittest.TestCase):
         for _ in range(20):  # 边界内连续快 → 逐级 +0.5，无上限
             th = _wr_update(tb, limitation=th, ms=self._ms(0.10))
         self.assertEqual(th, 18.0)
+
+
+class TestFitK(unittest.TestCase):
+    """增长因子自动拟合：样本对比值中位数（base 在比值中消去）。"""
+
+    def test_fit_recovers_true_k(self):
+        from utils.probability import _ps_fit_k
+        rows = [{"native": True, "size": s, "ms": 2.0 * (1.2 ** (s - 33))}
+                for s in (10, 15, 20, 25, 30, 33, 36)]
+        k = _ps_fit_k(rows, True)
+        self.assertAlmostEqual(k, 1.2, places=1)
+
+    def test_insufficient_samples_returns_none(self):
+        from utils.probability import _ps_fit_k
+        self.assertIsNone(_ps_fit_k([{"native": True, "size": 10, "ms": 1.0}], True))
+
+    def test_filters_other_mode(self):
+        from utils.probability import _ps_fit_k
+        rows = [{"native": False, "size": 10, "ms": 1.0},
+                {"native": False, "size": 30, "ms": 100.0}]
+        self.assertIsNone(_ps_fit_k(rows, True))   # 模式不符的样本不参与拟合
+
+    def test_clamped_to_bounds(self):
+        from utils.probability import _ps_fit_k
+        rows = [{"native": True, "size": s, "ms": 1.0 * (7.94 ** (s - 10))}
+                for s in (10, 20, 30, 40)]   # 隐含 k≈7.94，超上限
+        self.assertLessEqual(_ps_fit_k(rows, True), 2.0)
 
 
 if __name__ == "__main__":

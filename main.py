@@ -207,7 +207,12 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.end_help_thread.clicked.connect(self.end_h_func)
 
         self.auto_play_thread.pv_signal.connect(lambda v: self.pgb.setValue(v))
-        self.auto_play_thread.text_signal.connect(self.update_text)
+        # 命令行输出窗口已取消：其承载的信息（局数/胜率/决策结果）由热力图统计栏呈现；
+        # text_signal 信号链已整体移除（定义/连接/emit）。
+        # 控件从布局移除并销毁；先前的滚动条样式调用在本行之前已执行完，不受影响。
+        self.verticalLayout_2.removeWidget(self.plainTextEdit)
+        self.plainTextEdit.setVisible(False)
+        self.plainTextEdit.deleteLater()
         self.auto_play_thread.Visible_signal.connect(lambda v: self.pgb.setVisible(v))
         self.auto_play_thread.Visible_signal.connect(
             lambda v: self.end_auto_play_thread.setVisible(v)
@@ -219,6 +224,7 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             functools.partial(self.update_pgb, name="pgb")
         )
         self.auto_play_thread.end_signal.connect(self.end_timer)
+        self.auto_play_thread.heatmap_signal.connect(self.update_heatmap)
 
         self.help_thread = Solver()
         self.help_thread.set_args(0)  # 设置为帮助模式。
@@ -289,6 +295,52 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.row_list.append(btn)
 
         self.screenshot_help.clicked.connect(self.screenshot_help_func)
+
+        # 自动页面热力图（与帮助页同款配色）+ 单行统计栏。
+        # 网格独立于帮助页 btn_list 自建一套（帮助页 reset_btn_list 会整体
+        # 重建自己的网格，共用会互相摧毁），尺寸变量也独立命名。
+        self.heatmap_btn_list = []
+        self.heatmap_frame = QtWidgets.QFrame(self.page_2)
+        self.heatmap_frame.setMinimumSize(0, 400)
+        # 伪磨砂卡片：深色半透明透出页面底色 + 细描边 + 圆角（沿用原输出窗口的质感）
+        self.heatmap_frame.setStyleSheet(
+            "QFrame{background-color:rgba(44, 44, 44, 170);"
+            "border: 1px solid rgba(255, 255, 255, 70);"
+            "border-radius: 10px;}"
+        )
+        self.verticalLayout_2.insertWidget(0, self.heatmap_frame)
+        self.heatmap_label_stats = QtWidgets.QLabel(self.page_2)
+        # 统计栏：同款磨砂卡片 + 纯白文字；宽度自适应文字、水平居中（紧凑不撑满整行）
+        self.heatmap_label_stats.setStyleSheet(
+            'QLabel{background-color:rgba(44, 44, 44, 170);'
+            'border: 1px solid rgba(255, 255, 255, 70);'
+            'border-radius: 8px; color: rgb(255, 255, 255);'
+            'font: 11pt "楷体"; padding: 4px 10px;}'
+        )
+        self.heatmap_label_stats.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed
+        )
+        self.heatmap_label_stats.setAlignment(Qt.AlignCenter)
+        self.verticalLayout_2.insertWidget(
+            1, self.heatmap_label_stats, 0, Qt.AlignHCenter
+        )
+        self.heatmap_label_stats.setText("等待自动扫雷开始…")
+        self.heatmap_btn_width = 24
+        for j in range(self.h):
+            temp = []
+            for i in range(self.w):
+                btn = QtWidgets.QPushButton("", self.heatmap_frame)
+                btn.setGeometry(
+                    i * self.heatmap_btn_width + self.heatmap_btn_width,
+                    j * self.heatmap_btn_width + self.heatmap_btn_width,
+                    self.heatmap_btn_width,
+                    self.heatmap_btn_width,
+                )
+                btn.setStyleSheet(self._HM_BASE)
+                btn.show()
+                temp.append(btn)
+            self.heatmap_btn_list.append(temp)
+        self._hm_last = {}  # 样式去重缓存：按钮 id -> (style, text)，防重绘闪烁
 
     def end_timer(self, s):
         # 已经计算完成
@@ -385,11 +437,6 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.cell_width = cfg["cell_width"]
         self.a = cfg["a"]  # 总雷数
         self.path = cfg["path"]
-
-    def update_text(self, text):
-        # 更新文本
-        self.plainTextEdit.insertPlainText(text)
-        self.plainTextEdit.moveCursor(self.plainTextEdit.textCursor().End)
 
     def set_btn_list_enable(self, b: bool):
         # 设置帮助页面按钮Enable or not
@@ -564,8 +611,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             elif pos_dict["is_recommend"]:
                 self.btn_list[j][i].setStyleSheet(
                     f"QPushButton{{border-radius:0px; border: 3px solid rgb(255, 255,"
-                    f" 82);background-color:rgba({cell_color[0]},"
-                    f' {cell_color[1]}, {cell_color[2]}, 255);font: 9pt "楷体"}}'
+                    f" 82);background-color:rgba({int(cell_color[0])},"
+                    f' {int(cell_color[1])}, {int(cell_color[2])}, 255);font: 9pt "楷体"}}'
                     "QPushButton:disabled{border: none;"
                     "background-color:rgba(0, 0, 0, 0);"
                     "color:rgba(210, 210, 210, 0);}"
@@ -573,8 +620,8 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             else:
                 self.btn_list[j][i].setStyleSheet(
                     f"QPushButton{{border-radius:0px; border: none;"
-                    f"background-color:rgba({cell_color[0]},"
-                    f' {cell_color[1]}, {cell_color[2]}, 255);font: 9pt "楷体"}}'
+                    f"background-color:rgba({int(cell_color[0])},"
+                    f' {int(cell_color[1])}, {int(cell_color[2])}, 255);font: 9pt "楷体"}}'
                     "QPushButton:disabled{border: none;"
                     "background-color:rgba(0, 0, 0, 0);"
                     "color:rgba(210, 210, 210, 0);}"
@@ -584,6 +631,100 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.return_to_main_p3.setVisible(True)
 
         self.set_btns_Enabled(True)
+
+    # 默认样式：浅灰半透明（透出磨砂卡片，用于无需显示概率颜色的格子）+ 白字
+    # （供已开格数字）。只有需要呈现概率颜色/雷标记的按钮才设为不透明。
+    _HM_BASE = (
+        "QPushButton{border-radius:0px;border: none;"
+        'background-color:rgba(208, 208, 214, 100);font: 9pt "楷体";'
+        "color: rgb(255, 255, 255)}"
+    )
+
+    def update_heatmap(self, payload):
+        # 自动模式：概率热力图（未开格上色，已开格白字数字不遮挡）+ 单行统计栏。
+        #
+        # ⚠️ 坐标系（易混！）：按钮网格 heatmap_btn_list[j][i] 是 0-based；
+        # payload["prob"] 的键与 best 是 1-based 全局坐标（与 solver/决策一致）。
+        # 因此按钮 (j, i) ↔ 概率键 (i+1, j+1) ↔ 棋盘格 cell_value[j+1, i+1]。
+        # cell_value 编码：9=未开、0-8=已开数字、10=推理确定的雷、11=推理安全格
+        # （11 与"未开但无概率数据"一样落回浅灰半透明底，无需特殊渲染）。
+        #
+        # 概率与数字的刷新同步保证：prob/cell_value 在同一 payload 原子到达，
+        # 这里一次遍历同时更新两者的文字与背景；
+        # 防闪烁双保险：① 样式去重——Qt 对相同样式重复 setStyleSheet 也会触发
+        # ② 渲染期间关闭整帧更新（setUpdatesEnabled），一批样式原子呈现。
+        cv = payload.get("cell_value")
+        prob = payload.get("prob") or {}
+        best = payload.get("best")
+        played = payload.get("played") or 0
+        win = payload.get("win") or 0
+        self.heatmap_frame.setUpdatesEnabled(False)
+        try:
+            for j in range(self.h):
+                for i in range(self.w):
+                    v = int(cv[j + 1, i + 1])
+                    btn = self.heatmap_btn_list[j][i]
+                    style = self._HM_BASE
+                    text = ""
+                    if v == 9:  # 未开格：按不是雷的概率上色（与帮助页同款色带）
+                        p = prob.get((i + 1, j + 1))
+                        if p is not None:
+                            if p <= 0.01:
+                                style = (
+                                    "QPushButton{border-radius:0px;border: 2px solid rgb(0, 0, 255);"
+                                    'background-color:rgba(255, 0, 0, 255);font: 9pt "楷体"}'
+                                )
+                            elif p >= 0.99:
+                                style = (
+                                    "QPushButton{border-radius:0px;border: 2px solid rgb(0, 0, 255);"
+                                    'background-color:rgba(0, 255, 0, 255);font: 9pt "楷体"}'
+                                )
+                            else:
+                                # 色带 0=红(必雷)→99=绿(安全)，p 是"不是雷"的概率；
+                                # 色值必须 int()（oklch_grad 为 float，直接拼进 rgba() 会让
+                                # Qt 样式解析失败），且拼接行若混用非 f-string，行尾 }} 不会
+                                # 折叠成 } —— 曾导致整条样式解析失败（warning: parse）。
+                                c = oklch_grad[int((p - 1e-5) * 100)]
+                                style = (
+                                    f"QPushButton{{border-radius:0px;border: none;"
+                                    f"background-color:rgba({int(c[0])}, {int(c[1])}, {int(c[2])}, 255);"
+                                    'font: 9pt "楷体"}'
+                                )
+                        else:
+                            style = (
+                                    "QPushButton{border-radius:0px;border: none;"
+                                    'background-color:rgba(255, 255, 255, 180);font: 9pt "楷体"}'
+                                )
+                        if best == (i + 1, j + 1):
+                            # 最佳点击加 3px 蓝框：渐变色款替换 border: none，
+                            # 红/绿实色款把 2px 边框加粗为 3px（replace 链两步各命中其一）
+                            style = style.replace(
+                                "border: none;", "border: 3px solid rgb(0, 0, 255);"
+                            ).replace("border: 2px", "border: 3px")
+                    elif v == 10:  # 推理确定的雷
+                        style = (
+                            "QPushButton{border-radius:0px;border: none;"
+                            'background-color:rgba(255, 0, 0, 255);font: 9pt "楷体"}'
+                        )
+                    elif 0 <= v <= 8:  # 已开方格：浅灰半透明底 + 白字数字（不遮挡磨砂卡片）
+                        text = str(v)
+                    # 样式去重：只把真正变化的按钮重新 set
+                    key = id(btn)
+                    if self._hm_last.get(key) != (style, text):
+                        btn.setText(text)
+                        btn.setStyleSheet(style)
+                        self._hm_last[key] = (style, text)
+        finally:
+            self.heatmap_frame.setUpdatesEnabled(True)
+
+        rate = win / played * 100 if played else 0.0
+        new_stats = (
+            f"最佳点击: {best if best else '—'} ｜ 总局面数: "
+            f"{payload.get('total', 0.0):0.2f} ｜ 已完局: {played} ｜ 赢局: {win} ｜ "
+            f"胜率: {rate:0.2f}%"
+        )
+        if self.heatmap_label_stats.text() != new_stats:  # 文本去重，避免无谓重绘
+            self.heatmap_label_stats.setText(new_stats)
 
     def info(self, s):
         # 提示info
@@ -686,7 +827,6 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         )
         if ok:
             try:
-                self.plainTextEdit.clear()
                 self.reload()
                 minesweeper_run(self.path)
                 self.auto_play_thread.set_args(value)
