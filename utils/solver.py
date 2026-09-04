@@ -231,10 +231,10 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
-                    self._gs_save(total, win)  # 对局统计累计落盘
-                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
+                    _gs_save(total, win)  # 对局统计累计落盘
                     win += 1
                     total += 1
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
 
                     time.sleep(1.2)
                     exit_i, exit_j = self.locate_exit()
@@ -260,9 +260,9 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
-                    self._gs_save(total, win)  # 对局统计累计落盘
-                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     total += 1
+                    _gs_save(total, win)  # 对局统计累计落盘
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
 
                     time.sleep(1.2)
                     exit_i, exit_j = self.locate_exit()
@@ -299,10 +299,10 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
-                    self._gs_save(total, win)  # 对局统计累计落盘
-                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     win += 1
                     total += 1
+                    _gs_save(total, win)  # 对局统计累计落盘
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
 
                     time.sleep(1.2)
                     pyautogui.click(x, y)
@@ -329,9 +329,9 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
                     for i in range(1, w + 1):
                         for j in range(1, h + 1):
                             cell_value[j, i] = 9
-                    self._gs_save(total, win)  # 对局统计累计落盘
-                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
                     total += 1
+                    _gs_save(total, win)  # 对局统计累计落盘
+                    self._emit_heatmap(cell_value, total, win, clear=True)  # 新局：概率清空、保留数字
 
                     time.sleep(1.2)
                     pyautogui.click(x, y)
