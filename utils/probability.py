@@ -737,6 +737,7 @@ class ProbabilityMixin:
         self._last_heatmap = {
             "prob": _prob,
             "best": tuple(pos[0]) if len(pos) else None,
+            "best_conf": float(confidence) if len(pos) else None,  # 当前点击格不是雷的概率/胜率
             "total": float(total),
         }
 

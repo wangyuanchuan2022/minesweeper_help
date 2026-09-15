@@ -718,10 +718,14 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
             self.heatmap_frame.setUpdatesEnabled(True)
 
         rate = win / played * 100 if played else 0.0
+        best_conf = payload.get("best_conf")
+        conf_text = (
+            f"{best_conf * 100:0.2f}%" if isinstance(best_conf, (int, float))
+            else "—"
+        )
         new_stats = (
-            f"最佳点击: {best if best else '—'} ｜ 总局面数: "
-            f"{payload.get('total', 0.0):0.2f} ｜ 已完局: {played} ｜ 赢局: {win} ｜ "
-            f"胜率: {rate:0.2f}%"
+            f"当前格非雷的概率: {conf_text} ｜ "
+            f"已完局: {played} ｜ 赢局: {win} ｜ 胜率: {rate:0.2f}%"
         )
         if self.heatmap_label_stats.text() != new_stats:  # 文本去重，避免无谓重绘
             self.heatmap_label_stats.setText(new_stats)

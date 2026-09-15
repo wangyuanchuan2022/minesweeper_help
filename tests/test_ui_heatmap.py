@@ -80,10 +80,11 @@ class TestHeatmapUI(unittest.TestCase):
 
     def test_stats_line_content(self):
         cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
-        payload = {"prob": {}, "best": None, "total": 0.0, "cell_value": cv,
-                   "played": 7, "win": 3}
+        payload = {"prob": {}, "best": None, "best_conf": 0.875, "total": 0.0,
+                   "cell_value": cv, "played": 7, "win": 3}
         self.win.update_heatmap(payload)
         t = self.win.heatmap_label_stats.text()
+        self.assertIn("当前点击方格不是雷的概率: 87.50%", t)
         self.assertIn("已完局: 7", t)
         self.assertIn("赢局: 3", t)
         self.assertIn("胜率: 42.86%", t)

@@ -65,8 +65,9 @@ class AutoPlayThread(QThread):
     warning_signal = QtCore.pyqtSignal(str)
     update_btn_list_signal = QtCore.pyqtSignal(list)
     # 热力图数据：唯一发射口 _emit_heatmap，payload 结构统一
-    # {"prob": 候选格概率dict(新局清空时为空表), "best", "total",
-    #  "cell_value", "played", "win"}——概率与数字同帧到达、同步刷新。
+    # {"prob": 候选格概率dict(新局清空时为空表), "best", "best_conf"(当前点击格
+    #  不是雷的概率/胜率), "total", "cell_value", "played", "win"}
+    # ——概率与数字同帧到达、同步刷新。
     heatmap_signal = QtCore.pyqtSignal(dict)
     start_signal = QtCore.pyqtSignal(tuple)
     end_signal = QtCore.pyqtSignal(str)
@@ -391,9 +392,9 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
     def _emit_heatmap(self, cell_value, played, win, clear=False):
         """热力图唯一发射口：决策/推理/新局胜负共用，payload 结构统一。
 
-        概率/最佳点击/总局面数沿用最近一次决策（number5_1 写入 _last_heatmap）：
-        推理只确定格子，旧概率对仍未开的格依旧有效；新开的格由界面按
-        cell_value 渲染成数字、无概率格落回浅灰半透明底。
+        概率/最佳点击及其置信度/总局面数沿用最近一次决策（number5_1 写入
+        _last_heatmap）：推理只确定格子，旧概率对仍未开的格依旧有效；新开的
+        格由界面按 cell_value 渲染成数字、无概率格落回浅灰半透明底。
         clear=True（每局胜负后）：概率清空——新局从全浅灰开始，等首次决策上色。
         概率与数字在同一 payload 原子到达，界面一帧内同步刷新。
         发射失败（如测试用 __new__ 轻量实例未初始化 Qt、或界面异常）只记日志
@@ -404,6 +405,7 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
             self.heatmap_signal.emit({
                 "prob": _hm.get("prob", {}),
                 "best": _hm.get("best"),
+                "best_conf": _hm.get("best_conf"),
                 "total": _hm.get("total", 0.0),
                 "cell_value": cell_value,
                 "played": played,
