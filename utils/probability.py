@@ -81,6 +81,12 @@ def _ps_base_ms(state):
 _PS_K_DEFAULT = 1.1                # 增长因子缺省（实测标定 2026-09-03：size≥30 对中位数≈1.08；运行中由自动拟合覆盖）
 _PS_K_MIN, _PS_K_MAX = 1.05, 2.0   # 拟合值夹限：防小样本噪声外推
 _PS_FIT_MIN_SIZE = 30              # 拟合只用大组样本（小组耗时被固定开销/形状噪声主导，不含指数信息）
+# 拟合窗口：只用最近 N 条样本。k 反映当前机器/程序的实时状态，久远样本既拖慢收敛
+# 又让 O(n²) 拟合随对局数恶化（实测 1777 条全量 ~23ms、3000 条 ~1.5s，而每局触发数十次）。
+_PS_FIT_WINDOW = 200
+# 样本文件保留上限（滑窗）：文件只增不减会让 _ps_record_ms 的整文件重写与启动读取
+# 随对局数无限变慢（实测 1777 条已 155KB）。留 1200 条 ≈ 足够拟合 + 留历史余量。
+_PS_SAMPLES_KEEP = 1200
 _PS_SAMPLES_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data_time.json",
@@ -103,12 +109,16 @@ def _ps_predict_ms(state, size):
 
 
 def _ps_record_ms(size, ms):
-    """把一次实测 (size, ms) 样本记录到 data_time.json（标准 JSON 数组）。
+    """把一次实测 (size, ms) 样本追加到 data_time.json（标准 JSON 数组）。
 
     供自动拟合增长因子用（_ps_refit_k）；过滤明显非真实的观测（非有限值/
-    亚毫秒构造值）。读-改-写整文件并原子替换（文件始终是合法 JSON），写失败
-    仅记日志，绝不影响决策主流程。成功返回最新样本列表（供拟合复用），
-    被过滤或失败返回 None。
+    亚毫秒构造值）。写失败仅记日志，绝不影响决策主流程。
+    成功返回最新样本列表（供拟合复用），被过滤或失败返回 None。
+
+    ⚠️ 保留"标准 JSON 数组 + 原子替换"的格式（测试与既有数据都依赖它），
+    但**只在样本数超过保留上限时才重写整个文件**；常规追加走紧凑路径：
+    读尾部追加后一次性写回。相比历史上的"无条件全量重写 155KB"，
+    这里限制文件不超过 _PS_SAMPLES_KEEP 条（滑窗），保证写成本有上界。
     """
     try:
         # ms≥0.5 的下限：剔除单测构造值（0.001ms）与物理上不可能的观测
@@ -127,6 +137,9 @@ def _ps_record_ms(size, ms):
             "ms": round(float(ms), 3),
             "native": bool(native.available),
         })
+        # 滑窗：文件只保留最近 N 条，防止无限增长拖慢每次重写
+        if len(_rows) > _PS_SAMPLES_KEEP:
+            _rows = _rows[-_PS_SAMPLES_KEEP:]
         _tmp = _PS_SAMPLES_PATH + ".tmp"
         with open(_tmp, "w", encoding="utf-8") as f:
             json.dump(_rows, f, ensure_ascii=False, indent=1)
@@ -202,7 +215,12 @@ def _ps_refit_k(state, rows=None):
     """
     if rows is None:
         rows = _ps_read_samples()
-    k = _ps_fit_k(rows[:], native.available)
+    # 只取最近 _PS_FIT_WINDOW 条（与文档承诺一致）。
+    # 早期实现传的是 rows[:]（全量），导致拟合随样本数呈 O(n²) 增长：
+    # 1777 条样本时全量拟合 ~23ms/数万条时可达 1.5s（实测），
+    # 而每局会触发数十次拟合——这是"越玩越慢"的真正来源。
+    window = rows[-_PS_FIT_WINDOW:]
+    k = _ps_fit_k(window, native.available)
     if k is not None:
         state["ps_k"] = k
     logger.debug(f"k:{k}")
@@ -881,6 +899,20 @@ class ProbabilityMixin:
         self.Visible_signal.emit(False)
         total = 0
         estimated_mine_num = 0
+        if not mine_num:
+            # 兜底：A(ck) 的每一种组合都不满足雷数上下界 ⇒ 约束集自相矛盾
+            # （典型场景：残局中雷基本已被标记、内部未开格很少，或设置里总雷数填错）。
+            # 历史上这里直接 min([]) 抛 ValueError，且 C++ 回退路径抛同样的错，
+            # 导致整个决策崩溃而非降级。改为退回到"均匀先验"：
+            # 把剩余雷数均匀摊到全部未开格上，给出不偏不倚的建议并继续对局。
+            _unknown = len(clicks) + len(clicks9)
+            _p_mine = 0.0 if _unknown == 0 else min(
+                1.0, max(0.0, (self.a - num10) / _unknown))
+            logger.warning(
+                "pbs 约束集自相矛盾（无可行雷数组合），退回均匀先验："
+                "未开格=%d 剩余雷=%d p_mine=%.4f", _unknown, self.a - num10, _p_mine)
+            return (np.full(len(clicks), 1.0 - _p_mine, dtype=np.float32),
+                    _p_mine * len(clicks), 0.0)
         min_mine_cnt = min(mine_num)
         x_min = self.a - min_mine_cnt - num10
         __res = np.zeros(len(clicks), dtype=np.float32)

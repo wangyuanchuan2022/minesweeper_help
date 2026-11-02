@@ -1052,10 +1052,29 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
         visible(false);
 
         if (mine_num.empty()) {
-            // Python：min(mine_num) → ValueError
+            // 约束集自相矛盾（残局雷已标完 / 设置雷数错）：不再抛 ValueError 让整个
+            // 决策崩溃，改为返回"均匀先验"结果，由 Python 侧继续对局。
+            // 语义与 probability.py 的纯 Python 兜底完全一致：
+            //   p_mine = clamp((a - num10) / 未开格数, 0, 1)
+            //   res[c] = 1 - p_mine（"不是雷"的概率）
+            //   mine_num 返回 p_mine * len(clicks)，total 返回 0
+            const size_t unknown = clicks.size() + clicks9.size();
+            const double p_mine =
+                unknown == 0 ? 0.0
+                             : std::min(1.0, std::max(0.0, (double)(a - (int)num10) /
+                                                               (double)unknown));
             py::gil_scoped_acquire acq;
-            PyErr_SetString(PyExc_ValueError, "min() arg is an empty sequence");
-            throw py::error_already_set();
+            // 构造 float32 一维数组（与 Python 侧 np.full(..., dtype=float32) 等价）
+            const size_t n_out = clicks.size();
+            py::array_t<float> res_arr((py::ssize_t)n_out);
+            {
+                auto r = res_arr.mutable_unchecked<1>();
+                for (size_t c = 0; c < n_out; ++c)
+                    r((py::ssize_t)c) = (float)(1.0 - p_mine);
+            }
+            return py::make_tuple(res_arr,
+                                  py::float_(p_mine * (double)n_out),
+                                  py::float_(0.0));  // Python 侧返回 0.0(float)，类型须一致
         }
         int min_mine_cnt = *std::min_element(mine_num.begin(), mine_num.end());
         int x_min = a - min_mine_cnt - (int)num10;

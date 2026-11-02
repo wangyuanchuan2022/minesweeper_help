@@ -563,7 +563,13 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         for i in range(1, w + 1):
             for j in range(1, h + 1):
                 cell_value[j, i] = 9
-        cell_value = self.help_thread.complete_scan(cell_value, False)
+        # ⚠️ 不能用 self.help_thread.complete_scan：
+        # help_thread.start() 已在上面启动（可见时），此时后台线程正在跑 play/help，
+        # 而 complete_scan 会写共享的 self.img（utils/vision.py:133-147）。GUI 线程
+        # 再调同一实例的扫描 = 两个线程交叉写 self.img / self.bx / self.by，
+        # 后台拿到的可能是"上一次点击后"的截图，导致棋盘错帧。
+        # 改用独立的一次性视觉对象：只做截图+识别，不碰工作线程的任何状态。
+        cell_value = self._gui_scan_once(cell_value)
         for u in range(1, w + 1):
             for v in range(1, h + 1):
                 i, j = u - 1, v - 1
@@ -575,6 +581,42 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
                     "QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);"
                     "color:rgba(210, 210, 210, 0);}"
                 )
+
+    def _gui_scan_once(self, cell_value):
+        """GUI 线程的一次性棋盘扫描（不与工作线程共享任何可变状态）。
+
+        背景：帮助流程里 GUI 需要在后台线程运行期间单独取一次棋盘用于首屏预览。
+        历史实现直接调用 self.help_thread.complete_scan()，而该方法会写
+        `self.img`（utils/vision.py）——与后台线程交叉写同一字段，可能让后台
+        拿到错误的截图（跨线程共享可变状态缺陷）。
+
+        这里用一个临时的视觉对象：只读配置（w/h/cell_width/坐标），独占自己的
+        `img`，扫描完即弃。失败时返回全未开（9）而不是抛异常打断界面。
+        """
+        from utils.vision import BoardVisionMixin
+
+        class _OneShotScanner(BoardVisionMixin):
+            pass
+
+        try:
+            scanner = _OneShotScanner()
+            scanner.w = self.w
+            scanner.h = self.h
+            scanner.cell_width = self.cell_width
+            scanner.screenshot_w = int(self.cell_width * 5 / 9)
+            scanner.screenshot_h = int(self.cell_width * 7 / 9)
+            scanner._bx = self._bx
+            scanner._by = self._by
+            scanner.img = None
+            scanner.images = None
+            scanner._images_cell_width = None
+            scanner._images_mtime = None
+            scanner._locate_templates = {}
+            scanner.load_img()
+            return scanner.complete_scan(cell_value, False)
+        except Exception as e:  # noqa: BLE001 —— 首屏预览失败不打断帮助主流程
+            logger.warning("首屏预览扫描失败，使用全未开棋盘：%s", e)
+            return cell_value
 
     def update_btn_list(self, pos_dict_list):
         # 根据计算结果更新btn_list
