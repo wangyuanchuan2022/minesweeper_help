@@ -36,6 +36,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <map>
 
 namespace py = pybind11;
 
@@ -938,66 +939,118 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
     };
 
     if (total > 10000) {
-        // ---- 近似分支（total>10000）----
+        // ---- 生成函数 DP 分支（total>10000 无法逐世界枚举）----
+        // 数学依据：全局可行世界的权重为 W(m_1..m_G) = ∏H_g(m_g) · C(U, R-Σm_g)，
+        // 其中 H_g 为第 g 组雷数直方图、U 为无约束内部格数、R 为还需放置的雷数。
+        // 旧实现对各组独立归一化，丢掉了 C(U,R-Σm) 这个跨组耦合项，在组间雷数
+        // 分布不均时会产生系统性偏差（本仓 Python 侧实测可达数十个百分点）。
+        // 本实现与 probability.py 的 _pbs_compute_dp 数学等价。
         visible(false);
-        double mine_num = 0.0;
 
-        // |set(clicks) ∪ set(clicks9)|
-        int64_t union_size;
-        std::vector<double> res_out;
-        {
-            py::gil_scoped_release unlock;  // 计算段释放 GIL
-            {
-            std::vector<uint64_t> seen;
-            seen.reserve(clicks.size() + clicks9.size());
-            for (const auto& c : clicks)
-                seen.push_back(((uint64_t)(uint32_t)c.first << 32) | (uint32_t)c.second);
-            for (const auto& c : clicks9)
-                seen.push_back(((uint64_t)(uint32_t)c.first << 32) | (uint32_t)c.second);
-            std::sort(seen.begin(), seen.end());
-            seen.erase(std::unique(seen.begin(), seen.end()), seen.end());
-            union_size = (int64_t)seen.size();
-        }
+        const size_t U = clicks9.size();          // 无约束内部格
+        const int R = a - (int)num10;             // 还需放置的雷数（含内部）
+        size_t n_frontier = clicks.size();
 
+        // 1) 各组雷数直方图 H_g（稀疏 map：雷数 → 解数）
+        std::vector<std::map<int, long long>> Hs;
+        std::vector<std::vector<std::map<int, long long>>> Hcs;
+        Hs.reserve(groups.size());
+        Hcs.reserve(groups.size());
         for (const auto& res_l : groups) {
             if (res_l.empty()) {
                 py::gil_scoped_acquire acq;
-                PyErr_SetString(PyExc_ValueError, "min() arg is an empty sequence");
+                PyErr_SetString(PyExc_ValueError, "pbs: empty group");
                 throw py::error_already_set();
             }
-            double estimated_mine_num = 0.0;
-            int min_mine_cnt = INT_MAX;
+            const size_t n_cells = res_l[0].size();
+            std::map<int, long long> H;
+            std::vector<std::map<int, long long>> Hc(n_cells);
             for (const auto& row : res_l) {
-                int s = 0;
-                for (int32_t v : row) s += v;
-                min_mine_cnt = std::min(min_mine_cnt, s);
+                int m = 0;
+                for (int32_t v : row) m += v;
+                H[m] += 1;
+                for (size_t c = 0; c < n_cells; ++c)
+                    if (row[c]) Hc[c][m] += 1;
             }
-            int _all = (int)(union_size - (int64_t)res_l[0].size());
-            int x_min = a - min_mine_cnt - (int)num10;
-            double _total = 0.0;
-            // 逐行顺序累加（对应 np.array(_res_s).sum(axis=0) 的行序累加语义）
-            std::vector<double> col_sum(res_l[0].size(), 0.0);
-            for (const auto& row : res_l) {
-                int _mine_num = 0;
-                for (int32_t v : row) _mine_num += v;
-                double p;
-                if (!combination_ratio_checked(a - _mine_num - (int)num10, x_min, _all, &p)) {
-                    py::gil_scoped_acquire acq;
-                    PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
-                    throw py::error_already_set();
-                }
-                for (size_t c = 0; c < row.size(); ++c)
-                    col_sum[c] += (double)row[c] * p;  // int 数组 * Python float → float64
-                estimated_mine_num += p * (double)_mine_num;
-                _total += p;
-            }
-            for (size_t c = 0; c < col_sum.size(); ++c) {
-                col_sum[c] /= _total;
-                col_sum[c] = 1.0 - col_sum[c];
-            }
-            mine_num += estimated_mine_num / _total;
-            res_out.insert(res_out.end(), col_sum.begin(), col_sum.end());
+            Hs.push_back(std::move(H));
+            Hcs.push_back(std::move(Hc));
         }
+
+        // 组合数 C(n,k)（long double 防溢出）
+        auto comb_ld = [](int n, int k) -> long double {
+            if (k < 0 || k > n || n < 0) return 0.0L;
+            long double r = 1.0L;
+            for (int i = 0; i < k; ++i) r = r * (long double)(n - i) / (long double)(i + 1);
+            return r;
+        };
+
+        // 2) 卷积得到全局分布 T(t) = Σ_{Σm=t} ∏H_g(m_g)
+        auto convolve = [](const std::vector<std::map<int, long long>>& hs) {
+            std::map<int, long double> T;
+            T[0] = 1.0L;
+            for (const auto& H : hs) {
+                std::map<int, long double> NT;
+                for (const auto& tkv : T)
+                    for (const auto& mkv : H)
+                        NT[tkv.first + mkv.first] += tkv.second * (long double)mkv.second;
+                T.swap(NT);
+            }
+            return T;
+        };
+
+        // 3) 分母 = Σ_t T(t)·C(U, R-t)
+        long double denom = 0.0L;
+        std::vector<double> res_out(n_frontier, 0.0);
+        double mine_num = 0.0;
+        {
+            py::gil_scoped_release unlock;  // 计算段释放 GIL
+            auto T = convolve(Hs);
+            for (const auto& kv : T) {
+                int need = R - kv.first;
+                if (need >= 0 && (size_t)need <= U) denom += kv.second * comb_ld((int)U, need);
+            }
+            if (denom > 0.0L) {
+                long double est = 0.0L;
+                size_t pos = 0;
+                for (size_t gi = 0; gi < Hs.size(); ++gi) {
+                    std::vector<std::map<int, long long>> others;
+                    for (size_t k = 0; k < Hs.size(); ++k)
+                        if (k != gi) others.push_back(Hs[k]);
+                    auto Tm = convolve(others);
+                    // 本组雷数期望
+                    for (const auto& mkv : Hs[gi]) {
+                        long double acc = 0.0L;
+                        int m = mkv.first;
+                        for (const auto& tkv : Tm) {
+                            int need = R - m - tkv.first;
+                            if (need >= 0 && (size_t)need <= U)
+                                acc += tkv.second * comb_ld((int)U, need);
+                        }
+                        est += (long double)m * (long double)mkv.second * acc;
+                    }
+                    // 逐格概率
+                    for (size_t c = 0; c < Hcs[gi].size(); ++c) {
+                        long double num_p = 0.0L;
+                        for (const auto& mkv : Hcs[gi][c]) {
+                            int m = mkv.first;
+                            for (const auto& tkv : Tm) {
+                                int need = R - m - tkv.first;
+                                if (need >= 0 && (size_t)need <= U)
+                                    num_p += (long double)mkv.second * tkv.second *
+                                             comb_ld((int)U, need);
+                            }
+                        }
+                        res_out[pos++] = (double)(1.0L - num_p / denom);
+                    }
+                }
+                mine_num = (double)(est / denom);
+            }
+        }
+        // 无可行世界时与 Python 对齐：返回空数组（上层按空表处理），
+        // 而不是长度 n 的全 0 数组——后者语义上表示"每格必是雷"，会被误用。
+        if (denom <= 0.0L) {
+            py::array_t<double> empty_arr((py::ssize_t)0);
+            return py::make_tuple(empty_arr, py::float_(0.0), py::int_(total));
         }
         py::array_t<double> res_arr((py::ssize_t)res_out.size());
         std::copy(res_out.begin(), res_out.end(), res_arr.mutable_data());

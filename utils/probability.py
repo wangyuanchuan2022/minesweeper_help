@@ -838,37 +838,114 @@ class ProbabilityMixin:
         res /= num9 + 1
         return res
 
+    @staticmethod
+    def _pbs_group_histograms(res_l):
+        """把一组的解矩阵转成雷数直方图。
+
+        返回 (H, Hc)：
+          H[m]      = 该组雷数为 m 的解数
+          Hc[c][m]  = 该组雷数为 m 且第 c 个格为雷的解数
+        """
+        n = 0 if len(res_l) == 0 else len(res_l[0])
+        H = {}
+        Hc = [{} for _ in range(n)]
+        for row in res_l:
+            r = np.asarray(row)
+            m = int(r.sum())
+            H[m] = H.get(m, 0) + 1
+            for c in range(n):
+                if r[c]:
+                    Hc[c][m] = Hc[c].get(m, 0) + 1
+        return H, Hc
+
+    @staticmethod
+    def _pbs_convolve(hists):
+        """把多组雷数直方图卷积成全局分布 T(t) = #{Σm_g = t} 的加权计数。"""
+        T = {0: 1}
+        for H in hists:
+            newT = {}
+            for t, wt in T.items():
+                for m, wm in H.items():
+                    newT[t + m] = newT.get(t + m, 0) + wt * wm
+            T = newT
+        return T
+
+    def _pbs_compute_dp(self, num10, clicks, clicks9, res_list):
+        """生成函数 DP：正确的跨组概率聚合（修复"各组雷数独立"错误假设）。
+
+        数学依据：全局可行世界的权重必须同时满足各组内部约束与"总雷数"耦合，
+        即 W(m_1..m_G) = ∏H_g(m_g) · C(U, R - Σm_g)，其中 U 是无约束内部格数、
+        R 是还需放置的雷数。旧的近似分支对每组独立归一化，丢掉了 C(U, R-Σm)
+        这一跨组项，在组间雷数分布不均时会产生系统性偏差（实测可达数十个百分点）。
+
+        返回 (res, mine_num, total)：
+          res[c]  = 第 c 个前沿格"不是雷"的概率
+          mine_num= 前沿期望雷数
+          total   = 归一化常数（0 表示无可行世界）
+        """
+        U = len(clicks9)                       # 无约束内部格
+        R = self.a - num10                     # 还需放置的雷数（含内部）
+        n_frontier = len(clicks)
+
+        hists = [self._pbs_group_histograms(rl) for rl in res_list]
+        if not hists:
+            return np.zeros(n_frontier, np.float32), 0.0, 0.0
+        Hs = [h[0] for h in hists]
+        Hcs = [h[1] for h in hists]
+        T = self._pbs_convolve(Hs)
+
+        def _feasible(t):
+            return 0 <= (R - t) <= U
+
+        denom = 0.0
+        for t, wt in T.items():
+            if _feasible(t):
+                denom += wt * math.comb(U, R - t) if (R - t) >= 0 else 0.0
+        if denom == 0.0:
+            return np.zeros(n_frontier, np.float32), 0.0, 0.0
+
+        res = np.zeros(n_frontier, np.float32)
+        est_mines = 0.0
+        pos = 0
+        for gi, (H, Hc) in enumerate(zip(Hs, Hcs)):
+            others = [h for k, h in enumerate(Hs) if k != gi]
+            Tm = self._pbs_convolve(others)
+            # 本组雷数期望（用于返回 mine_num）
+            for m, wm in H.items():
+                acc = 0.0
+                for t, wt in Tm.items():
+                    r = R - m - t
+                    if 0 <= r <= U:
+                        acc += wt * math.comb(U, r)
+                est_mines += m * wm * acc
+            for c in range(len(Hc)):
+                num = 0.0
+                for m, wmc in Hc[c].items():
+                    for t, wt in Tm.items():
+                        r = R - m - t
+                        if 0 <= r <= U:
+                            num += wmc * wt * math.comb(U, r)
+                res[pos] = np.float32(1.0 - (num / denom))
+                pos += 1
+        mine_num = est_mines / denom
+        return res, float(mine_num), float(denom)
+
     def _pbs_compute_python(self, total, num10, clicks, clicks9, res_list, ck):
         """process_bigger_situation 的纯 Python 计算核心（C++ 不可用/失败时的回退路径）。
 
         与 C++ mscore.pbs_compute 语义逐位一致；返回 (res, mine_num, total)。
+
+        ⚠️ total > 10000 的"近似分支"历史上对每组独立归一化，忽略总雷数耦合，
+        在组间雷数分布不均时产生系统性偏差（本仓实测可达数十个百分点）。
+        现改为走 `_pbs_compute_dp` 的生成函数 DP（数学上精确，代价是 O(G·R²) 状态）。
         """
-        if total > 10000:  # total太大全排列计算量太大
+        if total > 10000:  # 组间笛卡尔积过大：不再逐世界枚举，改用生成函数 DP
             self.Visible_signal.emit(False)
-            mine_num = 0
-            res = np.array([])
-            for res_l in res_list:
-                estimated_mine_num = 0
-                min_mine_cnt = min([sum(x) for x in res_l])
-                _all = len(set(clicks) | set(clicks9)) - len(res_l[0])
-                _all = int(_all)
-                x_min = self.a - min_mine_cnt - num10
-                _total = 0
-                _res_s = []
-                for _res in res_l:
-                    _mine_num = sum(_res)
-                    p = combination_ratio(self.a - _mine_num - num10, x_min, _all)
-                    __res = _res * p
-                    estimated_mine_num += p * _mine_num
-                    _res_s.append(__res)
-                    _total += p
-                res_l = np.array(_res_s)
-                res_l = res_l.sum(axis=0)
-                mine_num += estimated_mine_num / _total
-                res_l /= _total
-                res_l = 1 - res_l
-                res = np.hstack((res, res_l))
-            return res, mine_num, total
+            dp_res, dp_mine, dp_denom = self._pbs_compute_dp(
+                num10, clicks, clicks9, res_list)
+            if dp_denom == 0.0:
+                return np.array([]), 0.0, total
+            return dp_res, dp_mine, dp_denom
 
         res = []
         _total = 0
