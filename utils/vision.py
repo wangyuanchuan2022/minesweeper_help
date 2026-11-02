@@ -167,7 +167,12 @@ class BoardVisionMixin:
         """
         if not cells:
             return []
-        sh, sw = self.screenshot_h, self.screenshot_w
+        # ⚠️ 必须与 _slice_cell 的实际取窗一致，而不是直接用 screenshot_w/h。
+        # _slice_cell 用的是 y±(cw//2±h//2)、x±(cw//2±w//2)，每侧各 h//2、w//2，
+        # 所以实际补丁尺寸 = 2*(screenshot_h//2) × 2*(screenshot_w//2)；
+        # screenshot_w=13 时实得 12（奇数被整数除法丢掉），若按 13 取窗会整体错位 1px。
+        sh = 2 * (self.screenshot_h // 2)
+        sw = 2 * (self.screenshot_w // 2)
         act = self._active_templates()
         if not act:
             # 没有可用模板（图缺失/尺寸不符）：退回参考实现，保证行为不变
