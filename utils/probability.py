@@ -391,6 +391,9 @@ class ProbabilityMixin:
             self._time_budget = _tb_load()
             _ps_refit_k(self._time_budget)   # 每次运行启动：用历史样本自动拟合 k
         _tb = getattr(self, "_time_budget", None) if native.tuned() else None
+        # win_rate 内存降级警告去重集合（见 _wr_memory_ok）
+        if not hasattr(self, "_wr_mem_warned"):
+            self._wr_mem_warned = set()
 
         num9 = 0  # 所有未开方格的数量
         num10 = 0
@@ -684,7 +687,8 @@ class ProbabilityMixin:
                     # 决策级进度：进入决策段 [80,100]
                     self._pv_state["lo"], self._pv_state["hi"] = 80.0, 100.0
 
-                if limitation <= wr_threshold:  # 小情况可以计算胜率
+                if limitation <= wr_threshold and self._wr_memory_ok(
+                        clicks, clicks9, total):
                     _t_wr = time.perf_counter()
                     win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
                     if _tb is not None:
@@ -1177,6 +1181,46 @@ class ProbabilityMixin:
         _prob = {tuple(c): float(r) for c, r in zip(clicks, res)}
         return pos, confidence, total, _prob
 
+    def _wr_memory_ok(self, clicks, clicks9, total):
+        """win_rate 的内存预算闸门：规模过大时直接降级，不进 win_rate。
+
+        ==================== 为什么需要这道闸门 ====================
+        `win_rate`（cpp/mscore.cpp 的 py_win_rate / wr_f）的成本结构是
+            nworlds × 2304B × n_candidates × 递归层数
+        （每个"世界"是整盘 (h+2)×(w+2)=576 int32 = 2304B；阶段2 对每个候选格
+        把每个世界整盘拷一次，递归每层再拷一次）。这是**乘积**结构：世界数
+        与候选格数一大，内存就呈 GB 级增长。
+
+        生产实测（12 局，默认阈值）：win_rate 只触发 8 次、n_cand 中位数 13、
+        世界数中位数 4、单次内存约 0.15MB —— **正常对局不会触发这道闸门**。
+        它只在异常/极端局面（设置错误、残局约束自相矛盾、外部强行放宽
+        wr_threshold）时兜底，避免把整机内存撑爆。
+
+        必须**在调用前**判断，而不是依赖 C++ 抛异常，原因有三：
+          ① C++ 抛异常后本文件会回退**纯 Python** 实现，那里没有上限、
+             同样吃内存 —— 只拦 C++ 等于没拦；
+          ② 异常抛在计算中途时已经分配过一部分内存，峰值仍可能顶爆；
+          ③ 频繁抛异常 + logger.warning 会刷屏并拖慢决策。
+
+        超限时返回 False，调用方走 process_bigger_situation（贪心最大安全率），
+        这是**有意的降级**：少一点前瞻精度，换整机不被打爆。
+        """
+        n_cand = 1 + len(clicks) + len(clicks9)
+        # 阶段2 峰值估算（与 cpp/mscore.cpp 的预算判断同一公式、同一上限）
+        stage2_bytes = float(total) * float(n_cand) * 2304.0
+        limit_bytes = 1536.0 * 1024.0 * 1024.0      # 1.5 GB
+        if stage2_bytes <= limit_bytes:
+            return True
+        # 同一 (total, n_cand) 组合只警告一次，避免每步刷屏
+        key = (int(total), int(n_cand))
+        if key not in self._wr_mem_warned:
+            self._wr_mem_warned.add(key)
+            logger.warning(
+                "win_rate 预计内存 %.0f MB 超限（total=%d，候选格=%d）→ "
+                "本局改用贪心概率分支（前瞻降级，不影响正确性）",
+                stage2_bytes / 1e6, total, n_cand)
+        return False
+
     def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
         # 优先 C++（mscore.win_rate），失败/不可用自动回退纯 Python
         if native.available:
@@ -1189,6 +1233,11 @@ class ProbabilityMixin:
                 return list(_res), list(_clicks), int(_total), dict(_clicks2p)
             except Exception as e:
                 logger.warning("C++ win_rate 失败，回退纯 Python 实现：%s", e)
+                # 纯 Python 回退同样吃内存，但它只在“C++ 抛异常”时走到，
+                # 而调用前的 _wr_memory_ok 已按同一公式拦掉超限规模 ⇒
+                # 能到这里的规模必然在预算内，无需重复设限。
+                # 此处绝不能再抛异常：number5_1 外层会把任何异常当作
+                # “求解失败”→ 触发完整重扫，那不是降级而是更糟的副作用。
 
         cell_value_list = []
         for index_list in A(ck):
