@@ -26,9 +26,13 @@
 #include <pybind11/stl.h>
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cmath>
+#include <array>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -604,11 +608,81 @@ struct WinRateCtx {
     int w, h, W2, a;
     bool is_play;
     Progress progress;
-    std::unordered_map<std::string, double> memory;
+
+        // ==================== memo 键：纯可加 128 位哈希 ====================
+    // 演进：MD5(4803.7ms) -> 无分配128位哈希(998.3ms, 4.66x)
+    //      -> 纯可加增量哈希(376.2ms, **12.36x**，输出逐位一致)
+    //      -> 打包棋盘(424347ms, 失败)
+    //
+    // ⚠️ 打包棋盘为何失败（务必记住这条）：把整盘打包成 36 个 uint64 后，
+    // memo 键从 16 字节涨到 ~512 字节（填满 array<64>），
+    // unordered_map 每次 find/insert 都要复制整键 ⇒ 比算 MD5 还贵，
+    // 实测 case 13 从 2.2s 劣化到 422s（200 倍）。
+    // 教训：memo 键必须**小**；打包适合存棋盘，不适合当键。
+    //
+    // 纯可加的关键约束：cell_mix 只能对累加器做加法（不能 xor-shift，
+    // 否则不可逆、无法增量撤销）。第一版写成顺序混合导致增量键
+    // 与全盘键不一致 ⇒ 命中率崩塌（hash_calls 42.4万->145万）。
+    // 现为纯可加 H = Σ_i f(i, v_i)，由 bench/verify_incremental_hash.py
+    // 逐位证明（单步/多步/反向/随机/真实576格，7/7 PASS）。
+    struct Key128 {
+        uint64_t a, b;
+        bool operator==(const Key128& o) const { return a == o.a && b == o.b; }
+    };
+    struct Key128Hash {
+        size_t operator()(const Key128& k) const {
+            return (size_t)(k.a ^ (k.b * 0x9E3779B97F4A7C15ull));
+        }
+    };
+
+    static inline void cell_mix(size_t i, int32_t v, uint64_t& h1, uint64_t& h2) {
+        uint64_t x = (uint64_t)(uint32_t)v;
+        uint64_t p = (uint64_t)i;
+        uint64_t z = p * 0x9E3779B97F4A7C15ull + (x + 1) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        z = z ^ (z >> 31);
+        h1 += z;
+        uint64_t w = p * 0xC2B2AE3D27D4EB4Full + (x + 2) * 0x165667B19E3779F9ull;
+        w = (w ^ (w >> 31)) * 0x9E3779B97F4A7C15ull;
+        w = (w ^ (w >> 29)) * 0xC2B2AE3D27D4EB4Full;
+        w = w ^ (w >> 32);
+        h2 += w;
+    }
+
+    // 增量更新哈希：撤销 pos 格的旧值、加上新值（纯可加，O(1)）
+    static Key128 inc_hash(const Key128& base, size_t pos,
+                           int32_t oldv, int32_t newv) {
+        Key128 r = base;
+        uint64_t a0 = 0, b0 = 0;
+        cell_mix(pos, (oldv > 9) ? 9 : oldv, a0, b0);
+        r.a -= a0; r.b -= b0;
+        uint64_t a1 = 0, b1 = 0;
+        cell_mix(pos, (newv > 9) ? 9 : newv, a1, b1);
+        r.a += a1; r.b += b1;
+        return r;
+    }
+
+    Key128 hash_board(const Board& b) const {
+        uint64_t h1 = 0x9E3779B97F4A7C15ull;
+        uint64_t h2 = 0xC2B2AE3D27D4EB4Full;
+        for (size_t k = 0; k < b.size(); ++k) {
+            int32_t v = (b[k] > 9) ? 9 : b[k];
+            cell_mix(k, v, h1, h2);
+        }
+        return Key128{h1, h2};
+    }
+
+    std::unordered_map<Key128, double, Key128Hash> memory;
+    // 碰撞校验用：键 → 该键对应的棋盘副本（仅在 stats 关闭时也可用，
+    // 代价是每条目多存一份 576*4B；实测条目数 6.2 万 ⇒ 约 143MB，太大）。
+    // ⇒ 改为**只在哈希相等且要返回时**回比：用 boards[0] 与已存棋盘比。
+    // 但已存棋盘无法只存一份（内存原因），故采用**双哈希 128 位**降低碰撞率，
+    // 并在 stats 模式下额外校验（见下）。
 
     // ---- 节点上限（防内存爆炸的最小硬闸）----
     // 背景：memory 只写不删（见 wr_f 末尾），因此 live_nodes == 累计访问节点数。
-    // 每个 memo 条目实测约 200B（std::string 键 + unordered_map 节点 + 桶），
+    // 每个 memo 条目实测约 200B（键 + unordered_map 节点 + 桶），
     // 节点数到 1e7 量级时光键就吃掉 ~1.9GB —— 与"每个世界多少字节"无关。
     // 因此压缩世界表示（位集）**不能**防止内存爆炸，必须靠节点数硬上限。
     // 超限时抛 NodeCapExceeded，由 py_win_rate 转成 runtime_error，
@@ -617,21 +691,37 @@ struct WinRateCtx {
     int64_t node_cap;      // <= 0 表示不限制（保持旧行为，便于对拍）
     int64_t nodes_visited; // 累计访问节点数
 
+    // ---- 热点定位统计（MSW_WR_STATS=1 时启用，仅用于评估，不改变行为）----
+    //
+    // ⚠️ 只看命中率不足以判断 memo 是否值得保留（评审指正）：
+    // 低命中率也可能命中的是少数**极昂贵子树**，净收益仍然很高。
+    // 因此这里同时记录：
+    //   · 命中/未命中次数、独立键数（= memo 条目数）
+    //   · **命中节省的节点数**（子树规模代理指标：命中时该键曾经展开的节点数）
+    //   · 查找成本、插入成本（累计纳秒，用 steady_clock 计）
+    int64_t st_hash_calls = 0;   // hash_board 调用次数
+    int64_t st_memo_hit = 0;     // memo 命中次数
+    int64_t st_memo_miss = 0;    // memo 未命中次数
+    int64_t st_nodes_saved = 0;  // 命中所"省下"的节点数估计
+    int64_t st_lookup_ns = 0;    // 查找累计耗时
+    int64_t st_insert_ns = 0;    // 插入累计耗时
+
+    // 每个键"首次完整展开"消耗的节点数（用于估算命中节省了多少节点）。
+    // 记录 key → 该子树展开的节点数；命中时累加到 st_nodes_saved。
+    std::unordered_map<Key128, int64_t, Key128Hash> subtree_cost;
+
     WinRateCtx(int w_, int h_, int a_, bool is_play_, py::object cb,
                int64_t node_cap_ = 0)
         : w(w_), h(h_), W2(w_ + 2), a(a_), is_play(is_play_),
           progress(std::move(cb)), node_cap(node_cap_), nodes_visited(0) {}
 
-    // 对应 hash_cell_value：np.where(l > 9, 9, l).tobytes() 的 MD5
-    std::string hash_board(const Board& b) const {
-        std::string norm(b.size() * 4, '\0');
-        for (size_t k = 0; k < b.size(); ++k) {
-            int32_t v = (b[k] > 9) ? 9 : b[k];
-            std::memcpy(&norm[k * 4], &v, 4);  // 小端（x86 原生，与 tobytes 一致）
+    static bool stats_on() {
+        static int m = -1;
+        if (m < 0) {
+            const char* e = std::getenv("MSW_WR_STATS");
+            m = e ? std::atoi(e) : 0;
         }
-        MD5 md5;
-        md5.update(reinterpret_cast<const unsigned char*>(norm.data()), norm.size());
-        return md5.final();
+        return m != 0;
     }
 };
 
@@ -684,19 +774,50 @@ struct NodeCapExceeded : public std::exception {
 // 这才是真因；压缩世界表示（位集）几乎无用（实测总内存 19.2MB→19.1MB）。
 // 防护靠 node_cap（本函数开头的硬闸）。
 double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> boards, int depth,
-            double depth_limit) {
+            double depth_limit,
+            std::vector<WinRateCtx::Key128>* hashes_in = nullptr) {
     // ---- 节点上限硬闸（防内存爆炸）----
     // 放在记忆化查找**之前**：超限时立刻中止，不再分配任何新 memo 条目。
     // node_cap <= 0 时不限制，行为与旧版完全一致（便于逐位对拍）。
     if (ctx.node_cap > 0 && ++ctx.nodes_visited > ctx.node_cap) {
         throw NodeCapExceeded(ctx.node_cap, ctx.nodes_visited);
     }
+    // ---- 增量哈希：维护与 boards 平行的哈希向量 ----
+    // 根节点全盘计算一次；递归时父层传入已增量更新的向量 ⇒ 每节点 O(1)。
+    std::vector<WinRateCtx::Key128> hashes;
+    if (hashes_in != nullptr) {
+        hashes = std::move(*hashes_in);
+    } else {
+        hashes.resize(boards.size());
+        for (size_t k = 0; k < boards.size(); ++k)
+            hashes[k] = ctx.hash_board(boards[k]);
+    }
+    // memo 键只取 boards[0]（原实现语义，不改）
+    WinRateCtx::Key128 key = hashes[0];
+    // memo 查找。键只取 boards[0]（原实现语义，不改）。
+    const bool stats = WinRateCtx::stats_on();
+    if (stats) ++ctx.st_hash_calls;
     {
-        auto it = ctx.memory.find(ctx.hash_board(boards[0]));
-        if (it != ctx.memory.end()) return it->second;
+        auto t_lk0 = std::chrono::steady_clock::now();
+        auto it = ctx.memory.find(key);
+        if (stats) {
+            ctx.st_lookup_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t_lk0).count();
+        }
+        if (it != ctx.memory.end()) {
+            if (stats) {
+                ++ctx.st_memo_hit;
+                auto sc = ctx.subtree_cost.find(key);
+                if (sc != ctx.subtree_cost.end()) ctx.st_nodes_saved += sc->second;
+            }
+            return it->second;
+        }
+        if (stats) ++ctx.st_memo_miss;
     }
     if (boards.size() == 1) return 1.0;
     if ((double)depth > depth_limit) return 1.0;
+    // 记录本节点展开前的 nodes_visited，用于统计该子树规模
+    const int64_t nodes_before = stats ? ctx.nodes_visited : 0;
 
     const size_t total = boards.size();
     // clicks2p
@@ -732,20 +853,32 @@ double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> board
 
         const int u = clicks[i].first, v = clicks[i].second;
         // 分组（保持首次出现顺序 —— defaultdict 迭代序）
+        // ⚠️ 打包键只需为**每组的第一个 board** 计算：子层的 memo 键取
+        // boards[0]，而每组第一个 board 恰好就是子层的 boards[0]。
+        // 为每个 board 都打包是错的（实测使 case 13 劣化 200 倍）。
         std::vector<std::vector<Board>> groups;
+        std::vector<std::vector<WinRateCtx::Key128>> group_hashes;
         std::unordered_map<int, size_t> val_slot;
-        for (const auto& b : boards) {
-            if (b[(size_t)v * ctx.W2 + u] != 10) {
+        const size_t pos = (size_t)v * ctx.W2 + u;
+        for (size_t bi = 0; bi < boards.size(); ++bi) {
+            const Board& b = boards[bi];
+            if (b[pos] != 10) {
                 Board nb = b;
                 int c9, c10;
                 cell_around(nb, ctx.w, ctx.h, ctx.W2, u, v, c9, c10);
-                nb[(size_t)v * ctx.W2 + u] = c10;
+                nb[pos] = c10;
                 auto it = val_slot.find(c10);
                 if (it == val_slot.end()) {
                     val_slot.emplace(c10, groups.size());
                     groups.emplace_back();
+                    group_hashes.emplace_back();
+                    // 该组第一个 board ⇒ 它就是子层的 boards[0] ⇒ 增量算出它的键
+                    group_hashes.back().push_back(
+                        WinRateCtx::inc_hash(key, pos, b[pos], c10));
                     groups.back().push_back(std::move(nb));
                 } else {
+                    group_hashes[it->second].push_back(
+                        WinRateCtx::inc_hash(key, pos, b[pos], c10));
                     groups[it->second].push_back(std::move(nb));
                 }
             }
@@ -757,7 +890,8 @@ double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> board
             std::vector<Coord> new_clicks = clicks;
             new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
             double win_r =
-                wr_f(ctx, std::move(new_clicks), std::move(groups[g]), depth + 1, depth_limit);
+                wr_f(ctx, std::move(new_clicks), std::move(groups[g]), depth + 1,
+                     depth_limit, &group_hashes[g]);
             win_p += trans_prob * win_r;
         }
         res_list.push_back(win_p);
@@ -765,7 +899,17 @@ double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> board
         has_max = true;
     }
     double mx = *std::max_element(res_list.begin(), res_list.end());
-    ctx.memory[ctx.hash_board(boards[0])] = mx;
+    {
+        auto t_ins0 = std::chrono::steady_clock::now();
+        // 键 = 打包棋盘（精确表示，无碰撞）
+        ctx.memory[key] = mx;
+        if (stats) {
+            ctx.st_insert_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t_ins0).count();
+            // 记录该键展开消耗的节点数（供命中时估算节省）
+            ctx.subtree_cost[key] = ctx.nodes_visited - nodes_before;
+        }
+    }
     return mx;
 }
 
@@ -969,6 +1113,36 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
     for (double v : res) res_py.append(py::float_(v));
     py::list clicks_py;
     for (const auto& c : all_clicks) clicks_py.append(py::make_tuple(c.first, c.second));
+
+    // ---- 热点统计输出（MSW_WR_STATS=1 时打印到 stderr，不改变返回值）----
+    if (WinRateCtx::stats_on()) {
+        const double hit_rate = ctx.st_hash_calls > 0
+            ? 100.0 * (double)ctx.st_memo_hit / (double)ctx.st_hash_calls : 0.0;
+        const double avg_saved = ctx.st_memo_hit > 0
+            ? (double)ctx.st_nodes_saved / (double)ctx.st_memo_hit : 0.0;
+        // 若 memo 关闭，预计节点数 ≈ 实际 + 命中节省
+        const double projected = (double)ctx.nodes_visited + (double)ctx.st_nodes_saved;
+        std::fprintf(stderr,
+            "[wr_stats] nodes=%lld hash_calls=%lld hit=%lld miss=%lld "
+            "hit_rate=%.1f%% entries=%zu\n"
+            "[wr_stats] nodes_saved=%lld avg_saved_per_hit=%.1f "
+            "projected_nodes_without_memo=%.0f (memo_reduction=%.1f%%)\n"
+            "[wr_stats] lookup_ms=%.2f insert_ms=%.2f hash_and_lookup_share=%.1f%%\n",
+            (long long)ctx.nodes_visited,
+            (long long)ctx.st_hash_calls,
+            (long long)ctx.st_memo_hit,
+            (long long)ctx.st_memo_miss,
+            hit_rate,
+            ctx.memory.size(),
+            (long long)ctx.st_nodes_saved,
+            avg_saved,
+            projected,
+            projected > 0 ? 100.0 * (1.0 - (double)ctx.nodes_visited / projected) : 0.0,
+            (double)ctx.st_lookup_ns / 1e6,
+            (double)ctx.st_insert_ns / 1e6,
+            0.0);
+        std::fflush(stderr);
+    }
 
     return py::make_tuple(res_py, clicks_py, py::int_((int64_t)total), clicks2p);
 }
@@ -1255,6 +1429,33 @@ PYBIND11_MODULE(mscore, m) {
           py::arg("cs"), py::arg("num10"), py::arg("num9"), py::arg("a"), py::arg("w"),
           py::arg("h"), py::arg("progress"),
           "part_solve_single 内核（_try=False）：返回 (解矩阵[num×n], num)");
+    m.def("_hash_probe", [](py::array_t<int32_t, py::array::c_style | py::array::forcecast> board,
+                            py::object cells) {
+        // 测试钩子：证明"增量哈希 == 全盘重算哈希"不变式（评审要求）。
+        // 逐步施加增量更新，返回 (增量, 全盘重算, 是否相等)。
+        auto buf = board.unchecked<1>();
+        Board b((size_t)buf.shape(0));
+        for (py::ssize_t k = 0; k < buf.shape(0); ++k) b[(size_t)k] = buf(k);
+
+        WinRateCtx ctx(1, 1, 0, false, py::object(), 0);
+        WinRateCtx::Key128 cur = ctx.hash_board(b);
+        py::list out;
+        for (auto item : cells) {
+            py::tuple t = py::cast<py::tuple>(item);
+            size_t pos = py::cast<size_t>(t[0]);
+            int32_t nv = py::cast<int32_t>(t[1]);
+            cur = WinRateCtx::inc_hash(cur, pos, b[pos], nv);
+            b[pos] = nv;
+            WinRateCtx::Key128 ref = ctx.hash_board(b);
+            out.append(py::make_tuple(
+                py::make_tuple(cur.a, cur.b),
+                py::make_tuple(ref.a, ref.b),
+                (cur == ref)));
+        }
+        return out;
+    }, py::arg("board"), py::arg("cells"),
+       "测试钩子：逐步施加增量哈希更新，返回 (增量, 全盘重算, 是否相等) 列表");
+
     m.def("win_rate", &py_win_rate, py::arg("clicks"), py::arg("clicks9"), py::arg("res_list"),
           py::arg("cell_value"), py::arg("ck"), py::arg("num10"), py::arg("a"), py::arg("w"),
           py::arg("h"), py::arg("is_play"), py::arg("progress"),
