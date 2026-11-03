@@ -11,6 +11,46 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 
+def _make_gradient_qss(samples=11):
+    """用 OKLCH 渐变的采样点生成 QSS 色带，使**帮助页图例与现场色带同源**。
+
+    ==================== 为什么不能用 QSS 线性渐变 ====================
+    原实现写死 `qlineargradient(stop:0 red, stop:1 green)`，那是 **sRGB 线性**
+    插值；而真实格子颜色来自 main.py 的 `oklch_grad`（OKLCH 感知均匀插值）。
+    两条曲线差别极大，实测中点：
+        图例  #807f00（暗橄榄）
+        现场  rgb(247,149,0)（亮橙）
+    ⇒ 用户照图例估色会系统性高估 15~25%，等于量具刻错刻度。
+
+    ==================== 做法 ====================
+    直接从 `oklch_grad`（100 个 RGB 三元组）等距取 samples 个点，
+    按位置生成 QSS 的 `stop:i color` 列表。11 个采样点已足够近似
+    （色带仅 231px 宽，每点约 23px，肉眼不可分辨差异）。
+
+    ⚠️ 这是 pyuic 生成文件里的**手工改动**（会随重新生成丢失）。
+       但本仓没有 window.ui 之外的生成流程，且报告已注明；若未来重新 pyuic，
+       需把本函数与 label_4 的调用重新加回（或在 main.py 侧覆写）。
+    """
+    try:
+        from main import oklch_grad          # 现场色带的唯一真源
+    except Exception:                        # noqa: BLE001
+        # 兜底：main 尚未初始化时（循环导入等）退回原线性渐变，
+        # 保证不抛异常（宁可近似也不崩）。
+        return ("background-color:qlineargradient(spread:pad, x1:0, y1:0, "
+                "x2:1, y2:0, stop:0 rgba(255,0,0,255), "
+                "stop:1 rgba(0,255,0,255))")
+    n = len(oklch_grad)
+    stops = []
+    for k in range(samples):
+        idx = min(n - 1, int(round(k * (n - 1) / (samples - 1)))
+                  if samples > 1 else 0)
+        r, g, b = oklch_grad[idx]
+        pos = (k / (samples - 1)) if samples > 1 else 0.0
+        stops.append(f"stop:{pos:.3f} rgba({r}, {g}, {b}, 255)")
+    return ("background-color:qlineargradient(spread:pad, x1:0, y1:0, "
+            "x2:1, y2:0, " + ", ".join(stops) + ")")
+
+
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
@@ -49,7 +89,7 @@ class Ui_MainWindow(object):
         self.setting_2.setFont(font)
         self.setting_2.setStyleSheet(
             "QPushButton{\n"
-            "border-radius: none;\n"
+            "border-radius: 10px;\n"
             "border: none;\n"
             "background-color:rgba(255, 255, 255, 0);\n"
             "color:rgb(0, 0, 0);\n"
@@ -84,7 +124,7 @@ class Ui_MainWindow(object):
         self.auto_play.setFont(font)
         self.auto_play.setStyleSheet(
             "QPushButton{\n"
-            "border-radius: none;\n"
+            "border-radius: 10px;\n"
             "border: none;\n"
             "background-color:rgba(255, 255, 255, 150);\n"
             "color:rgb(0, 0, 0);\n"
@@ -119,7 +159,7 @@ class Ui_MainWindow(object):
         self.help_human.setFont(font)
         self.help_human.setStyleSheet(
             "QPushButton{\n"
-            "border-radius: none;\n"
+            "border-radius: 10px;\n"
             "border: none;\n"
             "background-color:rgba(255, 255, 255, 150);\n"
             "color:rgb(0, 0, 0);\n"
@@ -150,7 +190,7 @@ class Ui_MainWindow(object):
         self.screenshot_help.setFont(font)
         self.screenshot_help.setStyleSheet(
             "QPushButton{\n"
-            "border-radius: none;\n"
+            "border-radius: 10px;\n"
             "border: none;\n"
             "background-color:rgba(255, 255, 255, 150);\n"
             "color:rgb(0, 0, 0);\n"
@@ -247,9 +287,18 @@ class Ui_MainWindow(object):
         self.stackedWidget.addWidget(self.page_main)
         self.page_2 = QtWidgets.QWidget()
         self.page_2.setStyleSheet(
-            "QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
-            "color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
-            "color: rgb(0, 0, 0)}"
+            # ⚠️ 原写 `QPushButton{...}` 是**后代选择器**，会命中 page_2 下
+            # 所有按钮，包括热力图的 480 个格子。热力图的红/绿/渐变分支
+            # 不声明 color ⇒ 文字色继承这里的 rgb(0,0,0) ⇒ 同一张网格里
+            # 「已开格」白字（来自 _HM_BASE）、「概率格」黑字（继承）混排，
+            # 看起来像渲染错误，且任何父级 QSS 改动都会静默改变格子字色。
+            # 修法：选择器收窄为精确 objectName，只作用于这两个按钮。
+            "#end_auto_play_thread, #return_to_main_page {"
+            "border-radius:10px; background-color:rgba(255, 255, 255, 200);"
+            "color: rgb(0, 0, 0);}"
+            "#end_auto_play_thread:hover, #return_to_main_page:hover {"
+            "background-color:rgba(255, 255, 255, 255);"
+            "color: rgb(0, 0, 0);}"
         )
         self.page_2.setObjectName("page_2")
         self.verticalLayout_2 = QtWidgets.QVBoxLayout(self.page_2)
@@ -359,10 +408,14 @@ class Ui_MainWindow(object):
         self.label_4 = QtWidgets.QLabel(self.frame_explaination)
         self.label_4.setGeometry(QtCore.QRect(450, 30, 231, 31))
         self.label_4.setMinimumSize(QtCore.QSize(0, 31))
-        self.label_4.setMaximumSize(QtCore.QSize(16777215, 21))
-        self.label_4.setStyleSheet(
-            "background-color:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 0, 0, 255), stop:1 rgba(0, 255, 0, 255))"
-        )
+        self.label_4.setMaximumSize(QtCore.QSize(16777215, 31))
+        # ⚠️ 图例色带必须与**现场色带同源**，否则等于量具错。
+        # 原实现用 Qt sRGB 线性渐变（红→绿），而真实格子用 OKLCH 感知均匀
+        # 渐变（main.py 的 oklch_grad）——两条曲线完全不同：
+        #   图例中点 #807f00（暗橄榄） vs 现场中点 rgb(247,149,0)（亮橙）
+        # 用户照图例估色会系统性高估 15~25%。
+        # 修法：从 oklch_grad 取 11 个采样点生成 QSS 渐变 stop（够近似、零依赖）。
+        self.label_4.setStyleSheet(_make_gradient_qss())
         self.label_4.setText("")
         self.label_4.setObjectName("label_4")
         self.label_5 = QtWidgets.QLabel(self.frame_explaination)
