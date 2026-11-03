@@ -29,6 +29,10 @@ sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
 import numpy as np                      # noqa: E402
+# ⚠️ install_stubs 会把 time.sleep 换成空操作，采样线程必须用原始 sleep
+import time as _time_mod
+_REAL_SLEEP = _time_mod.sleep
+
 import psutil                           # noqa: E402
 
 import utils.native as nat              # noqa: E402
@@ -67,7 +71,7 @@ class Sampler(threading.Thread):
                     self.peak = r
             except Exception:                              # noqa: BLE001
                 break
-            time.sleep(self.interval)
+            _REAL_SLEEP(self.interval)
 
     def stop(self):
         self.running = False

@@ -33,6 +33,10 @@ os.chdir(ROOT)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
+# ⚠️ install_stubs 会把 time.sleep 换成空操作，采样线程必须用原始 sleep
+import time as _time_mod
+_REAL_SLEEP = _time_mod.sleep
+
 import psutil                            # noqa: E402
 
 BUDGET_MB = 1536.0
@@ -67,7 +71,7 @@ class Peak(threading.Thread):
                     self.peak = r
             except Exception:                              # noqa: BLE001
                 break
-            time.sleep(self.interval)
+            _REAL_SLEEP(self.interval)
 
     def stop(self):
         self.run_ = False

@@ -50,6 +50,13 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 import psutil                            # noqa: E402
 
+# ⚠️ 必须在 install_stubs() 之前保存原始 sleep：
+# install_stubs 会把 time.sleep 换成空操作（让求解器内部 sleep 不拖慢），
+# 那会让后台采样线程变成忙等、死抢 GIL —— 实测使单局从 946ms 变成
+# 186987ms（197x）。采样线程必须用这个原始 sleep。
+import time as _time_mod
+_REAL_SLEEP = _time_mod.sleep
+
 P = psutil.Process()
 
 
@@ -69,7 +76,7 @@ class PeakSampler(threading.Thread):
                     self.peak = r
             except Exception:                          # noqa: BLE001
                 break
-            time.sleep(self.interval)
+            _REAL_SLEEP(self.interval)
 
     def stop(self):
         self.run_ = False
@@ -91,6 +98,7 @@ def run_arm(arm, seeds, args, jsonl_path):
 
     rows = []
     exit_info = {"exit": "completed", "detail": ""}
+    t_arm_start = time.perf_counter()
 
     # resume：读已有行，跳过已完成的 seed
     done = set()
@@ -109,6 +117,19 @@ def run_arm(arm, seeds, args, jsonl_path):
     for idx, sd in enumerate(seeds):
         if sd in done:
             continue
+        # ---- 限时预算（按评审要求：短整局验收必须在可控时间内跑完）----
+        # 到点即停止，已完成样本已逐局落盘，退出状态记为 "time_budget"。
+        if args.time_budget_s > 0:
+            elapsed = time.perf_counter() - t_arm_start
+            if elapsed > args.time_budget_s:
+                exit_info = {
+                    "exit": "time_budget",
+                    "detail": f"达到 {args.time_budget_s:.0f}s 预算，"
+                              f"完成 {len(rows)}/{len(seeds)} 局后停止"}
+                print(f"  [time-budget] 已用 {elapsed:.0f}s > "
+                      f"{args.time_budget_s:.0f}s，停止（完成 "
+                      f"{len(rows)}/{len(seeds)} 局）", flush=True)
+                break
         ab.reset_gate_stats()
         smp = PeakSampler()
         smp.start()
@@ -206,6 +227,8 @@ def main():
     ap.add_argument("--world-cap", type=int, default=200000)
     ap.add_argument("--node-cap", type=int, default=2000000)
     ap.add_argument("--rss-budget", type=float, default=1536.0)
+    ap.add_argument("--time-budget-s", type=float, default=0.0,
+                    help="每臂时间预算（秒）；0=不限。到点停止并保留已完成样本")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--outdir", default=os.path.join(ROOT, "state", "ab",
                                                      "four_axis"))

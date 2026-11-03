@@ -40,6 +40,11 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 import psutil                            # noqa: E402
 
+# ⚠️ 见 bench_four_axis.py 的说明：install_stubs 会把 time.sleep 换成
+# 空操作，采样线程必须用原始 sleep，否则忙等抢 GIL（实测 197x 变慢）。
+import time as _time_mod
+_REAL_SLEEP = _time_mod.sleep
+
 P = psutil.Process()
 
 
@@ -65,7 +70,7 @@ class PeakWatch(threading.Thread):
                         self.abort = True
             except Exception:                          # noqa: BLE001
                 break
-            time.sleep(self.interval)
+            _REAL_SLEEP(self.interval)
 
     def stop(self):
         self.run_ = False
