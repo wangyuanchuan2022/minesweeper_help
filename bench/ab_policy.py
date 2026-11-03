@@ -110,12 +110,48 @@ _GATE_STATS = {"world_cap": 0, "invalid_case": 0, "no_world": 0,
 
 
 def reset_gate_stats():
+    """每局开头清零 bench 侧计数（生产侧用**差值**，见下）。"""
     for k in _GATE_STATS:
         _GATE_STATS[k] = 0
 
 
-def gate_stats():
-    return dict(_GATE_STATS)
+def prod_nodecap_snapshot():
+    """读取生产侧 `_wr_nodecap_hits` 的**进程内单调累计值**。
+
+    ==================== 为什么用快照+差值，而不是清零 ====================
+    `utils/probability.py` 的 `_WR_NODECAP_TOTAL[0]` 是**进程内单调累计**，
+    由每局前后取差值即可得到本局命中数。**不要在 play_one 里清零**：
+      · 清零会与 Solver 实例的 `_wr_nodecap_hits` 形成两套口径，容易漂移
+      · 若将来并行（多线程/多进程），清零会互相污染
+    差值口径天然支持并发（各线程只需各自取前后快照）。
+
+    ⚠️ 多线程/多进程口径：`_WR_NODECAP_TOTAL` 是**模块级全局**，
+    仅在单进程单线程顺序跑（当前 bench 的用法）时差值精确。
+    若改为多线程，需改成 thread-local；多进程则各进程独立，天然隔离。
+    """
+    try:
+        import utils.probability as _p
+        return int(_p._WR_NODECAP_TOTAL[0])
+    except Exception:                              # noqa: BLE001
+        return 0
+
+
+def gate_stats(prod_snapshot_before=None):
+    """返回闸门计数。
+
+    ⚠️ 必须把**生产侧**降级统计进来：`_GATE_STATS["node_budget"]` 只记
+    bench 前瞻臂的 Budget，而生产 `wr_f` 节点超限降级走的是
+    `utils/probability.py` 的 `_wr_nodecap_hits`。
+    此前两者没打通，导致扫 node_cap 时降级恒为 0，
+    得出"10 万 cap 零触发"的错误结论（实测生产最大节点数 99,970）。
+
+    生产侧命中数 = 当前累计 − 传入的本局前快照。
+    """
+    d = dict(_GATE_STATS)
+    cur = prod_nodecap_snapshot()
+    before = prod_snapshot_before if prod_snapshot_before is not None else 0
+    d["prod_nodecap"] = max(0, cur - before)
+    return d
 
 
 def decide_with_arm(arm, case, world_cap, node_cap):
@@ -192,6 +228,16 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
     from utils.solver import Solver
     import utils.probability as prob
 
+    # ⚠️ 关键接线（此前缺失，导致 node_cap 扫描轴空转）：
+    # `play_one(node_cap=...)` 原本**只**传给 bench 前瞻臂 decide_with_arm，
+    # 而生产的 node_cap 由 `prob._wr_node_cap()` 从环境变量读取，
+    # 两者完全没打通。结果：扫 node_cap=10万/200万/2000万 时，
+    # 实际传入 C++ 的始终是默认 200万 ⇒ 三档"零触发"是**假象**。
+    # 现改为：把本函数的 node_cap 显式写进环境变量，让生产路径读到同一个值。
+    # 用 None 表示"不改动"，便于 baseline 对照。
+    if node_cap is not None:
+        os.environ["MSW_WR_NODE_CAP"] = str(int(node_cap))
+
     np.random.seed(seed)
     rng = random.Random(seed)
     board = Board(w, h, a, rng)
@@ -218,6 +264,10 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
 
     arm_stats = {"calls": 0, "fallback": 0, "ms": 0.0, "max_ms": 0.0,
                  "nodes": 0, "worlds": []}
+
+    # 生产侧 node cap 命中的**本局前快照**（用差值算本局命中数，
+    # 不清零全局累计，避免与 Solver 实例计数形成两套漂移口径）
+    _prod_cap_before = prod_nodecap_snapshot()
 
     # ⚠️ 闭包链泄漏（本轮修复的重大 bug）
     # 历史写法：在 play_one 内部读 orig_* 并赋值类属性、**从不还原**。
@@ -389,7 +439,8 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
         "arm_worlds_max": max(ws) if ws else 0,
         "arm_worlds_med": (sorted(ws)[len(ws) // 2] if ws else 0),
         # 各闸门触发次数（可观测性：任何降级都必须能被统计）
-        "gate_stats": gate_stats(),
+        # 生产侧 node cap 用「本局前快照 → 当前累计」的差值，不做清零
+        "gate_stats": gate_stats(_prod_cap_before),
     }
     # 主动断引用：避免 _STATE / 驱动 / 棋盘在本局返回后仍被闭包链持有
     _STATE.clear()

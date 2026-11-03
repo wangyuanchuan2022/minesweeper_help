@@ -158,7 +158,11 @@ def run_one_value(axis, val, args, jsonl_path):
         peak = pk.stop()
         gc.collect()
         gs = ab.gate_stats()
-        deg = gs["world_cap"] + gs["node_budget"]
+        # ⚠️ 降级计数必须包含**生产侧**：`node_budget` 只记 bench 前瞻臂的 Budget，
+        # 生产 wr_f 节点超限降级在 gs["prod_nodecap"]（来自 probability 的
+        # _WR_NODECAP_TOTAL）。此前漏算，导致扫 node_cap 时降级恒为 0。
+        deg = (gs["world_cap"] + gs["node_budget"]
+               + gs.get("prod_nodecap", 0))
         calls = r.get("arm_calls", 0)
 
         row = {

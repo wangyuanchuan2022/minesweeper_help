@@ -144,6 +144,13 @@ def _ps_default_base_ms():
     return 10.0 if native.available else 1500.0
 
 
+# 生产侧 win_rate 节点超限降级的**模块级累计计数**（供 bench 统计读取）。
+# 每个 Solver 实例有自己的 _wr_nodecap_hits，跨局会随实例丢弃；
+# 这里用模块级单元素列表保留跨局累计，便于 bench 扫描 node_cap 时核对
+# "到底触发了几次"。bench 每局开头通过 ab_policy.reset_gate_stats() 清零。
+_WR_NODECAP_TOTAL = [0]
+
+
 def _ps_base_ms(state):
     """读取模型基准耗时；模式切换（C++↔纯 Python）时重置。
 
@@ -813,6 +820,7 @@ class ProbabilityMixin:
                             cell_value, pos)
                         self.till_now_winrate *= confidence
                         self._wr_nodecap_hits += 1
+                        _WR_NODECAP_TOTAL[0] += 1
                     else:
                         _wr_have_c2p = True
                         if _tb is not None:
@@ -1395,7 +1403,13 @@ class ProbabilityMixin:
                 # 纯 Python 的 f() 同样无上限，退过去等于没拦，正是此前
                 # 把内存顶爆的路径。正确做法是抛给 number5_1 让它走
                 # process_bigger_situation（贪心），即有意的精度降级。
+                #
+                # ⚠️ 计数只在这里做一次。下方 `except Exception` 把 C++ 的
+                # RuntimeError 转成本异常后会 `raise`，**又会被本分支捕获**；
+                # 若两个分支都计数，同一异常会被记 2 次
+                # （实测：cap=2e6 时每局降级数恒为 22 = 11×2，暴露了重复计数）。
                 self._wr_nodecap_hits += 1
+                _WR_NODECAP_TOTAL[0] += 1
                 logger.warning(
                     "win_rate 节点数超上限（%s）→ 本步降级为贪心分支"
                     "（前瞻精度降级，不崩溃、不影响正确性）", e)
@@ -1404,11 +1418,8 @@ class ProbabilityMixin:
                 # C++ 的 node cap 异常以 RuntimeError 形式回来（pybind11 转换），
                 # 这里按消息识别并转成本模块的专用异常，使其走降级路径
                 # 而不是"回退纯 Python"。识别失败才按普通失败处理。
+                # 注意：此处**不计数**，计数统一在上面的 _WrNodeCapExceeded 分支做。
                 if "node cap exceeded" in str(e):
-                    self._wr_nodecap_hits += 1
-                    logger.warning(
-                        "win_rate 节点数超上限（%s）→ 本步降级为贪心分支"
-                        "（前瞻精度降级，不崩溃、不影响正确性）", e)
                     raise _WrNodeCapExceeded(str(e)) from e
                 logger.warning("C++ win_rate 失败，回退纯 Python 实现：%s", e)
                 # 纯 Python 回退同样吃内存，但它只在“C++ 抛异常”时走到，
