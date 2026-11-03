@@ -171,17 +171,101 @@ std::vector<Coord> parse_coords(py::sequence seq) {
     return out;
 }
 
-using Board = std::vector<int32_t>;  // 行主序 (h+2)×(w+2)
+// ==================== 打包棋盘表示（用户建议：4 位/格）====================
+//
+// 用户建议："用长整数表示整个棋盘，每 4 位存一个格子的信息，因为格子信息不超过 16 种"
+//
+// 为什么用打包而不是 vector<int32_t>：
+//   · 内存：576 格 × 4B = 2304B → 576 格 × 4bit = 288B（**8 倍压缩**）
+//   · 拷贝：`Board nb = b` 是 wr_f 里最高频操作（每个世界每次分组一次），
+//     2304B → 288B 拷贝，且小到可以**栈上分配、无堆 malloc**
+//   · cell_around 遍历 9 格，每格取值从"访存 4B"变为"取 word + 位移"，
+//     邻域格常在同/邻 word 内，缓存友好
+//
+// 值域：cell_value 编码 9=未开 / 10=标记雷 / 0..8=已开数字 ⇒ 0..10 共 11 种。
+//   4 位容纳 0..15 ⇒ 安全。**注意：打包不做归一化**（保留 9 与 10 的区别），
+//   因为 cell_around 需要区分 9(未开) 与 10(标记雷)。
+//   （memo 键的归一化 v>9→9 在 hash_board 里单独做，与原 MD5 版语义一致）
+//
+// 容量：PACK_MAX_WORDS=64 ⇒ 最多 1024 格。30x16=(18×32)=576 格 → 36 words。
+//   ⚠️ 超容量时构造函数会 throw，避免静默越界。
+static constexpr int PACK_BITS = 4;
+static constexpr int PACK_PER_WORD = 64 / PACK_BITS;   // 16 格/word
+static constexpr int PACK_MAX_CELLS = 1024;            // 64 words
+
+class Board {
+public:
+    Board() = default;
+
+    // 从 int32 指针区间构造（用作 base 棋盘）
+    Board(const int32_t* first, const int32_t* last) {
+        const size_t n = (size_t)(last - first);
+        init_size(n);
+        for (size_t k = 0; k < n; ++k) set_raw_unchecked(k, first[k]);
+    }
+    // 从 vector / array 构造（测试与内部用）
+    template <typename It>
+    Board(It first, It last, int /*tag*/) {
+        const size_t n = (size_t)(last - first);
+        init_size(n);
+        for (size_t k = 0; k < n; ++k) set_raw_unchecked(k, (int32_t)first[k]);
+    }
+
+    inline size_t size() const { return n_; }
+
+    // 取值（内联位运算，无函数调用开销）
+    inline int32_t get(size_t pos) const {
+        const size_t wi = pos / PACK_PER_WORD;
+        const int sh = (int)((pos % PACK_PER_WORD) * PACK_BITS);
+        return (int32_t)((w_[wi] >> sh) & 0xFull);
+    }
+    // 改值（清 4 位 + 写 4 位）
+    inline void set(size_t pos, int32_t v) {
+        const size_t wi = pos / PACK_PER_WORD;
+        const int sh = (int)((pos % PACK_PER_WORD) * PACK_BITS);
+        w_[wi] = (w_[wi] & ~(0xFull << sh)) | ((uint64_t)(v & 0xF) << sh);
+    }
+    // 重载 operator[]：让 `b[pos]` 的调用方（读/写）**无需改动**
+    struct Ref {
+        Board& b; size_t pos;
+        inline operator int32_t() const { return b.get(pos); }
+        inline Ref& operator=(int32_t v) { b.set(pos, v); return *this; }
+        inline Ref& operator=(const Ref& o) { b.set(pos, (int32_t)o); return *this; }
+    };
+    inline Ref operator[](size_t pos) { return Ref{*this, pos}; }
+    inline int32_t operator[](size_t pos) const { return get(pos); }
+
+private:
+    void init_size(size_t n) {
+        if (n > (size_t)PACK_MAX_CELLS) {
+            throw std::runtime_error(
+                "Board capacity exceeded: need " + std::to_string(n) +
+                " cells, max " + std::to_string(PACK_MAX_CELLS) +
+                " (raise PACK_MAX_CELLS)");
+        }
+        n_ = n;
+        const size_t nw = (n + PACK_PER_WORD - 1) / PACK_PER_WORD;
+        for (size_t i = 0; i < nw; ++i) w_[i] = 0ull;
+    }
+    inline void set_raw_unchecked(size_t pos, int32_t v) {
+        const size_t wi = pos / PACK_PER_WORD;
+        const int sh = (int)((pos % PACK_PER_WORD) * PACK_BITS);
+        w_[wi] |= ((uint64_t)(v & 0xF) << sh);
+    }
+
+    static constexpr int NW = (PACK_MAX_CELLS + PACK_PER_WORD - 1) / PACK_PER_WORD;
+    std::array<uint64_t, NW> w_{};
+    size_t n_ = 0;
+};
 
 // 对应 deduction.py cell_around(i, j)：统计 (j±1, i±1) 邻域内 9 / 10 的数量。
-// 边界条件与 Python 相同（0 <= m <= w+1 且 0 <= n <= h+1）。
 inline void cell_around(const Board& b, int w, int h, int W2, int i, int j,
                         int& cnt9, int& cnt10) {
     int c9 = 0, c10 = 0;
     for (int n = j - 1; n <= j + 1; ++n) {
         for (int m = i - 1; m <= i + 1; ++m) {
             if (0 <= m && m <= w + 1 && 0 <= n && n <= h + 1) {
-                int32_t v = b[(size_t)n * W2 + m];
+                int32_t v = b.get((size_t)n * W2 + m);
                 if (v == 9) ++c9;
                 if (v == 10) ++c10;
             }
@@ -470,10 +554,11 @@ py::tuple py_part_solve(py::sequence clicks_seq,
     }
 
     PartSolveCtx ctx(std::move(clicks), w, h, std::move(progress_cb), a);
-    // 复制板面并统计初始雷数
-    ctx.board.assign(cell_value.data(), cell_value.data() + (size_t)(h + 2) * (w + 2));
-    for (int32_t v : ctx.board)
-        if (v == 10) ++ctx.mine_count;
+    // 复制板面并统计初始雷数（Board 是打包表示，按格取值）
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+    ctx.board = Board(cell_value.data(), cell_value.data() + ncell);
+    for (size_t k = 0; k < ncell; ++k)
+        if (ctx.board.get(k) == 10) ++ctx.mine_count;
 
     // 构建 _cs（defaultdict 合并重复 click 的约束，与 Python 一致）
     std::unordered_map<uint64_t, std::vector<Coord>> cs_map;
@@ -1434,8 +1519,7 @@ PYBIND11_MODULE(mscore, m) {
         // 测试钩子：证明"增量哈希 == 全盘重算哈希"不变式（评审要求）。
         // 逐步施加增量更新，返回 (增量, 全盘重算, 是否相等)。
         auto buf = board.unchecked<1>();
-        Board b((size_t)buf.shape(0));
-        for (py::ssize_t k = 0; k < buf.shape(0); ++k) b[(size_t)k] = buf(k);
+        Board b(buf.data(0), buf.data(0) + buf.shape(0));
 
         WinRateCtx ctx(1, 1, 0, false, py::object(), 0);
         WinRateCtx::Key128 cur = ctx.hash_board(b);
