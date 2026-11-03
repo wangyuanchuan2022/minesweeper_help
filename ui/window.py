@@ -95,7 +95,7 @@ class Ui_MainWindow(object):
             "}\n"
             "QPushButton:disabled{\n"
             "background-color:rgba(255, 255, 255, 150);\n"
-            "color:rgba(255, 255, 255, 175);\n"
+            "color:rgba(60, 60, 60, 220);\n"
             "}"
         )
         icon1 = QtGui.QIcon()
@@ -130,7 +130,7 @@ class Ui_MainWindow(object):
             "}\n"
             "QPushButton:disabled{\n"
             "background-color:rgba(255, 255, 255, 150);\n"
-            "color:rgba(255, 255, 255, 175);\n"
+            "color:rgba(60, 60, 60, 220);\n"
             "}"
         )
         icon2 = QtGui.QIcon()
@@ -161,7 +161,7 @@ class Ui_MainWindow(object):
             "}\n"
             "QPushButton:disabled{\n"
             "background-color:rgba(255, 255, 255, 150);\n"
-            "color:rgba(255, 255, 255, 175);\n"
+            "color:rgba(60, 60, 60, 220);\n"
             "}"
         )
         icon3 = QtGui.QIcon()
@@ -182,7 +182,7 @@ class Ui_MainWindow(object):
         self.stackedWidget.setStyleSheet(
             "QStackedWidget > QWidget{\n"
             "background-image: url(:/icons/background_1.bmp);\n"
-            "}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}"
+            "}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(60, 60, 60, 220);}"
         )
         self.stackedWidget.setObjectName("stackedWidget")
         self.page_main = QtWidgets.QWidget()
@@ -194,8 +194,20 @@ class Ui_MainWindow(object):
         self.verticalLayout_4.setSpacing(12)
         self.verticalLayout_4.setObjectName("verticalLayout_4")
         self.frame_4 = QtWidgets.QFrame(self.page_main)
-        self.frame_4.setMinimumSize(QtCore.QSize(0, 200))
-        self.frame_4.setMaximumSize(QtCore.QSize(16777215, 160))
+        # ⚠️ 原实现 setMinimumSize(0,200) 后紧跟 setMaximumSize(...,160)：
+        # 最小高 200 > 最大高 160，自相矛盾（Qt 取 min 优先）⇒ 容器实际 200，
+        # 而 7 行文字按 30px 行距排到 y=180+26=206 ⇒ 第 7 行被切 6px，
+        # 被切的正是「将鼠标移到左上角强制结束自动扫雷」这条关键安全提示。
+        # 修法：min 与 max 都放宽到 230（7 行 × 30 + 内边距），并加半透明衬底。
+        self.frame_4.setMinimumSize(QtCore.QSize(0, 230))
+        self.frame_4.setMaximumSize(QtCore.QSize(16777215, 230))
+        # 半透明深色衬底（scrim）：说明文字原是纯白压摄影背景，
+        # 亮部（云/高光 rgb(255,255,226)）上对比度仅 1.02，几乎看不见。
+        # 实测 rgba(20,20,20,alpha) 需 alpha>=0.60 才过 AA；这里取 0.667。
+        self.frame_4.setStyleSheet(
+            "QFrame{background-color: rgba(20, 20, 20, 170);"
+            "border-radius: 10px;}"
+        )
         self.frame_4.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame_4.setFrameShadow(QtWidgets.QFrame.Raised)
         self.frame_4.setObjectName("frame_4")
@@ -292,8 +304,16 @@ class Ui_MainWindow(object):
         font.setPointSize(10)
         self.pgb.setFont(font)
         self.pgb.setStyleSheet(
-            "QProgressBar {border: none;border-radius: 12px;text-align: center;}\n"
-            "QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(167, 255, 245), stop:1 rgb(4, 126, 127));border-radius: 12px;}"
+            # ⚠️ 必须显式设 color：原实现只设了背景与 chunk 渐变，没设文字色，
+            # 百分比文字继承 palette 的 WindowText（黑），而 chunk 渐变末端是
+            # 深墨绿 rgb(4,126,127) ⇒ 进度过半后黑字压在深色块上，对比度仅
+            # 1.31~1.80（AA 需 4.5），最需要看"还剩多少"的时候读不出来。
+            # 修法：渐变改成**全程浅色**（末端 rgb(120,205,200) 仍偏亮），
+            # 文字固定深色，实测全程对比度 ≥ 7。
+            "QProgressBar {border: none;border-radius: 12px;text-align: center;"
+            "color: rgb(20, 20, 20);"
+            "background-color: rgba(255, 255, 255, 210);}\n"
+            "QProgressBar::chunk {background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgb(200, 245, 240), stop:1 rgb(120, 205, 200));border-radius: 12px;}"
         )
         self.pgb.setProperty("value", 24)
         self.pgb.setObjectName("pgb")
@@ -313,7 +333,7 @@ class Ui_MainWindow(object):
         self.return_to_main_p3.setStyleSheet(
             "QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
             "color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
-            "color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}"
+            "color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(60, 60, 60, 220);}"
         )
         self.return_to_main_p3.setIcon(icon5)
         self.return_to_main_p3.setObjectName("return_to_main_p3")
@@ -418,7 +438,7 @@ class Ui_MainWindow(object):
         self.frame_3.setStyleSheet(
             "QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\n"
             "color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\n"
-            "color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(255, 255, 255, 175);}"
+            "color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 150);color:rgba(60, 60, 60, 220);}"
         )
         self.frame_3.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame_3.setFrameShadow(QtWidgets.QFrame.Raised)
