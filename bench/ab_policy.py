@@ -221,7 +221,8 @@ def decide_with_arm(arm, case, world_cap, node_cap):
 
 # ---------------------------------------------------------------------------
 def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
-             max_steps=None):
+             max_steps=None, wr_threshold=None):
+    """跑一局。wr_threshold 不为 None 时强制该阈值（走真实读取路径）。"""
     import numpy as np
     from sim.eval_harness import SimDriver, GameOver, install_stubs
     from sim.minesweeper_sim import Board, UNOPENED as U
@@ -253,7 +254,19 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
     s.till_now_winrate = 1.0
     s.count = 0
     s.bx, s.by, s.cell_width = 0.0, 0.0, 24
-    s._time_budget = None
+    # ⚠️ wr_threshold 生效路径（本轮修复的关键陷阱）：
+    # probability.number5_1 里有两处阈值来源：
+    #   ① 常量兜底：wr_threshold = 6 + native.LIMIT_BONUS_WIN_RATE
+    #   ② 真实读取：if _tb is not None: wr_threshold = _wr_current_threshold(_tb)
+    # 此前本函数硬编码 s._time_budget = None ⇒ 永远走①常量路径，
+    # 而 _wr_update 又会动态改阈值 ⇒ 外部设 wr_threshold 无效
+    # （实测：目标 th=16，实际生效 8）。
+    # 现改为：传入 wr_threshold 时构造 _time_budget={"wr":{"t": th}}，
+    # 让生产走②真实读取路径，阈值才真正可控。
+    if wr_threshold is not None:
+        s._time_budget = {"wr": {"t": float(wr_threshold)}}
+    else:
+        s._time_budget = None
 
     drv = SimDriver(board, s, rng)
     s.complete_scan = drv.complete_scan
