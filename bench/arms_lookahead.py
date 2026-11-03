@@ -56,11 +56,91 @@ class Budget(Exception):
     """节点/时间超限：记为预算淘汰，不是错误。"""
 
 
+# 世界数上限（默认与 compare_2ply_vs_winrate.WORLD_CAP_DEFAULT 一致）。
+# 注意：这是**内存**闸门，与 node_cap（递归节点数）是两个不同维度：
+#   world_cap 管"枚举出多少个世界"（构造期内存，O(n_worlds)）
+#   node_cap  管"递归搜索走多少节点"（运行期内存，O(n_nodes)）
+# 两者都必须有，缺任一个都可能爆。
+try:
+    from compare_2ply_vs_winrate import WORLD_CAP_DEFAULT  # noqa: E402
+except ImportError:                                          # pragma: no cover
+    WORLD_CAP_DEFAULT = 200000
+
+
+# ---------------------------------------------------------------------------
+class WKey:
+    """世界索引子集（位图表示）。
+
+    ==================== 为什么不用 frozenset ====================
+    实测事故（2000 局内存爆炸的直接元凶）：
+      n_worlds = 114,870 时，一个 frozenset(114870 个 int) 占 **4.00 MB**；
+      `saturate` 递归分叉时每个分支都 `frozenset(v)` 复制一份 ⇒
+      千级分支就是 GB 级，实测单局峰值 570 MB。
+    改用 **bytes 位图**：114870 位 = 14 KB，**小 291 倍**，
+    且复制是 memcpy（实测 50 次复制 <0.001s，而 frozenset 是 0.138s）。
+
+    ==================== 接口（与 frozenset 的用法对齐）====================
+    本类只实现 ExactEngine 里实际用到的那几个操作：
+      · len(wkey)          → __len__
+      · for i in wkey      → __iter__（按位序产出索引）
+      · frozenset(v) 构造  → WKey.from_indices(indices, n_worlds)
+    """
+    __slots__ = ("_bits", "_n", "_len")
+
+    def __init__(self, bits: bytes, n_worlds: int, count: int = None):
+        self._bits = bits
+        self._n = n_worlds
+        self._len = count
+
+    @classmethod
+    def from_indices(cls, indices, n_worlds: int):
+        """从索引可迭代对象构造位图。"""
+        ba = bytearray((n_worlds + 7) // 8)
+        cnt = 0
+        for i in indices:
+            ba[i >> 3] |= 1 << (i & 7)
+            cnt += 1
+        return cls(bytes(ba), n_worlds, cnt)
+
+    @classmethod
+    def all(cls, n_worlds: int):
+        ba = bytearray(b"\xff" * ((n_worlds + 7) // 8))
+        # 清掉尾部越界位
+        rem = n_worlds & 7
+        if rem:
+            ba[-1] &= (1 << rem) - 1
+        return cls(bytes(ba), n_worlds, n_worlds)
+
+    def __len__(self):
+        if self._len is None:
+            self._len = sum(bin(b).count("1") for b in self._bits)
+        return self._len
+
+    def __iter__(self):
+        bits, n = self._bits, self._n
+        for bi, byte in enumerate(bits):
+            if not byte:
+                continue
+            base = bi << 3
+            for k in range(8):
+                if byte >> k & 1:
+                    idx = base + k
+                    if idx < n:
+                        yield idx
+
+    def __eq__(self, other):
+        return isinstance(other, WKey) and self._bits == other._bits
+
+    def __hash__(self):
+        return hash(self._bits)
+
+
 # ---------------------------------------------------------------------------
 class ExactEngine:
     """忠实状态转移 + 精确最优胜率。坐标 x∈[1,w] y∈[1,h]，位索引=y*W2+x。"""
 
-    def __init__(self, case, node_cap=500000, time_cap=120.0):
+    def __init__(self, case, node_cap=500000, time_cap=120.0,
+                 world_cap=WORLD_CAP_DEFAULT):
         self.w = int(case["w"])
         self.h = int(case["h"])
         self.a = int(case["a"])
@@ -93,12 +173,43 @@ class ExactEngine:
                             m |= 1 << (ny * self.W2 + nx)
                 self.nbr[y * self.W2 + x] = m
 
-        from compare_2ply_vs_winrate import enumerate_worlds
-        worlds, clicks, clicks9, _ = enumerate_worlds(case)
+        # ⚠️ 世界数硬上限：**必须在枚举前判断**。
+        # 历史事故：调用方习惯"先构造 ExactEngine 再检查 sig.n_worlds > world_cap"，
+        # 但 __init__ 里的 enumerate_worlds 已经把全部世界分配进内存了 ⇒ 检查无效。
+        # 典型爆炸：U=30、rem=15 ⇒ C(30,15)=1.55e8 个世界 × 约 4KB = 数百 GB。
+        # 现改为：先用 count_worlds_exact 纯算术算总量（零内存），超限直接抛。
+        #
+        # ⚠️⚠️ 更严重的一次实测（2000 局）：撞到 U=471/num10=0 的**非法局面**
+        # （识别异常把整盘当内部未开格），世界数 10^148 量级。
+        # 这种局面必须先做合法性校验再谈上限，否则连"算上限"都很荒谬。
+        from compare_2ply_vs_winrate import (enumerate_worlds,
+                                             count_worlds_exact,
+                                             WorldCapExceeded,
+                                             validate_case_or_raise)
+        validate_case_or_raise(case)
+        if world_cap is not None:
+            n_est = count_worlds_exact(case, cap=world_cap)
+            if n_est > world_cap:
+                raise WorldCapExceeded(
+                    f"世界数 {n_est:,} > 上限 {world_cap:,}"
+                    f"（ExactEngine 构造前拦截，未分配内存）")
+        worlds, clicks, clicks9, _ = enumerate_worlds(
+            case, world_cap=None)      # 已在此处判过，避免重复计算
+        # ⚠️ enumerate_worlds 现在返回**位集整数**（不是 set[tuple]），
+        # 这是为了把它自身的内存从 ~497MB 降到 ~12MB（见该函数注释）。
+        # 它的位索引约定是 bit=(y-1)*w+(x-1)；本引擎用 bit=y*W2+x（含 1 格外框），
+        # 所以这里必须**转换布局**，不能直接复用。
         self.world_bits = []
-        for wset in worlds:
+        _w = self.w
+        for m0 in worlds:
             m = 0
-            for (x, y) in wset:
+            mm = m0
+            while mm:
+                low = mm & -mm
+                idx = low.bit_length() - 1
+                mm &= mm - 1
+                x = idx % _w + 1
+                y = idx // _w + 1
                 m |= 1 << (y * self.W2 + x)
             self.world_bits.append(m)
         self.n_worlds = len(self.world_bits)
@@ -149,6 +260,13 @@ class ExactEngine:
         return op
 
     def _obs(self, mine_bits, before, after):
+        """观测签名 = (完整已开位集, 本步新开格及其数字)。
+
+        ⚠️ 曾有版本只返回"本步新增"以减小键体积，但那样 `saturate` 的收敛路径
+        拿不到完整 opened（键里没有），必须靠 flood 重算，极易错（实测直接
+        导致 Type/ValueError 与节点暴涨）。**正确性优先于这点内存**：
+        键大一些但语义无歧义。峰值内存的问题改由 `saturate` 的节点上限控制。
+        """
         delta = after & ~before
         pairs = []
         m = delta
@@ -200,12 +318,12 @@ class ExactEngine:
                 outs.setdefault(self._obs(wb, opened, op), []).append(i)
             if len(outs) == 1:
                 (op2, _), subs = next(iter(outs.items()))
-                opened, wkey = op2, frozenset(subs)
+                opened, wkey = op2, WKey.from_indices(subs, self.n_worlds)
                 continue
             n = len(wkey)
             res = []
             for k, v in outs.items():
-                res.extend(self.saturate(frozenset(v), k[0],
+                res.extend(self.saturate(WKey.from_indices(v, self.n_worlds), k[0],
                                          weight * len(v) / n))
             return res
 
@@ -220,7 +338,7 @@ class ExactEngine:
             op = self.flood(wb, opened | (1 << cell), cell)
             outs.setdefault(self._obs(wb, opened, op), []).append(i)
         ns = len(safe)
-        return ns / len(wkey), [(frozenset(v), k[0], len(v) / ns)
+        return ns / len(wkey), [(WKey.from_indices(v, self.n_worlds), k[0], len(v) / ns)
                                 for k, v in outs.items()]
 
     def candidates(self, wkey, opened):
@@ -369,7 +487,7 @@ def _arm_picks(eng, cands, wk, op):
 
 
 def evaluate_case(ci, case, gold, eng, do_policy):
-    wk0 = frozenset(range(eng.n_worlds))
+    wk0 = WKey.all(eng.n_worlds)
     op0 = eng.opened0
     row = {"idx": ci, "F": int(case["F"]), "U": int(case["U"]),
            "worlds": eng.n_worlds}

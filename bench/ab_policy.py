@@ -100,13 +100,29 @@ class PolicyFallback(Exception):
 
 
 def decide_with_arm(arm, case, world_cap, node_cap):
-    """用指定臂在给定状态上选一个格（坐标 1-based）。返回 (cell, info)。"""
+    """用指定臂在给定状态上选一个格（坐标 1-based）。返回 (cell, info)。
+
+    ⚠️ 世界数上限必须**在构造 ExactEngine 之前**判断，否则无效：
+    ExactEngine.__init__ 内部会调 enumerate_worlds 把全部世界分配进内存。
+    历史事故：写成"先构造再检查 sig.n_worlds > world_cap"，
+    结果 U=30/rem=15 时 C(30,15)=1.55e8 个世界先被分配，
+    实测跑到 20GB+ 把整机顶爆 —— 检查完全形同虚设。
+    现在 ExactEngine 自身也带 world_cap 并在构造前抛 WorldCapExceeded，
+    这里显式捕获并转成 PolicyFallback（回退生产策略）。
+    """
     from arms_lookahead import ExactEngine, Budget
-    sig = ExactEngine(case, node_cap=node_cap, time_cap=30.0)
+    from compare_2ply_vs_winrate import WorldCapExceeded
+    try:
+        sig = ExactEngine(case, node_cap=node_cap, time_cap=30.0,
+                          world_cap=world_cap)
+    except WorldCapExceeded as e:
+        raise PolicyFallback(f"世界数超限 {e}")
+    except ValueError as e:
+        # 局面合法性校验失败（如 U=471/num10=0 这种识别异常）。
+        # 这不是算法问题：应回退生产策略，绝不可硬算概率。
+        raise PolicyFallback(f"局面非法 {e}")
     if sig.n_worlds == 0:
         raise PolicyFallback("无一致世界")
-    if sig.n_worlds > world_cap:
-        raise PolicyFallback(f"世界数 {sig.n_worlds} > {world_cap}")
     wk = frozenset(range(sig.n_worlds))
     op = sig.opened0
     try:
@@ -175,27 +191,50 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
     arm_stats = {"calls": 0, "fallback": 0, "ms": 0.0, "max_ms": 0.0,
                  "nodes": 0, "worlds": []}
 
+    # ⚠️ 闭包链泄漏（本轮修复的重大 bug）
+    # 历史写法：在 play_one 内部读 orig_* 并赋值类属性、**从不还原**。
+    #   ⇒ 第 1 局装上 wrapper1（闭包捕获当届 arm_stats/board/s/drv）
+    #   ⇒ 第 2 局读到的 orig 已是 wrapper1，再套 wrapper2 …
+    #   ⇒ 第 N 局形成长度 N 的闭包链，每环持有一整局的 Solver+Board，
+    #     且调用时还要穿过 N 层 wrapper ⇒ 2000 局 = 2000 局对象常驻 + O(N²) 调用开销。
+    # 修复：记录**真正的原始函数**（模块级一次性快照），并在 finally 里还原。
+    # 同时把本局状态放进一个 dict 供 wrapper 读取，避免闭包捕获大对象。
+    _STATE = {"arm": arm, "world_cap": world_cap, "node_cap": node_cap,
+              "stats": arm_stats}
+
     if arm != "baseline":
-        orig_wr = prob.ProbabilityMixin.win_rate
-        orig_pbs = prob.ProbabilityMixin.process_bigger_situation
+        # 模块级快照：只在第一次 patch 时记录真正的原始实现
+        if not hasattr(prob, "_AB_ORIG"):
+            prob._AB_ORIG = {
+                "win_rate": prob.ProbabilityMixin.win_rate,
+                "pbs": prob.ProbabilityMixin.process_bigger_situation,
+            }
+        orig_wr = prob._AB_ORIG["win_rate"]
+        orig_pbs = prob._AB_ORIG["pbs"]
 
         # ⚠️ 关键：把普通函数赋给类属性后，它会**被绑定为方法**，调用时
         # Python 自动传入实例作为第一个位置参数。因此 wrapper 的签名必须
         # 显式以 self 开头，且内部调用原函数时也要显式传 self。
         # 曾用 `def fn(*args)` + `args[:6]`，把 self 当成了 clicks，
         # 造成参数整体错位（表现为 pbs 收到 10 个参数、clicks 收到 int）。
+        #
+        # ⚠️ 另：wrapper 内**不要**闭包捕获 board/s/drv 等大对象，
+        # 只从 _STATE 取本局标量与计数容器（防泄漏，见上方注释）。
         def wr_arm(self, clicks, clicks9, res_list, cell_value, ck, num10):
+            st = _STATE["stats"]
             t0 = time.perf_counter()
-            arm_stats["calls"] += 1
+            st["calls"] += 1
             try:
                 case = make_case(clicks, clicks9, res_list, cell_value,
                                  ck, num10, self.a, self.w, self.h)
-                cell, info = decide_with_arm(arm, case, world_cap, node_cap)
+                cell, info = decide_with_arm(_STATE["arm"], case,
+                                             _STATE["world_cap"],
+                                             _STATE["node_cap"])
                 ms = (time.perf_counter() - t0) * 1000.0
-                arm_stats["ms"] += ms
-                arm_stats["max_ms"] = max(arm_stats["max_ms"], ms)
-                arm_stats["nodes"] += info["nodes"]
-                arm_stats["worlds"].append(info["n_worlds"])
+                st["ms"] += ms
+                st["max_ms"] = max(st["max_ms"], ms)
+                st["nodes"] += info["nodes"]
+                st["worlds"].append(info["n_worlds"])
                 # 返回形状与 win_rate 一致：number5_1 只从 clicks 里按序取格，
                 # 因此把选中格的那一位置 1、其余置 0 即可定向选择。
                 order = [tuple(map(int, p)) for p in clicks] + \
@@ -209,7 +248,7 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
                 c2p = {tuple(p): float(vals[i]) for i, p in enumerate(order)}
                 return (vals, order, int(len(order)), c2p)
             except PolicyFallback:
-                arm_stats["fallback"] += 1
+                st["fallback"] += 1
                 return orig_wr(self, clicks, clicks9, res_list, cell_value,
                                ck, num10)
 
@@ -225,16 +264,19 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
             本 wrapper 只在"能成功用臂决策"时走②；任何异常一律回退原实现，
             因此①路径的控制流**完全不变**（不会被计入一次候选选择）。
             """
-            arm_stats["calls"] += 1
+            st = _STATE["stats"]
+            st["calls"] += 1
             try:
                 case = make_case(clicks, clicks9, res_list, cell_value, ck,
                                  num10, self.a, self.w, self.h)
-                cell, _info = decide_with_arm(arm, case, world_cap, node_cap)
+                cell, _info = decide_with_arm(_STATE["arm"], case,
+                                              _STATE["world_cap"],
+                                              _STATE["node_cap"])
                 prob_map = {tuple(map(int, q)): 1.0 for q in
                             list(clicks) + list(clicks9)}
                 return ([cell], 1.0, int(total), prob_map)
             except PolicyFallback:
-                arm_stats["fallback"] += 1
+                st["fallback"] += 1
                 return orig_pbs(self, total, num9, num10, clicks, clicks9,
                                 res_list, ck, cell_value, pos)
 
@@ -295,7 +337,18 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
 
     drv.flush_clicks()
     ws = arm_stats["worlds"]
-    return {
+    # ⚠️ 局末必须还原 monkey-patch（闭包链泄漏修复的另一半）。
+    # 不还原的后果：下一局的 play_one 又会套一层 wrapper，形成长度 = 局数的
+    # 闭包链，每环捕获当届 Solver/Board ⇒ 2000 局 = 2000 局对象常驻 + O(N²) 调用开销。
+    if arm != "baseline":
+        try:
+            if hasattr(prob, "_AB_ORIG"):
+                prob.ProbabilityMixin.win_rate = prob._AB_ORIG["win_rate"]
+                prob.ProbabilityMixin.process_bigger_situation = \
+                    prob._AB_ORIG["pbs"]
+        finally:
+            pass
+    result = {
         "seed": seed, "won": bool(board.won), "died": bool(board.dead),
         "steps": steps, "opened": board.opened_count,
         "target": w * h - a, "n_click": drv.n_click,
@@ -308,6 +361,9 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
         "arm_worlds_max": max(ws) if ws else 0,
         "arm_worlds_med": (sorted(ws)[len(ws) // 2] if ws else 0),
     }
+    # 主动断引用：避免 _STATE / 驱动 / 棋盘在本局返回后仍被闭包链持有
+    _STATE.clear()
+    return result
 
 
 # ---------------------------------------------------------------------------

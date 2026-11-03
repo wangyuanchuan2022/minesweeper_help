@@ -63,7 +63,18 @@ class Indep:
 
         from compare_2ply_vs_winrate import enumerate_worlds
         worlds, clicks, clicks9, _ = enumerate_worlds(case)
-        self.worlds = [frozenset(w) for w in worlds]
+        # ⚠️ enumerate_worlds 现在返回位集整数（bit=(y-1)*w+(x-1)），
+        # 本类用 frozenset[tuple] 表示，需要转回坐标。
+        self.worlds = []
+        for m0 in worlds:
+            ws = set()
+            mm = m0
+            while mm:
+                low = mm & -mm
+                idx = low.bit_length() - 1
+                mm &= mm - 1
+                ws.add((idx % self.w + 1, idx // self.w + 1))
+            self.worlds.append(frozenset(ws))
         self.cand_coords = [tuple(p) for p in (clicks + clicks9)]
         self.memo = {}
 

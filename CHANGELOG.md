@@ -163,6 +163,89 @@
 
 ---
 
+## [Unreleased] - 2026-11-03 · 修复 2000 局内存爆炸（4 个根因）
+
+用户实测：跑 2000 局时消耗 20+ GB 内存被顶爆。定位到 **4 个独立根因**，
+全部修复后实测（25 局）：单局峰值 **65.8 MB**、跨局趋势 **+0.032 MB/局**、
+外推 2000 局约 **112 MB**。全部改动只在 bench 评测侧，**生产算法未变**
+（数值对拍 11/11 逐位一致）。
+
+### 根因 1：monkey-patch 闭包链累积（跨局泄漏）
+
+- **文件**：`bench/ab_policy.py`
+- **问题**：`orig_wr = prob.ProbabilityMixin.win_rate` 写在 `play_one` **内部**
+  且从不还原。第 N 局读到的是第 N-1 局装上的 wrapper ⇒
+  形成长度 = 局数的闭包链，每环捕获当届 `Solver`/`Board`/`arm_stats`。
+  后果：**2000 局 = 2000 个 Solver+Board 常驻**，外加 O(N²) 调用开销。
+- **修复**：模块级一次性快照真原始函数（`prob._AB_ORIG`），局末 `finally` 还原；
+  wrapper 内不再闭包捕获大对象，改用 `_STATE` 只存标量与计数容器；返回前
+  `_STATE.clear()` 主动断引用。
+- **验证**：存活 `Solver` 对象数 25 局恒为 1（差 +0）。
+
+### 根因 2：世界枚举器无上限 + `set[tuple]` 表示（单局峰值 497 MB）
+
+- **文件**：`bench/compare_2ply_vs_winrate.py`
+- **问题**：`emit()` 为每个世界做 3 次 `set` 拷贝，每世界约 99 个 tuple ≈ 4 KB。
+  实测 `n_worlds=114,870` 时**构造阶段**就吃 **497.6 MB**。
+- **修复**：世界的内部表示改为**位集整数**（480 bit ≈ 100 B，缩 40 倍）；
+  守恒断言改用位运算（`&` / `bit_count`），不再造临时 set；
+  仅在需要坐标时按需还原。
+- **验证**：同一 case 构造 ΔRSS **497.6 → 25.1 MB（20 倍改善）**；
+  整局峰值 **562.6 → 65.8 MB**。
+
+### 根因 3：世界数上限检查在分配之后（等于没拦）
+
+- **文件**：`bench/arms_lookahead.py`、`bench/ab_policy.py`
+- **问题**：`ExactEngine.__init__` 先调 `enumerate_worlds` 把全部世界分配进内存，
+  调用方的 `if sig.n_worlds > world_cap` 检查发生在**构造完成之后** ⇒ 无效。
+- **修复**：新增纯算术 `count_worlds_exact()`（零内存）与 `WORLD_CAP_DEFAULT=200000`；
+  `enumerate_worlds` 与 `ExactEngine` 均**在分配前**先算总量，超限抛
+  `WorldCapExceeded`，由调用方转 `PolicyFallback`（回退生产策略）。
+- **验证**：构造 1.45 亿世界的局面，拦截时内存峰值 **1 KB**；
+  `ExactEngine` 拦截时 **60 KB**。
+
+### 根因 4：非法局面产生 10^148 个世界（最危险）
+
+- **文件**：`bench/compare_2ply_vs_winrate.py`（新增 `validate_case_or_raise`）
+- **问题**：实测撞到 `F=8, U=471, num10=0, a=99` —— 识别异常把整盘当成
+  "内部无约束未开格"。世界数 `Σ C(471, rem)` 达 **10^148** 量级，
+  任何上限检查都只能早退，而下游若真去枚举就是灾难。
+  另 `F=32, U=104` 看似正常但世界数 `5.1e21`。
+- **修复**：最前面加**局面合法性校验**：`0 ≤ num10 ≤ a`、`U ≤ w*h`、
+  `U ≤ 60`（真实实测 U≤7，给 8.5 倍余量）。非法抛 `ValueError`，
+  调用方按"识别异常"回退，**不进入概率计算**。
+  另 `count_worlds_exact` 加位长 early-out，避免超大 `comb` 运算。
+- **验证**：该局 8 个决策点中 4 个非法局面被拦（含 U=471/468/465/104），
+  剩余合法点世界数 ≤ 200,383。
+
+### 新增验收（`verify_mem_fix.cmd` 一键复跑）
+
+| 闸 | 脚本 | 结果 |
+|---|---|---|
+| 世界数/合法性闸门 | `bench/verify_world_cap.py` | PASS 7 / FAIL 0 |
+| 真实 RSS 内存安全 | `bench/verify_mem_safety.py` | PASS 3 / FAIL 0 |
+| 三实现数值对拍 | `bench/oracle_bruteforce.py` | 不一致 0 |
+| 世界枚举守恒 | `bench/verify_world_enum.py` | 11/11 |
+| 内存探针（诊断） | `bench/probe_mem_v2.py` | 区分峰值/累积 |
+
+**关键读数（真实 RSS，25 局）**：单局峰值 65.8 MB（预算 1536 MB）、
+局末趋势 +0.032 MB/局、存活 Solver 恒为 1、外推 2000 局约 112 MB。
+
+### 方法教训（已写入 `docs/变量名与算法细节.md`）
+
+1. **必须用真实 RSS 而非 `tracemalloc` 判内存**：同一 case 用 tracemalloc
+   报 485 MB，真实 RSS 增量只有几十 MB；反之 C++ 侧分配 tracemalloc 完全看不到。
+2. **必须区分"单局峰值"与"跨局累积"**：前者靠降上限，后者靠还原引用/断环。
+3. **上限检查必须在分配之前**：先构造再检查等于没检查。
+4. **非法局面要先于性能优化处理**：10^148 个世界谈不上"上限"。
+
+### 未完成
+
+- 2000 局 × 6 臂全量基线仍未跑（入口 `run_baselines.cmd` + `bench/compare_all_arms.py`）
+- `process_bigger_situation` wrapper 未做逐决策对拍
+
+---
+
 ## [Unreleased] - 2026-11-03 · win_rate 节点数硬上限（防内存爆炸）
 
 用户诉求：位集重构降 win_rate 每节点成本、防止内存爆炸。**结论是先做了更根本的一步**——

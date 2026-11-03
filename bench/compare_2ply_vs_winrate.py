@@ -38,7 +38,102 @@ UNOPENED, MINE = 9, 10
 # ---------------------------------------------------------------------------
 # 世界枚举（与 C++ py_win_rate 阶段1 同一语义）
 # ---------------------------------------------------------------------------
-def enumerate_worlds(case, validate=True):
+class WorldCapExceeded(Exception):
+    """世界数超过上限：必须在**枚举前/枚举中**中止，不能先枚举再判断。"""
+
+
+# 世界数的硬上限（默认）。标定：一个世界是 set[tuple]（约 99 个 tuple），
+# 实测约 4KB；100 万世界 ≈ 4GB —— 已接近整机风险线。
+# 生产实际用例世界数最大 90（见 bench/data/wr_cases_big.json），
+# 取 200000 留 2000x 余量，同时把最坏内存限制在约 800MB。
+WORLD_CAP_DEFAULT = 200000
+
+
+def count_worlds_exact(case, cap=None):
+    """**只算数量、不枚举**：用组合数直接求和，零内存。
+
+    这是防爆的核心：世界数 = Σ_组合 C(U, rem)，纯算术可算，
+    因此可以在分配任何内存**之前**判断是否超限。
+
+    ⚠️ 用 log 位长预估做 early-out：U 很大时 math.comb(U, rem) 本身
+    会算出上千位的整数（虽不占多少内存，但属于无意义计算）。
+    当累计值的 bit_length 已远超 cap 的 bit_length 时立即返回。
+    """
+    import itertools
+    import math
+    a = case["a"]
+    num10 = case["num10"]
+    U = len(case["clicks9"])
+    ck = case["ck"]
+    groups = case["groups"]
+    total = 0
+    cap_bits = (cap.bit_length() + 8) if cap is not None else None
+    for idx in itertools.product(*[range(c) for c in ck]):
+        mt = 0
+        for gi, sel in enumerate(idx):
+            row = groups[gi][sel]
+            mt += sum(int(v) for v in row)
+        rem = a - num10 - mt
+        if rem == 0:
+            total += 1
+        elif 0 < rem <= U:
+            # 位长早退：C(U,rem) 的位长约 rem*log2(U/rem) 量级；
+            # 若已明显超出 cap 位数，直接返回哨兵值，不做精确 comb
+            if cap_bits is not None:
+                est_bits = rem * max(1.0, math.log2(max(U, 2) / max(rem, 1)))
+                if est_bits > cap_bits + 64:
+                    return 1 << (cap_bits + 64)      # 明确超限的哨兵
+            total += math.comb(U, rem)
+        if cap is not None and total > cap:
+            return total          # 已超限，early return（不必继续精确）
+    return total
+
+
+def validate_case_or_raise(case, u_hard_max=60):
+    """局面合法性校验：把"显然不是真实局面"的情况尽早挡在概率计算之外。
+
+    ==================== 为什么需要（实测事故）====================
+    2000 局内存实测撞到这样的决策点：
+        F=8,  U=471, num10=0, a=99    ← 整盘 471 格被当成"内部未开格"
+        F=32, U=104, num10=69         ← 看似正常，但世界数 5.1e21
+    前者是识别/状态异常；后者是"内部格异常多"导致的组合爆炸。
+    正常对局（30x16/99 雷）实测 **U ≤ 7**（33 个采集用例 U 最大值 = 7）。
+
+    若不挡住，`Σ C(U, rem)` 会到 10^21 ~ 10^148 量级：
+      · 任何枚举都必然 OOM
+      · 更根本的是：这种局面不该被当作有效局面进入概率分支
+
+    ==================== 阈值选取依据 ====================
+    u_hard_max 默认 **60**：
+      · 真实实测最大 7 ⇒ 给 8.5 倍余量，正常对局绝不误伤
+      · 异常局面 104 / 471 ⇒ 稳稳挡住
+      · 60 时最坏世界数 C(60,30)≈1.2e17 仍远超 world_cap，
+        但会被下一道"世界数闸"接手拦住（本闸只管"局面荒谬"）
+    校验项：
+      ① 0 ≤ num10 ≤ a
+      ② U ≤ w*h
+      ③ U ≤ u_hard_max
+    非法即抛 ValueError，调用方按"识别异常"处理（重扫/回退），
+    而不是硬算一个毫无意义的概率。
+    """
+    a = int(case["a"])
+    num10 = int(case["num10"])
+    w = int(case["w"])
+    h = int(case["h"])
+    U = len(case["clicks9"])
+    F = len(case["clicks"])
+    if num10 < 0 or num10 > a:
+        raise ValueError(f"局面非法：num10={num10} 不在 [0, a={a}]")
+    if U > w * h:
+        raise ValueError(f"局面非法：内部未开格 {U} 超过盘面 {w * h}")
+    if U > u_hard_max:
+        raise ValueError(
+            f"局面非法：内部未开格 U={U} > {u_hard_max}"
+            f"（正常对局实测 U≤7，疑似识别异常；F={F} a={a} num10={num10}）")
+    return True
+
+
+def enumerate_worlds(case, validate=True, world_cap=WORLD_CAP_DEFAULT):
     """枚举所有一致世界，返回 (worlds, clicks, clicks9, base_mines)。
 
     每个 world = set[(x,y)]，含该布局下**全部**雷格（已标记雷 + 前沿雷 + 内部雷）。
@@ -48,6 +143,14 @@ def enumerate_worlds(case, validate=True):
         a > num10 + mt + |clicks9| → 拒绝
         否则 对 C(|clicks9|, rem) 的每个组合接受
 
+    ⚠️ **世界数上限（world_cap）**：这是防内存爆炸的第一道闸。
+    历史事故：调用方（如 ExactEngine）习惯"先构造再检查世界数"，
+    但构造过程本身就把全部世界枚举进内存了 ⇒ 检查形同虚设。
+    典型爆炸：U=30、rem=15 时 C(30,15)=1.55 亿个世界，每个 set[tuple] 约 4KB
+    ⇒ 理论 600GB。实测跑到 20GB+ 把整机顶爆。
+    因此本函数在**分配任何内存之前**先用 count_worlds_exact 算总量，
+    超限直接抛 WorldCapExceeded（调用方必须捕获并降级，不得吞掉继续跑）。
+
     ⚠️ 守恒断言（validate=True 时启用）：任何世界都必须满足
         ① |world 中落在 w*h 盘面内的格| == a
         ② base_mines ⊆ world，且 world 内无已开格
@@ -55,10 +158,27 @@ def enumerate_worlds(case, validate=True):
     这是本轮最重要的一道闸：曾经因列号错位导致世界少算雷（95/96/97 而非 99），
     而所有下游读数（V*、safety、各臂排名）都"自洽地错"，极难发现。
     """
+    # ---- 闸 0：局面合法性（比世界数闸更早，防"天文数字"）----
+    # 事故实录：2000 局实测撞到 U=471、num10=0、a=99 的局面
+    # （识别/状态异常导致整盘被当成"内部未开格"），
+    # 世界数 = Σ C(471, rem) 达到 10^148 量级 —— 任何上限检查都只能是
+    # "早退"，但**这种局面根本不该进入概率计算**（把它误当有效局面的
+    # 下游代码会试图枚举它）。因此在最前面做合法性校验。
+    validate_case_or_raise(case)
     a = case["a"]
     num10 = case["num10"]
     w = int(case["w"])
     h = int(case["h"])
+    U = len(case["clicks9"])
+
+    # ---- 闸 1：枚举前先算总量（零内存）----
+    if world_cap is not None:
+        n_est = count_worlds_exact(case, cap=world_cap)
+        if n_est > world_cap:
+            raise WorldCapExceeded(
+                f"世界数 {n_est:,} > 上限 {world_cap:,}"
+                f"（U={U}，纯算术预算，未分配内存）")
+
     clicks = [tuple(p) for p in case["clicks"]]
     clicks9 = [tuple(p) for p in case["clicks9"]]
     ck = case["ck"]
@@ -81,21 +201,55 @@ def enumerate_worlds(case, validate=True):
 
     worlds = []
 
+    # ⚠️ 内存热点（2000 局爆炸的直接元凶，实测）：
+    # emit() 每个世界都做 3 次 set 拷贝（set(base_mines) / |= set(frontier) /
+    # |= set(inner)），每个世界约 99 个 tuple。n_worlds=114,870 时
+    # 单个 set 约 4 KB ⇒ 光 worlds 列表就 ~460 MB（实测构造 ExctEngine 时
+    # ΔRSS 497.6 MB，且峰值出现在**枚举阶段**而非搜索阶段）。
+    #
+    # 修复：改用**位集整数**作为世界的内部表示（emit 产出一个 Python int，
+    # 每个世界约 480 bit ≈ 100 B），同时**只在需要时才还原成坐标集合**。
+    # 守恒断言也改成位运算（`&` / `bit_count`），不再造临时 set。
+    #
+    # 坐标 → 位索引：bit = (y-1)*w + (x-1)，与 arms_lookahead 的 W2 布局不同，
+    # 但本函数只做"雷数守恒"判断，不需要与引擎的盘面布局一致。
+    # ⚠️ 注意：cell_value 含 1 格外框（第 0/ w+1 行、第 0/ h+1 列恒为 0），
+    # 必须**排除外框**再算位索引，否则 (y-1)*w+(x-1) 会出现负位移。
+    def _in(x, y):
+        return 1 <= x <= w and 1 <= y <= h
+
+    base_bits = 0
+    for (x, y) in base_mines:
+        if _in(x, y):
+            base_bits |= 1 << ((y - 1) * w + (x - 1))
+    opened_bits = 0
+    for (x, y) in opened_cells:
+        if _in(x, y):
+            opened_bits |= 1 << ((y - 1) * w + (x - 1))
+    n_cells = w * h
+    full_bits = (1 << n_cells) - 1
+
+    def _coords_to_bits(coords):
+        b = 0
+        for (x, y) in coords:
+            if _in(x, y):
+                b |= 1 << ((y - 1) * w + (x - 1))
+        return b
+
     def emit(frontier_mines, inner_mines):
-        m = set(base_mines)
-        m |= set(frontier_mines)
-        m |= set(inner_mines)
+        m = base_bits | _coords_to_bits(frontier_mines) | _coords_to_bits(inner_mines)
         if validate:
-            inside = m & board_cells
-            if len(inside) != a:
+            inside = m & full_bits
+            if inside.bit_count() != a:
                 raise AssertionError(
-                    f"世界雷数 {len(inside)} != a={a}（前沿雷 {len(frontier_mines)} "
-                    f"内部雷 {len(inner_mines)} 基底 {len(base_mines)}）")
-            if not (base_mines <= m):
+                    f"世界雷数 {inside.bit_count()} != a={a}（前沿雷 "
+                    f"{len(frontier_mines)} 内部雷 {len(inner_mines)} "
+                    f"基底 {len(base_mines)}）")
+            if (base_bits & ~m) != 0:
                 raise AssertionError("基底已标记雷未全部包含在世界内")
-            if m & opened_cells:
-                raise AssertionError(f"世界把已开格当成了雷：{sorted(m & opened_cells)[:5]}")
-            if len(m & board_cells) != num10 + len(frontier_mines) + len(inner_mines):
+            if (m & opened_bits) != 0:
+                raise AssertionError("世界把已开格当成了雷")
+            if inside.bit_count() != num10 + len(frontier_mines) + len(inner_mines):
                 raise AssertionError("雷数分项与总数不守恒")
         worlds.append(m)
 
