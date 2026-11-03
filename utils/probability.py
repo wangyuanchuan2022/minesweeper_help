@@ -481,7 +481,11 @@ class ProbabilityMixin:
         if not hasattr(self, "_wr_nodecap_hits"):
             self._wr_nodecap_hits = 0
 
-        num9 = 0  # 所有未开方格的数量
+        num9 = 0  # 所有未开方格（cell_value == 9）的数量
+        # ⚠️ num10 = **已被标记为雷的格数**（cell_value == 10 的格数），
+        # 不是"数字 10 的格"。cell_value 编码：9=未开，10=标记雷，0..8=已开数字。
+        # 关键推论：真实剩余雷数 = a - num10，很多地方据此推导（如
+        # rem = a - num10 - mine_total）。搞错会让世界雷数整体偏移。
         num10 = 0
         for index in range(1, w + 1):
             for j in range(1, h + 1):
@@ -501,7 +505,12 @@ class ProbabilityMixin:
         # 计算255到0的最小距离，以找到最边缘的9与10
         res = cv.distanceTransform(bg, cv.DIST_L12, 0)  # cv.DIST_L12: 平方相加开根号。
 
-        clicks = []  # 外围未开方格
+        # ⚠️ clicks / clicks9 的划分依据是「距最近未开格/标记格的距离」，不是别的：
+        #   clicks  = **前沿**未开格（与已开数字格相邻 ⇒ 受邻域数字约束，需枚举解）
+        #   clicks9 = **内部**未开格（远离已知信息 ⇒ 只受"剩余总雷数"这一个全局约束）
+        # 名字里的 "9" 来自 cell_value 的编码 9=未开，**不是**"9 个"或"第九组"。
+        # 两者混淆会让 part_solve 把无约束格当有约束格算（或反之），概率全错。
+        clicks = []  # 外围未开方格（前沿，有局部约束）
         clicks9 = []  # 内部未开方格
 
         for i in range(w):
@@ -666,6 +675,10 @@ class ProbabilityMixin:
                         len(click_list[index]) > limit + 3 or _over_budget
                     ):  # 大于limit/超出预算时因为算量过大而无法判断
                         is_removed = True
+                        # ⚠️ 这里是 clicks → clicks9 的**语义迁移**：
+                        # 该组算量过大被放弃枚举，于是把它的前沿格**降级并入内部格**，
+                        # 当作"只受总雷数约束"处理（近似）。这不是排序，也不是过滤。
+                        # 后果：这些格失去局部约束信息，概率变粗，但避免指数爆炸。
                         for pos in click_list[index]:
                             clicks.remove(pos)
                             clicks9.append(pos)
@@ -763,6 +776,13 @@ class ProbabilityMixin:
 
             else:
                 pos = []
+                # ⚠️ limitation 不是"限制值"，而是**局面难度代理指标**（越大越难算）：
+                #     len(clicks9) 项 = 无局部约束的内部格数（这些格会组合爆炸）
+                #     log2(total) 项 = 世界总数的量级
+                # 它与 wr_threshold（**策略参数**，"允许多难的局面上前瞻"）方向一致
+                # 但含义不同，切勿混为一谈。
+                # 另注：self.limit（不带 -ation）是完全不同的东西 = 组枚举上限；
+                # 超过它的组会被放弃并降级并入 clicks9（见上方 is_removed 分支）。
                 limitation = len(clicks9) * 0.8 + math.log2(total)
                 logger.debug("limitation: %s", limitation)
 
@@ -1331,6 +1351,38 @@ class ProbabilityMixin:
         return False
 
     def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
+        """精确前瞻搜索（"把每种未来都玩一遍"），返回逐候选格的胜率。
+
+        ==================== 入参（名字极易误解，逐条看）====================
+          clicks   —— **前沿**未开格（受邻域数字约束）
+          clicks9  —— **内部**未开格（只受剩余总雷数约束）。"9" 来自编码 9=未开
+          res_list —— **每组的全部解**（不是"结果列表"）：
+                      res_list[i] 形状 [该组解数 × 该组前沿格数]，元素 0/1
+                      ⚠️ res_list[i] 的列**只对应第 i 组自己的前沿格**，不是全局 clicks；
+                         跨组引用必须加组偏移（曾经的 bug 就出在这里）
+          ck       —— **每组的解数**（ck[i] == len(res_list[i])），
+                      total = ∏ck[i] = 世界总数。不是"检查"，也不是"每组格数"
+          num10    —— **已标记为雷的格数**（cell_value==10 的格数）
+          返回 (res, clicks_out, total, clicks2p)
+
+        ==================== 返回值（三个高频误解）====================
+          res       —— **逐候选格的胜率数组**，不是标量。要选格得自己 argmax
+          clicks_out—— **已按 clicks2p 降序重排**后的候选格！顺序与入参不同，
+                       按下标对齐入参 clicks 会错位；要匹配请按**坐标**
+          total     —— 世界总数
+          clicks2p  —— dict[(x,y)] → "该格不是雷"的概率（safety）。
+                       按**排序前**的原始插入序构建，与 clicks_out 也是按坐标匹配
+
+        ==================== 它不是"精确最优胜率" ====================
+        cpp/mscore.cpp 的 wr_f 有四处与真实扫雷规则不符（详见仓库
+        docs/变量名与算法细节.md 第 2.2 节），因此这是**启发式估值**，不是 V*。
+        需要真值时用 bench/arms_lookahead.py 的 ExactEngine（忠实 flood-fill）。
+
+        ==================== 降级语义 ====================
+        节点数超 node_cap 时抛 _WrNodeCapExceeded，由 number5_1 捕获后
+        **降级走 process_bigger_situation（贪心）**。绝不回退纯 Python
+        （那里同样无上限，退回等于没拦）。
+        """
         # 优先 C++（mscore.win_rate），失败/不可用自动回退纯 Python
         if native.available:
             try:
