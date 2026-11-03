@@ -144,6 +144,11 @@ def run_one_value(axis, val, args, jsonl_path):
                 print(f"    [time-budget] 停止，完成 {len(rows)} 局", flush=True)
                 break
         ab.reset_gate_stats()
+        # ⚠️ 生产侧计数用**局前快照 → 局后累计**的差值（不清零全局）。
+        # 此前漏传快照 ⇒ gate_stats() 里 before 默认 0 ⇒ prod_nodecap
+        # 返回的是**进程累计值**而非本局命中数，导致 cap=10万 与 200万
+        # 都显示 220（其实 200万 真值是 0）。这是"饱和读数"的根因。
+        _prod_before = ab.prod_nodecap_snapshot()
         pk = Peak()
         pk.start()
         t0 = time.perf_counter()
@@ -157,7 +162,7 @@ def run_one_value(axis, val, args, jsonl_path):
         dt = (time.perf_counter() - t0) * 1000.0
         peak = pk.stop()
         gc.collect()
-        gs = ab.gate_stats()
+        gs = ab.gate_stats(_prod_before)
         # ⚠️ 降级计数必须包含**生产侧**：`node_budget` 只记 bench 前瞻臂的 Budget，
         # 生产 wr_f 节点超限降级在 gs["prod_nodecap"]（来自 probability 的
         # _WR_NODECAP_TOTAL）。此前漏算，导致扫 node_cap 时降级恒为 0。
