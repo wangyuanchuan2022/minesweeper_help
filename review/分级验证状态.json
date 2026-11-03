@@ -1,0 +1,70 @@
+{
+ "generated_at": "2026-11-03",
+ "purpose": "分级内存验证的实际完成状态（供后续复跑与结论边界引用）",
+ "levels": [
+  {
+   "games_requested": 60,
+   "games_completed": 60,
+   "result_file": "state/ab/staged_safety_60.json",
+   "status": "完成",
+   "peak_rss_mb": 92.1,
+   "last_end_rss_mb": 71.3,
+   "solver_min_max": [
+    1,
+    1
+   ],
+   "gate_stats": {
+    "world_cap": 161,
+    "invalid_case": 0,
+    "no_world": 0,
+    "node_budget": 0
+   },
+   "note": "样本内通过；不等于更长规模等价"
+  },
+  {
+   "games_requested": 100,
+   "games_completed": 100,
+   "result_file": "state/ab/staged_safety_100.json",
+   "status": "完成",
+   "peak_rss_mb": 90.4,
+   "last_end_rss_mb": 48.7,
+   "solver_min_max": [
+    1,
+    1
+   ],
+   "gate_stats": {
+    "world_cap": 310,
+    "invalid_case": 0,
+    "no_world": 0,
+    "node_budget": 0
+   },
+   "note": "样本内通过；不等于更长规模等价"
+  },
+  {
+   "games_requested": 500,
+   "games_completed": null,
+   "result_file": null,
+   "status": "退出原因未明，结果缺失",
+   "evidence": [
+    "state/ab/staged_safety_500.json 不存在",
+    "无该次的日志/退出码/异常记录（脚本未做逐局落盘与无缓冲输出）",
+    "运行中多次采样 RSS 恒定 72.0-72.4 MB、CPU 100%、进程存活",
+    "最终进程从进程表中消失（RSS 读数降到 5.8 MB 系 PID 复用/查询残留，不可作为退出原因证据）"
+   ],
+   "conclusion": "不得计入内存安全通过项；不得推断退出原因；需用带退出码/异常日志/逐局落盘的新入口复跑"
+  },
+  {
+   "games_requested": 2000,
+   "games_completed": null,
+   "result_file": null,
+   "status": "未执行",
+   "conclusion": "未验证"
+  }
+ ],
+ "method_gaps_to_fix": [
+  "原脚本只在每 report_every 局打印一次 → 输出被缓冲，长测中断无进度可查",
+  "原脚本只在全部结束后写一次结果文件 → 中断即全丢",
+  "原脚本无退出码/异常捕获落盘 → 无法区分正常完成、异常退出、被外部终止",
+  "原脚本无逐局落盘 → 无法保留已完成样本"
+ ]
+}

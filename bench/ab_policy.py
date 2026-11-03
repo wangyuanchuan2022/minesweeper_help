@@ -99,6 +99,25 @@ class PolicyFallback(Exception):
     """该步无法用目标臂决策（世界数/节点超限、无解等）→ 回退生产。"""
 
 
+# 各类降级/闸门触发的计数（**可观测性**要求：任何降级都必须能被统计到，
+# 否则"跑了 2000 局但不知道降级了多少次"会让结论不可信）。
+#   world_cap   —— 世界数超资源上限（合法大局面，资源不可行）
+#   invalid_case—— 真正的逻辑矛盾（num10>a 等，规则级不变量被违反）
+#   no_world    —— 无一致世界
+#   node_budget —— 递归节点/时间超限
+_GATE_STATS = {"world_cap": 0, "invalid_case": 0, "no_world": 0,
+               "node_budget": 0}
+
+
+def reset_gate_stats():
+    for k in _GATE_STATS:
+        _GATE_STATS[k] = 0
+
+
+def gate_stats():
+    return dict(_GATE_STATS)
+
+
 def decide_with_arm(arm, case, world_cap, node_cap):
     """用指定臂在给定状态上选一个格（坐标 1-based）。返回 (cell, info)。
 
@@ -110,25 +129,33 @@ def decide_with_arm(arm, case, world_cap, node_cap):
     现在 ExactEngine 自身也带 world_cap 并在构造前抛 WorldCapExceeded，
     这里显式捕获并转成 PolicyFallback（回退生产策略）。
     """
-    from arms_lookahead import ExactEngine, Budget
+    from arms_lookahead import ExactEngine, Budget, WKey
     from compare_2ply_vs_winrate import WorldCapExceeded
     try:
         sig = ExactEngine(case, node_cap=node_cap, time_cap=30.0,
                           world_cap=world_cap)
     except WorldCapExceeded as e:
-        raise PolicyFallback(f"世界数超限 {e}")
+        # ⚠️ 这是**资源超限降级**，不是"局面非法"。
+        # 典型场景：刚开局只开 1 格（F=8, U=471, num10=0），剩余 99 雷要撒进
+        # 471 个内部格 ⇒ C(471,99) 天文数字。局面完全合法，只是前置枚举
+        # 在本局面下不可行。必须可观测地回退，不能当坏数据丢弃。
+        _GATE_STATS["world_cap"] += 1
+        raise PolicyFallback(f"资源超限(世界数) {e}")
     except ValueError as e:
-        # 局面合法性校验失败（如 U=471/num10=0 这种识别异常）。
-        # 这不是算法问题：应回退生产策略，绝不可硬算概率。
-        raise PolicyFallback(f"局面非法 {e}")
+        # 真正的**逻辑矛盾**（num10>a、F+U>w*h 等），规则级不变量被违反。
+        # 这才是"局面非法"，应回退并记为异常，绝不可硬算概率。
+        _GATE_STATS["invalid_case"] += 1
+        raise PolicyFallback(f"局面矛盾 {e}")
     if sig.n_worlds == 0:
+        _GATE_STATS["no_world"] += 1
         raise PolicyFallback("无一致世界")
-    wk = frozenset(range(sig.n_worlds))
+    wk = WKey.all(sig.n_worlds)
     op = sig.opened0
     try:
         terms = sig.saturate(wk, op)
     except Budget as e:
-        raise PolicyFallback(f"饱和超限 {e}")
+        _GATE_STATS["node_budget"] += 1
+        raise PolicyFallback(f"资源超限(饱和) {e}")
     # 选第一个有候选的终端态（多终端时按权重最大者，简化但确定性）
     terms = [t for t in terms if not sig.won(t[1]) and sig.candidates(t[0], t[1])]
     if not terms:
@@ -150,7 +177,8 @@ def decide_with_arm(arm, case, world_cap, node_cap):
         else:
             raise PolicyFallback(f"未知臂 {arm}")
     except Budget as e:
-        raise PolicyFallback(f"决策超限 {e}")
+        _GATE_STATS["node_budget"] += 1
+        raise PolicyFallback(f"资源超限(决策) {e}")
     return sig._coord(c), {"n_worlds": sig.n_worlds, "nodes": sig.nodes,
                            "n_cand": len(cands), "n_terms": len(terms)}
 
@@ -360,6 +388,8 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
         "arm_nodes": arm_stats["nodes"],
         "arm_worlds_max": max(ws) if ws else 0,
         "arm_worlds_med": (sorted(ws)[len(ws) // 2] if ws else 0),
+        # 各闸门触发次数（可观测性：任何降级都必须能被统计）
+        "gate_stats": gate_stats(),
     }
     # 主动断引用：避免 _STATE / 驱动 / 棋盘在本局返回后仍被闭包链持有
     _STATE.clear()
