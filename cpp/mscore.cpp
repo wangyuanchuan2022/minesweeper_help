@@ -606,8 +606,21 @@ struct WinRateCtx {
     Progress progress;
     std::unordered_map<std::string, double> memory;
 
-    WinRateCtx(int w_, int h_, int a_, bool is_play_, py::object cb)
-        : w(w_), h(h_), W2(w_ + 2), a(a_), is_play(is_play_), progress(std::move(cb)) {}
+    // ---- 节点上限（防内存爆炸的最小硬闸）----
+    // 背景：memory 只写不删（见 wr_f 末尾），因此 live_nodes == 累计访问节点数。
+    // 每个 memo 条目实测约 200B（std::string 键 + unordered_map 节点 + 桶），
+    // 节点数到 1e7 量级时光键就吃掉 ~1.9GB —— 与"每个世界多少字节"无关。
+    // 因此压缩世界表示（位集）**不能**防止内存爆炸，必须靠节点数硬上限。
+    // 超限时抛 NodeCapExceeded，由 py_win_rate 转成 runtime_error，
+    // Python 侧 utils/probability.py 的 try/except 会捕获并回退到原实现
+    // （process_bigger_situation / 贪心），属于既有的安全降级路径。
+    int64_t node_cap;      // <= 0 表示不限制（保持旧行为，便于对拍）
+    int64_t nodes_visited; // 累计访问节点数
+
+    WinRateCtx(int w_, int h_, int a_, bool is_play_, py::object cb,
+               int64_t node_cap_ = 0)
+        : w(w_), h(h_), W2(w_ + 2), a(a_), is_play(is_play_),
+          progress(std::move(cb)), node_cap(node_cap_), nodes_visited(0) {}
 
     // 对应 hash_cell_value：np.where(l > 9, 9, l).tobytes() 的 MD5
     std::string hash_board(const Board& b) const {
@@ -622,9 +635,28 @@ struct WinRateCtx {
     }
 };
 
+// 节点上限触发（内部异常：基类 std::exception 并携带可读消息）
+struct NodeCapExceeded : public std::exception {
+    int64_t cap;
+    int64_t visited;
+    std::string msg_;
+    NodeCapExceeded(int64_t cap_, int64_t visited_)
+        : cap(cap_), visited(visited_) {
+        msg_ = "win_rate node cap exceeded: visited=" + std::to_string(visited_) +
+               " cap=" + std::to_string(cap_);
+    }
+    const char* what() const noexcept override { return msg_.c_str(); }
+};
+
 // f()：递归求胜率（与 Python 闭包 f 完全对照）
 double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> boards, int depth,
             double depth_limit) {
+    // ---- 节点上限硬闸（防内存爆炸）----
+    // 放在记忆化查找**之前**：超限时立刻中止，不再分配任何新 memo 条目。
+    // node_cap <= 0 时不限制，行为与旧版完全一致（便于逐位对拍）。
+    if (ctx.node_cap > 0 && ++ctx.nodes_visited > ctx.node_cap) {
+        throw NodeCapExceeded(ctx.node_cap, ctx.nodes_visited);
+    }
     {
         auto it = ctx.memory.find(ctx.hash_board(boards[0]));
         if (it != ctx.memory.end()) return it->second;
@@ -708,7 +740,7 @@ double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> board
 py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::list res_list,
                       py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
                       py::sequence ck_seq, int64_t num10, int a, int w, int h, bool is_play,
-                      py::object progress_cb) {
+                      py::object progress_cb, int64_t node_cap) {
     auto clicks = parse_coords(clicks_seq);
     auto clicks9 = parse_coords(clicks9_seq);
     std::vector<int> ck;
@@ -735,7 +767,7 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
         groups.push_back(std::move(rows));
     }
 
-    WinRateCtx ctx(w, h, a, is_play, std::move(progress_cb));
+    WinRateCtx ctx(w, h, a, is_play, std::move(progress_cb), node_cap);
 
     std::vector<Coord> all_clicks;   // 阶段 2 排序后的 clicks（传出计算段）
     std::vector<double> cp;          // 与 all_clicks 对齐的安全概率
@@ -744,6 +776,7 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
     std::vector<double> orig_cp;
     size_t total = 0;
 
+    try {
     {
         // 计算段（阶段 1 + 阶段 2）释放 GIL：长调用不饿死 UI 线程（进度条冻结的根因）；
         // 进度回调（Progress::emit 内部）与异常抛出点在此段内短暂重取 GIL
@@ -882,6 +915,14 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
             running_max = has_max ? std::max(running_max, win_p) : win_p;
             has_max = true;
         }
+    }
+    } catch (const NodeCapExceeded& e) {
+        // 节点数超过硬上限：转成 runtime_error 抛给 Python。
+        // utils/probability.py 的 win_rate 包装函数会捕获并回退到原实现
+        // （process_bigger_situation 贪心分支），这是既有的安全降级路径。
+        // 绝不在超限后继续计算：那正是此前把内存顶爆的路径。
+        py::gil_scoped_acquire acq;
+        throw std::runtime_error(e.what());
     }
 
     // ---- 以下重新持有 GIL：构建返回对象 ----
@@ -1183,7 +1224,10 @@ PYBIND11_MODULE(mscore, m) {
     m.def("win_rate", &py_win_rate, py::arg("clicks"), py::arg("clicks9"), py::arg("res_list"),
           py::arg("cell_value"), py::arg("ck"), py::arg("num10"), py::arg("a"), py::arg("w"),
           py::arg("h"), py::arg("is_play"), py::arg("progress"),
-          "win_rate 完整移植：返回 (res, sorted_clicks, total, clicks2p)");
+          py::arg("node_cap") = 0,
+          "win_rate 完整移植：返回 (res, sorted_clicks, total, clicks2p)。\n"
+          "node_cap > 0 时限制递归节点数，超限抛 RuntimeError（调用方应回退）；\n"
+          "node_cap = 0（默认）表示不限制，行为与旧版完全一致。");
     m.def("pbs_compute", &py_pbs_compute, py::arg("total"), py::arg("num10"), py::arg("clicks"),
           py::arg("clicks9"), py::arg("res_list"), py::arg("ck"), py::arg("a"), py::arg("progress"),
           py::arg("visible"),

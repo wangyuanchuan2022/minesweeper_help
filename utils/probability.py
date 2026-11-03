@@ -50,6 +50,89 @@ _WR_EDGE_DELTA = 0.25      # 升档的“边界采样”邻域
 _WR_FAST_FRAC = 0.25       # 升档耗时上限（预算比例）
 _WR_SLOW_FRAC = 1       # 降档耗时下限（预算比例）；=1 即 win_rate 真超总预算才降档（安全阀，勿按旧版 75% 理解）
 
+# ---------------------------------------------------------------------------
+# win_rate 节点数硬上限（防内存爆炸的最小闸门）
+#
+# ==================== 为什么需要它、以及为什么"压缩世界表示"不够 ====================
+# win_rate 的内存结构有两项：
+#     ① 世界列表：nworlds × 2304B（每世界一整盘 (h+2)(w+2) int32）
+#     ② memo 缓存：live_nodes × ~200B（std::string 键 + unordered_map 节点）
+# 关键事实：**memo 只写不删**（cpp/mscore.cpp wr_f 末尾只赋值），
+# 所以 live_nodes == 累计访问节点数，且它随 (候选数 × 世界分叉 × 深度) 组合增长。
+# 用实测参数做的容量模型（bench/mem_model.py）显示：生产中位 4 世界时 ①②都是
+# 微秒级；但单用例实测到 1e5 节点时，②约占 19MB 而①不足 0.15MB —— 即
+# **节点开销完全主导**。把世界压到 64B（位集）在该场景几乎不省内存。
+# 因此真正的防爆手段是给节点数封顶，而不是压缩世界表示。
+#
+# ==================== 取值（按内存预算标定）====================
+# 默认**启用**（防爆闸门默认关闭等于没有防护）。
+#
+# 标定唯一依据 = 内存预算 + 实测每节点字节：
+#   实测每节点内存（bench/calibrate_node_cap.py，真实 RSS 峰值采样）：
+#       cap=2e3    → ΔRSS 0.00 MB
+#       cap=1e4    → ΔRSS 0.10 MB
+#       cap=5e4    → ΔRSS 0.73 MB
+#       cap=2e5    → ΔRSS 4.04 MB
+#       不限制      → ΔRSS 8.25 MB
+#   ⇒ 每节点 **中位 15.2 B、最大 21.2 B**。取 25 B/节点（留余量）作口径：
+#       2e6 × 25B ≈ 48 MB
+#   对照 1.5GB 预算（与 _wr_memory_ok 同口径）/ 留 8x 余量 ⇒ 2e6 安全。
+#
+# ⚠️ **不要**用"本机用例是否会触发"来反推 cap：
+#   防护器的预期行为就是**正常路径不触发、异常路径及时拦截**。
+#   实测（bench 用例逐例二分）本机最大节点需求仅 424,114，
+#   因此在 2e6 下零触发是**正确**的，不构成"闸门无效"的理由——
+#   无效与否由「强制超限负测 + 峰值 RSS」证明，见：
+#     bench/verify_node_cap.py        超限必抛、消息可辨识
+#     bench/verify_node_cap_e2e.py    异常穿越调用链进安全降级 + 计数可观测
+#     bench/calibrate_node_cap.py     真实 RSS：cap=2e5 时 ΔRSS 4.04MB
+# 若某天出现比实测最坏还大 4.7 倍的异常局面（>1e6 节点），闸门会拦截并降级，
+# 这正是它存在的意义。
+#
+# 生产参照：上一轮 12 局 win_rate 只触发 8 次、世界数中位 4，
+# 单次节点数远低于 2e6 ⇒ **正常对局行为与加闸前逐位一致**（对拍为证）。
+#
+# ==================== 超限语义 ====================
+# C++ 抛 runtime_error("win_rate node cap exceeded ...") → 本文件**按消息子串**
+# 识别后转成 _WrNodeCapExceeded → number5_1 捕获后**降级走
+# process_bigger_situation（贪心）**。绝不回退到纯 Python（那里同样无上限）。
+# 注意：**只有**含 "node cap exceeded" 的异常才降级；其他 C++ runtime_error
+# 仍走原有的"回退纯 Python"语义，不会被静默吞成贪心结果
+# （负向测试 bench/verify_node_cap_e2e.py 第 I 节为证）。
+# 每次触发计数在 self._wr_nodecap_hits，可观测。
+# ---------------------------------------------------------------------------
+_WR_NODE_CAP_RECOMMENDED = 2000000
+
+
+def _wr_node_cap():
+    """读取 win_rate 节点数硬上限（默认 2e6，实测标定）。
+
+    环境变量 MSW_WR_NODE_CAP：正整数覆盖；**0 = 显式关闭**（仅对拍调试用）；
+    负值/非法值回落默认值并只警告一次。
+    """
+    global _WR_NODE_CAP_WARNED
+    raw = os.environ.get("MSW_WR_NODE_CAP", "").strip()
+    if not raw:
+        return _WR_NODE_CAP_RECOMMENDED
+    try:
+        v = int(raw)
+        if v < 0:
+            return _WR_NODE_CAP_RECOMMENDED
+        return v                     # 0 = 显式关闭（对拍用）
+    except ValueError:
+        if not _WR_NODE_CAP_WARNED:
+            _WR_NODE_CAP_WARNED = True
+            logger.warning("MSW_WR_NODE_CAP=%r 不是整数，按默认 %d 处理", raw,
+                           _WR_NODE_CAP_RECOMMENDED)
+        return _WR_NODE_CAP_RECOMMENDED
+
+
+_WR_NODE_CAP_WARNED = False
+
+
+class _WrNodeCapExceeded(Exception):
+    """win_rate 节点数超硬上限（用于与普通 C++ 失败区分，走不同降级路径）。"""
+
 
 def _ps_default_base_ms():
     """模型初值：33 格组在当前模式下的典型耗时（毫秒）。
@@ -394,6 +477,9 @@ class ProbabilityMixin:
         # win_rate 内存降级警告去重集合（见 _wr_memory_ok）
         if not hasattr(self, "_wr_mem_warned"):
             self._wr_mem_warned = set()
+        # win_rate 节点数超限触发次数（可观测：降级是否发生过、发生几次）
+        if not hasattr(self, "_wr_nodecap_hits"):
+            self._wr_nodecap_hits = 0
 
         num9 = 0  # 所有未开方格的数量
         num10 = 0
@@ -690,54 +776,72 @@ class ProbabilityMixin:
                 if limitation <= wr_threshold and self._wr_memory_ok(
                         clicks, clicks9, total):
                     _t_wr = time.perf_counter()
-                    win_rate, clicks, total, clicks2p = self.win_rate(clicks, clicks9, res_list, cell_value, ck, num10)
-                    if _tb is not None:
-                        # 实测反馈：边界采样且快 → +0.5；超时 → −0.5（见 _wr_update）
-                        wr_threshold = _wr_update(_tb, limitation,
-                                                  (time.perf_counter() - _t_wr) * 1000.0)
-                        logger.debug("win_rate 实测 %.0f ms @limitation=%.2f → 阈值 %.1f",
-                                     (time.perf_counter() - _t_wr) * 1000.0, limitation,
-                                     wr_threshold)
-                    win_rate = np.around(win_rate, decimals=5)
-                    where_max = np.where(win_rate == np.max(win_rate), 1, 0)
-                    p = where_max / where_max.sum()
-                    arg = np.random.choice(np.arange(len(clicks)), p=p)
-                    pos = [clicks[arg]]
-                    confidence = win_rate[arg]
-                    self.Visible_signal.emit(False)
+                    # 是否有可信的 clicks2p（只有真的跑完 win_rate 才有）。
+                    # node_cap 降级 / 走贪心时该变量不存在，后段会用到它算 confidence。
+                    _wr_have_c2p = False
+                    try:
+                        win_rate, clicks, total, clicks2p = self.win_rate(
+                            clicks, clicks9, res_list, cell_value, ck, num10)
+                    except _WrNodeCapExceeded:
+                        # 节点数超硬上限 → 本步降级为贪心分支（process_bigger_situation）。
+                        # 这是**有意的**精度降级：win_rate 的 memo 只写不删，
+                        # 节点数会组合爆炸；继续算就是把整机内存顶爆。
+                        # 绝不让它落到外层 except（那会被当作"求解失败"→ 触发
+                        # 完整重扫，反而更糟），也绝不回退纯 Python（同样无上限）。
+                        pos, confidence, total, _prob = self.process_bigger_situation(
+                            total, num9, num10, clicks, clicks9, res_list, ck,
+                            cell_value, pos)
+                        self.till_now_winrate *= confidence
+                        self._wr_nodecap_hits += 1
+                    else:
+                        _wr_have_c2p = True
+                        if _tb is not None:
+                            # 实测反馈：边界采样且快 → +0.5；超时 → −0.5（见 _wr_update）
+                            wr_threshold = _wr_update(_tb, limitation,
+                                                      (time.perf_counter() - _t_wr) * 1000.0)
+                            logger.debug("win_rate 实测 %.0f ms @limitation=%.2f → 阈值 %.1f",
+                                         (time.perf_counter() - _t_wr) * 1000.0, limitation,
+                                         wr_threshold)
+                        win_rate = np.around(win_rate, decimals=5)
+                        where_max = np.where(win_rate == np.max(win_rate), 1, 0)
+                        p = where_max / where_max.sum()
+                        arg = np.random.choice(np.arange(len(clicks)), p=p)
+                        pos = [clicks[arg]]
+                        confidence = win_rate[arg]
+                        self.Visible_signal.emit(False)
 
-                    if not self.is_play:
-                        for p in range(len(clicks)):
-                            if tuple(clicks[p]) not in self.appended_pos:
-                                if tuple(clicks[p]) == pos[0]:
-                                    self.pos_dict_list.append(
-                                        {
-                                            "pos": clicks[p],
-                                            "confidence": round(win_rate[p], 5),
-                                            "num": self.num,
-                                            "is_mine": False,
-                                            "is_best": False,
-                                            "exp": f"胜率计算得出",
-                                            "is_recommend": True
-                                        }
-                                    )
-                                    self.appended_pos.add(tuple(clicks[p]))
-                                else:
-                                    self.pos_dict_list.append(
-                                        {
-                                            "pos": clicks[p],
-                                            "confidence": round(win_rate[p], 5),
-                                            "num": self.num,
-                                            "is_mine": False,
-                                            "is_best": False,
-                                            "exp": f"胜率计算得出",
-                                            "is_recommend": False,
-                                        }
-                                    )
-                                    self.appended_pos.add(tuple(clicks[p]))
+                        if not self.is_play:
+                            for p in range(len(clicks)):
+                                if tuple(clicks[p]) not in self.appended_pos:
+                                    if tuple(clicks[p]) == pos[0]:
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": clicks[p],
+                                                "confidence": round(win_rate[p], 5),
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": False,
+                                                "exp": f"胜率计算得出",
+                                                "is_recommend": True
+                                            }
+                                        )
+                                        self.appended_pos.add(tuple(clicks[p]))
+                                    else:
+                                        self.pos_dict_list.append(
+                                            {
+                                                "pos": clicks[p],
+                                                "confidence": round(win_rate[p], 5),
+                                                "num": self.num,
+                                                "is_mine": False,
+                                                "is_best": False,
+                                                "exp": f"胜率计算得出",
+                                                "is_recommend": False,
+                                            }
+                                        )
+                                        self.appended_pos.add(tuple(clicks[p]))
 
-                    # 热力图：win_rate 的逐格"不是雷"概率（键与决策坐标同为 1-based）
-                    _prob = {tuple(k): float(v) for k, v in clicks2p.items()}
+                        # 热力图：win_rate 的逐格"不是雷"概率（键与决策坐标同为 1-based）
+                        _prob = {tuple(k): float(v) for k, v in clicks2p.items()}
 
                 else:  # 大情况
                     pos, confidence, total, _prob = self.process_bigger_situation(
@@ -773,7 +877,12 @@ class ProbabilityMixin:
                 time.sleep(0.1)
 
                 if limitation <= wr_threshold:
-                    confidence = clicks2p[(p[0], p[1])]
+                    # ⚠️ 只有真的走了 win_rate 分支才有 clicks2p。
+                    # node_cap 降级（或 _wr_memory_ok 拦下走贪心）时该变量不存在，
+                    # 直接下标会 UnboundLocalError（端到端负向测试实测抓到）。
+                    # 降级时保留上面 process_bigger_situation 给出的 confidence。
+                    if _wr_have_c2p and (p[0], p[1]) in clicks2p:
+                        confidence = clicks2p[(p[0], p[1])]
 
                 _index = confidence * 100
                 _index = round(_index)
@@ -1228,10 +1337,27 @@ class ProbabilityMixin:
                 _res, _clicks, _total, _clicks2p = native.mscore.win_rate(
                     clicks, clicks9, native.as_groups(res_list), cell_value, ck,
                     num10, self.a, self.w, self.h, self.is_play,
-                    self._pv_mapped_emit)
-                self.memory = {}
-                return list(_res), list(_clicks), int(_total), dict(_clicks2p)
+                    self._pv_mapped_emit, _wr_node_cap())
+            except _WrNodeCapExceeded as e:
+                # ⚠️ 节点数超硬上限：这**不能**回退到纯 Python 实现——
+                # 纯 Python 的 f() 同样无上限，退过去等于没拦，正是此前
+                # 把内存顶爆的路径。正确做法是抛给 number5_1 让它走
+                # process_bigger_situation（贪心），即有意的精度降级。
+                self._wr_nodecap_hits += 1
+                logger.warning(
+                    "win_rate 节点数超上限（%s）→ 本步降级为贪心分支"
+                    "（前瞻精度降级，不崩溃、不影响正确性）", e)
+                raise
             except Exception as e:
+                # C++ 的 node cap 异常以 RuntimeError 形式回来（pybind11 转换），
+                # 这里按消息识别并转成本模块的专用异常，使其走降级路径
+                # 而不是"回退纯 Python"。识别失败才按普通失败处理。
+                if "node cap exceeded" in str(e):
+                    self._wr_nodecap_hits += 1
+                    logger.warning(
+                        "win_rate 节点数超上限（%s）→ 本步降级为贪心分支"
+                        "（前瞻精度降级，不崩溃、不影响正确性）", e)
+                    raise _WrNodeCapExceeded(str(e)) from e
                 logger.warning("C++ win_rate 失败，回退纯 Python 实现：%s", e)
                 # 纯 Python 回退同样吃内存，但它只在“C++ 抛异常”时走到，
                 # 而调用前的 _wr_memory_ok 已按同一公式拦掉超限规模 ⇒
