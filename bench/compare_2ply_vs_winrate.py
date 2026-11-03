@@ -38,30 +38,46 @@ UNOPENED, MINE = 9, 10
 # ---------------------------------------------------------------------------
 # 世界枚举（与 C++ py_win_rate 阶段1 同一语义）
 # ---------------------------------------------------------------------------
-def enumerate_worlds(case):
-    """枚举所有一致世界，返回 (worlds, clicks, clicks9)。
+def enumerate_worlds(case, validate=True):
+    """枚举所有一致世界，返回 (worlds, clicks, clicks9, base_mines)。
 
-    每个 world = dict[(x,y)] -> 0/1（1=雷），只含前沿格与内部格 + 基底盘面。
-    与 cpp/mscore.cpp 阶段1 的判定完全对应：
+    每个 world = set[(x,y)]，含该布局下**全部**雷格（已标记雷 + 前沿雷 + 内部雷）。
+    与 cpp/mscore.cpp 阶段1 的判定对应：
         rem = a - num10 - mine_total
         rem == 0            → 接受
         a > num10 + mt + |clicks9| → 拒绝
         否则 对 C(|clicks9|, rem) 的每个组合接受
+
+    ⚠️ 守恒断言（validate=True 时启用）：任何世界都必须满足
+        ① |world 中落在 w*h 盘面内的格| == a
+        ② base_mines ⊆ world，且 world 内无已开格
+        ③ world 内格数 == num10 + frontier_mines + inner_mines
+    这是本轮最重要的一道闸：曾经因列号错位导致世界少算雷（95/96/97 而非 99），
+    而所有下游读数（V*、safety、各臂排名）都"自洽地错"，极难发现。
     """
     a = case["a"]
     num10 = case["num10"]
+    w = int(case["w"])
+    h = int(case["h"])
     clicks = [tuple(p) for p in case["clicks"]]
     clicks9 = [tuple(p) for p in case["clicks9"]]
     ck = case["ck"]
     groups = case["groups"]
 
-    # 基底盘面里已有的雷（cell_value == 10）
+    # 基底盘面里已有的雷（cell_value == 10）与已开格（0..8）
     base_mines = set()
+    opened_cells = set()
     cv = case["cell_value"]
     for y in range(len(cv)):
         for x in range(len(cv[0])):
-            if cv[y][x] == MINE:
+            v = cv[y][x]
+            if v == MINE:
                 base_mines.add((x, y))
+            elif 0 <= v <= 8:
+                opened_cells.add((x, y))
+
+    # 盘面内（1..w, 1..h）的格，用于守恒计数（排除外框 0 值行/列）
+    board_cells = {(x, y) for y in range(1, h + 1) for x in range(1, w + 1)}
 
     worlds = []
 
@@ -69,7 +85,35 @@ def enumerate_worlds(case):
         m = set(base_mines)
         m |= set(frontier_mines)
         m |= set(inner_mines)
+        if validate:
+            inside = m & board_cells
+            if len(inside) != a:
+                raise AssertionError(
+                    f"世界雷数 {len(inside)} != a={a}（前沿雷 {len(frontier_mines)} "
+                    f"内部雷 {len(inner_mines)} 基底 {len(base_mines)}）")
+            if not (base_mines <= m):
+                raise AssertionError("基底已标记雷未全部包含在世界内")
+            if m & opened_cells:
+                raise AssertionError(f"世界把已开格当成了雷：{sorted(m & opened_cells)[:5]}")
+            if len(m & board_cells) != num10 + len(frontier_mines) + len(inner_mines):
+                raise AssertionError("雷数分项与总数不守恒")
         worlds.append(m)
+
+    # ⚠️ 关键修正（本轮发现）：groups[gi] 的列 **只覆盖本组自己的前沿格**，
+    # 不是全部 clicks。列号 ci 必须映射到该组在 clicks 里的偏移位置。
+    # 若直接写 clicks[ci]，组 1 的 8 个雷会被错写到 clicks[0..7]，
+    # 与组 0/2/3 的雷互相覆盖 ⇒ 世界雷数少算（实测 95/96/97 而非 99）
+    # ⇒ 所有 V*、safety、各臂读数系统性偏移（最隐蔽的一类错误）。
+    # 组顺序与 clicks 顺序一致：clicks 由 click_list（分组后同序化）展平而来
+    # （见 utils/probability.py:506-511）。
+    group_offset = []
+    _off = 0
+    for g in groups:
+        group_offset.append(_off)
+        _off += len(g[0])
+    if validate and _off != len(clicks):
+        raise AssertionError(
+            f"组列总数 {_off} != len(clicks) {len(clicks)}（分组与 clicks 未同序）")
 
     # 前沿格贡献（按 ck 的乘积遍历 —— 用 itertools.product 等价 Odometer）
     import itertools
@@ -78,10 +122,11 @@ def enumerate_worlds(case):
         fm = []
         for gi, sel in enumerate(idx):
             row = groups[gi][sel]
+            base = group_offset[gi]
             for ci, v in enumerate(row):
                 if v == 1:
                     mine_total += 1
-                    fm.append(clicks[ci])
+                    fm.append(clicks[base + ci])
         rem = a - num10 - mine_total
         if rem == 0:
             emit(fm, [])
