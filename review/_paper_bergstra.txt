@@ -1,0 +1,1027 @@
+
+===PAGE 1===
+Journalof Machine LearningResearch 13(2012)281-305 Submi tted 3/11;Revised9/11; Published2/12
+RandomSearch forHyper-ParameterOptimization
+JamesBergstra JAMES.BERGSTRA @UMONTREAL .CA
+YoshuaBengio YOSHUA.BENGIO@UMONTREAL .CA
+D´epartement d’Informatique et de recherche op ´erationnelle
+Universit ´ede Montr ´eal
+Montr´eal, QC, H3C3J7, Canada
+Editor:Leon Bottou
+Abstract
+Grid search and manual search are the most widely used strate gies for hyper-parameter optimiza-
+tion. This paper shows empirically and theoretically that r andomly chosen trials are more efﬁcient
+for hyper-parameter optimization than trials on a grid. Emp irical evidence comes from a compar-
+ison with a large previous study that used grid search and man ual search to conﬁgure neural net-
+worksanddeepbeliefnetworks. Comparedwithneuralnetwor ksconﬁguredbyapuregridsearch,
+we ﬁnd that random search over the same domain is able to ﬁnd mo dels that are as good or better
+within a small fraction of the computation time. Granting ra ndom search the same computational
+budget, random search ﬁnds better models by effectively sea rching a larger, less promising con-
+ﬁguration space. Compared with deep belief networks conﬁgu red by a thoughtful combination of
+manual search and grid search, purely random search over the same 32-dimensional conﬁguration
+space found statistically equal performance on four of seve n data sets, and superior performance
+on one of seven. A Gaussian process analysis of the function f rom hyper-parameters to validation
+set performance reveals that for most data sets only a few of t he hyper-parameters really matter,
+but that different hyper-parameters are important on diffe rent data sets. This phenomenon makes
+grid search a poor choice for conﬁguring algorithms for new d ata sets. Our analysis casts some
+lightonwhyrecent“HighThroughput”methodsachievesurpr isingsuccess—theyappeartosearch
+through a large number of hyper-parameters because most hyp er-parameters do not matter much.
+We anticipate that growing interest in large hierarchical m odels will place an increasing burden on
+techniquesforhyper-parameteroptimization;thisworksh owsthatrandomsearchisanaturalbase-
+line against which to judge progress in the development of ad aptive (sequential) hyper-parameter
+optimization algorithms.
+Keywords: globaloptimization,modelselection,neuralnetworks,de eplearning,responsesurface
+modeling
+1. Introduction
+Theultimateobjectiveofatypicallearningalgorithm Aistoﬁndafunction fthatminimizessome
+expected loss L(x;f)over i.i.d. samples xfrom a natural (grand truth) distribution Gx. Alearning
+algorithmAisafunctionalthatmapsadataset X(train)(aﬁnitesetofsamplesfrom Gx)toafunction
+f. Very often a learning algorithm produces fthrough the optimization of a training criterion with
+respect to a set of parameters θ. However, the learning algorithm itself often has bells and whistles
+calledhyper-parameters λ, and the actual learning algorithm is the one obtained after choosing
+λ, which can be denoted Aλ, andf=Aλ(X(train))for a training set X(train). For example, with a
+c/circlecopyrt2012James Bergstra andYoshuaBengio.
+
+===PAGE 2===
+BERGSTRA AND BENGIO
+Gaussian kernel SVM, one has to select a regularization penalty Cfor the training criterion (which
+controlsthe margin)and thebandwidth σof theGaussiankernel,thatis, λ=(C,σ).
+What we really need in practice is a way to choose λso as to minimize generalization error
+Ex∼Gx[L(x;Aλ(X(train)))]. Note that the computation performed by Aitself often involves an inner
+optimization problem, which is usually iterative and approximate. The problem of identifying a
+good value for hyper-parameters λis called the problem of hyper-parameter optimization . This
+papertakesalookatalgorithmsforthisdifﬁcultouter-loopoptimizationproble m,whichisofgreat
+practicalimportance inempiricalmachinelearningwork:
+λ(∗)=argmin
+λ∈ΛEx∼Gx[L/parenleftBig
+x;Aλ(X(train))/parenrightBig
+]. (1)
+In general, we do not have efﬁcient algorithms for performing the optimizatio n implied by Equa-
+tion1. Furthermore,wecannotevenevaluatetheexpectationovertheunk nownnaturaldistribution
+Gx, the value we wish to optimize. Nevertheless, we must carry out this optimization a s best we
+can. With regards to the expectation over Gx, we will employ the widely used technique of cross-
+validation toestimateit. Cross-validationisthetechniqueofreplacingtheexpectationwithame an
+over avalidation set X(valid)whose elements are drawn i.i.d x∼Gx. Cross-validation is unbiased
+as long as X(valid)is independent of any data used by Aλ(see Bishop, 1995, pp. 32-33). We see in
+Equations2-4thehyper-parameter optimizationproblemas itisaddressedin practice:
+λ(∗)≈argmin
+λ∈Λmean
+x∈X(valid)L/parenleftBig
+x;Aλ(X(train))/parenrightBig
+. (2)
+≡argmin
+λ∈ΛΨ(λ) (3)
+≈argmin
+λ∈{λ(1)...λ(S)}Ψ(λ)≡ˆλ (4)
+Equation 3 expresses the hyper-parameter optimization problem in terms of a hyper-parameter
+response function ,Ψ. Hyper-parameter optimization is the minimization of Ψ(λ)overλ∈Λ. This
+functionissometimescalledthe responsesurface intheexperimentdesignliterature. Differentdata
+sets, tasks, and learning algorithm families give rise to different sets Λand functions Ψ. Knowing
+in general very little about the response surface Ψor the search space Λ, the dominant strategy for
+ﬁndingagood λistochoosesomenumber( S)oftrialpoints{λ(1)...λ(S)},toevaluate Ψ(λ)foreach
+one,and returnthe λ(i)thatworkedthebestas ˆλ. Thisstrategyis madeexplicitbyEquation4.
+The critical step in hyper-parameter optimization is to choose the set of trials {λ(1)...λ(S)}.
+The most widely used strategy is a combination of grid search and manual sea rch (e.g., LeCun
+etal.,1998b;Larochelleetal.,2007;Hinton,2010),aswellasmachinele arningsoftwarepackages
+such as libsvm (Chang and Lin, 2001) and scikits.learn.1IfΛis a set indexed by Kconﬁguration
+variables (e.g., for neural networks it would be the learning rate, the numb er of hidden units, the
+strength of weight regularization, etc.), then grid search requires that w e choose a set of values for
+each variable ( L(1)...L(K)). In grid search the set of trials is formed by assembling every possible
+combination of values, so the number of trials in a grid search is S=∏K
+k=1|L(k)|elements. This
+product over Ksets makes grid search suffer from the curse of dimensionality because the number
+of joint values grows exponentially with the number of hyper-parameters (B ellman, 1961). Manual
+1.scikits.learn : Machine Learning inPython canbe foundat http://scikit-learn.sourceforge.net .
+282
+
+===PAGE 3===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+search is used to identify regions in Λthat are promising and to develop the intuition necessary to
+choose the sets L(k). A major drawback of manual search is the difﬁculty in reproducing results .
+Thisisimportantbothfortheprogressofscientiﬁcresearchinmachinelear ningaswellasforease
+ofapplicationoflearningalgorithmsbynon-expertusers. Ontheotherha nd,gridsearchalonedoes
+very poorly in practice (as discussed here). We propose random sea rch as a substitute and baseline
+that is both reasonably efﬁcient (roughly equivalent to or better than co mbinining manual search
+and grid search, in our experiments) and keeping the advantages of impleme ntation simplicity and
+reproducibility of pure grid search. Random search is actually more prac tical than grid search
+because it can be applied even when using a cluster of computers that can fail, and allows the
+experimenter to change the “resolution” on the ﬂy: adding new trials to the set or ignoring failed
+trialsarebothfeasiblebecausethetrialsarei.i.d.,whichisnotthecaseforag ridsearch. Ofcourse,
+randomsearchcanprobablybeimprovedbyautomatingwhatmanualsear chdoes,i.e.,asequential
+optimization,butthis islefttofuturework.
+Thereareseveralreasonswhymanualsearchandgridsearchpre vailasthestateoftheartdespite
+decadesofresearchintoglobaloptimization(e.g.,NelderandMead,1965; Kirkpatricketal.,1983;
+Powell, 1994; Weise, 2009) and the publishing of several hyper-para meter optimization algorithms
+(e.g.,Nareyek,2003; Czogielet al.,2005;Hutter,2009):
+•Manualoptimization givesresearcherssomedegreeof insightinto Ψ;
+•Thereisno technicaloverheador barriertomanual optimization;
+•Gridsearchissimpletoimplement andparallelizationis trivial;
+•Grid search (with access to a compute cluster) typically ﬁnds a better ˆλthan purely manual
+sequentialoptimization (inthesameamountof time);
+•Gridsearchisreliablein lowdimensionalspaces (e.g.,1-d,2-d).
+We will come back to the use of global optimization algorithms for hyper-paramete r selection
+inourdiscussionoffuturework(Section6). Inthispaper,wefocuson randomsearch,thatis,inde-
+pendentdrawsfromauniformdensityfromthesameconﬁgurationspac easwouldbespannedbya
+regular grid, as an alternative strategy for producing a trial set {λ(1)...λ(S)}. We show that random
+searchhasallthepracticaladvantagesofgridsearch(conceptuals implicity,easeofimplementation,
+trivial parallelism) and trades a small reduction in efﬁciency in low-dimensiona l spaces for a large
+improvementinefﬁciencyinhigh-dimensionalsearchspaces.
+Inthisworkweshowthatrandomsearchismoreefﬁcientthangridsearc hinhigh-dimensional
+spacesbecausefunctions Ψofinteresthavea loweffectivedimensionality ;essentially, Ψofinterest
+aremoresensitivetochangesinsomedimensionsthanothers(Caﬂischetal., 1997). Inparticular,if
+afunction foftwovariablescouldbeapproximatedbyanotherfunctionofonevariable (f(x1,x2)≈
+g(x1)), we could say that fhas alow effective dimension . Figure 1 illustrates how point grids
+and uniformly random point sets differ in how they cope with low effective d imensionality, as in
+the above example with f. A grid of points gives even coverage in the original 2-d space, but
+projections onto either the x1orx2subspace produces an inefﬁcient coverage of the subspace. In
+contrast,randompointsareslightlylessevenlydistributedintheoriginalspa ce,butfarmoreevenly
+distributedinthesubspaces.
+Iftheresearchercouldknowaheadoftimewhichsubspaceswouldbeimpo rtant,thenheorshe
+coulddesignanappropriategrid. However,weshowthefailingsofthisstr ategyinSection2. Fora
+283
+
+===PAGE 4===
+BERGSTRA AND BENGIO
+Grid Layout Random LayoutUnimportant parameter
+Important parameterUnimportant parameter
+Important parameter
+Figure1: Grid and random search of nine trials for optimizing a function f(x,y)=g(x)+h(y)≈
+g(x)with low effective dimensionality. Above each square g(x)is shown in green, and
+left of each square h(y)is shown in yellow. With grid search, nine trials only test g(x)
+in three distinct places. With random search, all nine trials explore distinct v alues of
+g. This failure of grid search is the rule rather than the exception in high dimens ional
+hyper-parameteroptimization.
+givenlearningalgorithm,lookingatseveralrelativelysimilardatasets(fro mdifferentdistributions)
+revealsthatondifferentdatasets,differentsubspacesareimportan t,andtodifferentdegrees. Agrid
+with sufﬁcient granularity to optimizing hyper-parameters for all data sets mus t consequently be
+inefﬁcientforeachindividualdatasetbecauseofthecurseofdimens ionality: thenumberofwasted
+gridsearchtrialsisexponentialinthenumberofsearchdimensionsthatturn outtobeirrelevantfor
+a particular data set. In contrast, random search thrives on low effecti ve dimensionality. Random
+search has the same efﬁciency in the relevant subspace as if it had been used to search only the
+relevantdimensions.
+Thispaperisorganizedasfollows. Section2looksattheefﬁciencyofra ndomsearchinpractice
+vs. gridsearchasamethodforoptimizingneuralnetworkhyper-paramete rs. Wetakethegridsearch
+experiments of Larochelle et al. (2007) as a point of comparison, and re peat similar experiments
+using random search. Section 3 uses Gaussian process regression ( GPR) to analyze the results of
+the neural network trials. The GPR lets us characterize what Ψlooks like for various data sets,
+and establish an empirical link between the low effective dimensionality of Ψand the efﬁciency
+of random search. Section 4 compares random search and grid searc h with more sophisticated
+point sets developed for Quasi Monte-Carlo numerical integration, and a rgues that in the regime of
+interest for hyper-parameter selection grid search is inappropriate and more sophisticated methods
+bring little advantage over random search. Section 5 compares random se arch with the expert-
+guidedmanualsequentialoptimizationemployedinLarochelleetal.(2007)too ptimizeDeepBelief
+Networks. Section 6 comments on the role of global optimization algorithms in future work. We
+conclude in Section 7 that random search is generally superior to grid sea rch for optimizing hyper-
+parameters.
+284
+
+===PAGE 5===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+2. Randomvs. Grid for Optimizing NeuralNetworks
+In this section we take a second look at several of the experiments of Laro chelle et al. (2007) us-
+ing random search, to compare with the grid searches done in that work. W e begin with a look
+at hyper-parameter optimization in neural networks, and then move on to hyp er-parameter opti-
+mization in Deep Belief Networks (DBNs). To characterize the efﬁciency of random search, we
+present two techniques in preliminary sections: Section 2.1 explains how we e stimate the general-
+ization performance of the bestmodel from a set of candidates, taking into account our uncertainty
+in which model is actually best; Section 2.2 explains the random experiment efﬁ ciency curve that
+we use to characterize the performance of random search experiments. With these preliminaries
+out of the way, Section 2.3 describes the data sets from Larochelle et al. ( 2007) that we use in our
+work. Section2.4presentsourresultsoptimizingneuralnetworks,andSe ction5presentsourresults
+optimizingDBNs.
+2.1 EstimatingGeneralization
+Because of ﬁnite data sets, test error is not monotone in validation error, a nd depending on the set
+of particular hyper-parameter values λevaluated, the test error of the best-validation error conﬁgu-
+ration may vary. When reporting performance of learning algorithms, it can be useful to take into
+account the uncertainty due to the choice of hyper-parameters values. T his section describes our
+procedure for estimating test set accuracy, which takes into account an y uncertainty in the choice
+of which trial is actually the best-performing one. To explain this procedure , we must distinguish
+between estimates of performance Ψ(valid)=ΨandΨ(test)based on the validation and test sets
+respectively:
+Ψ(valid)(λ)=meanx∈X(valid)L/parenleftBig
+x;Aλ(X(train))/parenrightBig
+,
+Ψ(test)(λ)=meanx∈X(test)L/parenleftBig
+x;Aλ(X(train))/parenrightBig
+.
+Likewise,wemustdeﬁnetheestimatedvariance Vaboutthesemeansonthevalidationandtestsets,
+forexample, forthezero-oneloss(Bernoullivariance):
+V(valid)(λ)=Ψ(valid)(λ)/parenleftbig
+1−Ψ(valid)(λ)/parenrightbig
+|X(valid)|−1,and
+V(test)(λ)=Ψ(test)(λ)/parenleftbig
+1−Ψ(test)(λ)/parenrightbig
+|X(test)|−1.
+Withother lossfunctionstheestimator of variancewillgenerallybedifferent.
+The standard practice for evaluating a model found by cross-validation is to reportΨ(test)(λ(s))
+for theλ(s)that minimizes Ψ(valid)(λ(s)). However, when different trials have nearly optimal val-
+idation means, then it is not clear which test score to report, and a slightly diffe rent choice of λ
+could have yielded a different test error. To resolve the difﬁculty of ch oosing a winner, we report a
+weighted average of all the test set scores, in which each one is weighted by the probability that its
+particular λ(s)isinfactthebest. Inthisview,theuncertaintyarisingfrom X(valid)beingaﬁnitesam-
+ple ofGxmakes the test-set score of the best model among λ(1),...,λ(S)a random variable, z. This
+scorezismodeledbyaGaussianmixturemodelwhose Scomponentshavemeans µs=Ψ(test)(λ(s)),
+285
+
+===PAGE 6===
+BERGSTRA AND BENGIO
+variances σ2
+s=V(test)(λ(s)),and weights wsdeﬁnedby
+ws=P/parenleftBig
+Z(s)<Z(s′),∀s′/ne}ationslash=s/parenrightBig
+,where
+Z(i)∼N/parenleftBig
+Ψ(valid)(λ(i)),V(valid)(λ(i))/parenrightBig
+.
+To summarize, the performance zof the best model in an experiment of Strials has mean µzand
+standarderror σ2
+z,
+µz=S
+∑
+s=1wsµs,and (5)
+σ2
+z=S
+∑
+s=1ws/parenleftbig
+µ2
+s+σ2
+s/parenrightbig
+−µ2
+z. (6)
+It is simple and practical to estimate weights wsby simulation. The procedure for doing so is to
+repeatedly drawhypothetical validationscores Z(s)fromNormaldistributionswhosemeans arethe
+Ψ(valid)(λ(s))and whose variances are the squared standard errors V(valid)(λ(s)), and to count how
+often each trial generates a winning score. Since the test scores of the b est validation scores are
+typically relatively close, wsneed not be estimated very precisely and a few tens of hypothetical
+drawssufﬁce.
+In expectation, this technique for estimating generalization gives a higher es timate than the
+traditionaltechniqueofreportingthetestseterrorofthebestmodelinva lidation. Thedifferenceis
+relatedtothevariance Ψ(valid)andthedensityofvalidationsetscores Ψ(λ(i))nearthebestvalue. To
+theextentthat Ψ(valid)castsdoubtonwhichmodelwasbest,thistechniqueaveragestheperfor mance
+ofthebestmodeltogetherwiththeperformanceofmodelswhichwerenotthe best. Thenextsection
+(Random ExperimentEfﬁcienyCurve) illustratesthis phenomenonand disc ussesitinmoredetail.
+2.2 Random Experiment Efﬁciency Curve
+Figure 2 illustrates the results of a random experiment: an experiment of 256 trials training neural
+networks to classify the rectangles data set. Since the trials of a random exp eriment are indepen-
+dently identically distributed (i.i.d.), a random search experiment involving Si.i.d. trials can also
+be interpreted as Nindependent experiments of strials, as long as sN≤S. This interpretation al-
+lowsustoestimatestatisticssuchastheminimum,maximum,median,andquantilesofanyra ndom
+experimentof size s,wheresisa divisorof S.
+Therearetwogeneraltrendsinrandomexperimentefﬁciencycurves ,suchastheoneinFigure2:
+a sharp upward slope of the lower extremes as experiments grow, and a ge ntle downward slope of
+the upper extremes. The sharp upward slope occurs because when we take the maximum over
+larger subsets of the Strials, trials with poor performance are rarely the best within their subset. It
+is natural that larger experiments ﬁnd trials with better scores. The shape o f this curve indicates
+the frequency of good models under random search, and quantiﬁes the relative volumes (in search
+space) ofthe variouslevelsof performance.
+Thegentledownwardslopeoccursbecauseaswetakethemaximumoverlar gersubsetsoftrials
+(in Equation 6), we are less sure about which trial is actually the best. Larg e experiments average
+togethergoodvalidationtrialswithunusuallyhightestscoreswithothergoodv alidationtrialswith
+unusually low test scores to arrive at a more accurate estimate of generaliz ation. For example,
+286
+
+===PAGE 7===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+1 2 4 8 16 32 64 128
+experimen tsize(#trials)0.450.500.550.600.650.700.750.80accuracyrectangles images
+Figure2: A random experiment efﬁciency curve. The trials of a random experiment are i.i.d, so
+an experiment of many trials (here, 256 trials optimizing a neural network to cla ssify the
+rectangles basic data set, Section 2.3) can be interpreted as several independent smaller
+experiments. For example, at horizontal axis position 8, we consider our 2 56 trials to
+be 32 experiments of 8 trials each. The vertical axis shows the test accura cy of the best
+trial(s) from experiments of a given size, as determined by Equation 5. Whe n there are
+sufﬁciently many experiments of a given size (i.e., 10), the distribution of per formance
+is illustrated by a box plot whose boxed section spans the lower and upper q uartiles and
+includes a line at the median. The whiskers above and below each boxed se ction show
+thepositionofthemostextremedatapointwithin1.5timestheinter-quartilerangeof the
+nearest quartile. Data points beyond the whiskers are plotted with ’+’ symbo ls. When
+therearenotenoughexperimentstosupportaboxplot,asoccurshere forexperimentsof
+32 trials or more, the best generalization score of each experiment is show n by a scatter
+plot. The two thin black lines across the top of the ﬁgure mark the upper and low er
+boundaries of a 95% conﬁdence interval on the generalization of the bes t trial overall
+(Equation6).
+consider what Figure 2 would look like if the experiment had included lucky trial whose validation
+score were around 77% as usual, but whose test score were 80%. In the bar plot for trials of size
+1,wewould seethe topperformerscoring80%. Inlarger experiments,we wouldaveragethat80%
+performancetogetherwithothertestsetperformancesbecause77%isn otclearlythebestvalidation
+score; this averaging would make the upper envelope of the efﬁciency cu rve slope downward from
+80% toapointveryclosetothecurrenttestsetestimateof 76%.
+Figure2characterizestherangeofperformancethatistobeexpectedf romexperimentsofvari-
+oussizes,whichisvaluableinformationtoanyonetryingtoreproducethese results. Forexample,if
+we try to repeat the experiment and our ﬁrst four random trials fail to ﬁnd a score better than 70%,
+thentheproblemis likelynotinhyper-parameter selection.
+287
+
+===PAGE 8===
+BERGSTRA AND BENGIO
+Figure3: Fromtoptobottom,samplesfromthe mnistrotated ,mnistbackgroundrandom ,mnist
+background images ,mnist rotated background images data sets. In all data sets the
+taskistoidentifythedigit(0- 9)and ignorethevariousdistractingfactorsof variation.
+2.3 DataSets
+Following the work of Larochelle et al. (2007) and Vincent et al. (2008) , we use a variety of classi-
+ﬁcationdata setsthatinclude manyfactorsofvariation.2
+Themnistbasic datasetisasubsetofthewell-knownMNISThandwrittendigitdataset(Le Cun
+etal.,1998a). Thisdatasethas28x28pixelgrey-scaleimagesofdigits, eachbelongingtooneoften
+classes. Wechoseadifferenttrain/test/validationsplittinginordertohavefa sterexperimentsandsee
+learning performance differences more clearly. We shufﬂed the origina l splits randomly, and used
+10 000 training examples, 2000 validation examples, and 50 000 testing example s. These images
+arepresentedas white(1.0-valued)foregrounddigits againstablack( 0.0-valued) background.
+Themnist background images data set is a variation on mnist basic in which the white fore-
+grounddigithasbeencompositedontopofa28x28naturalimagepatch. Te chnicallythiswasdone
+by taking the maximum of the original MNIST image and the patch. Natural image pa tches with
+very low pixel variance were rejected. As with mnist basic there are 10 classes, 10 000 training
+examples,2000validationexamples,and 50000testexamples.
+Themnist background random data set is a similar variation on mnist basic in which the
+white foreground digit has been composited on top of random uniform (0,1 ) pixel values. As with
+mnist basic there are 10 classes, 10 000 training examples, 2000 validation examples, a nd 50 000
+testexamples.
+Themnistrotated datasetisavariationon mnistbasic inwhichtheimageshavebeenrotated
+by an amount chosen randomly between 0 and 2 πradians. This data set included 10000 training
+examples,2000validationexamples,50 000testexamples.
+2. Data sets can be found at http://www.iro.umontreal.ca/ ˜lisa/twiki/bin/view.cgi/Public/
+DeepVsShallowComparisonICML2007 .
+288
+
+===PAGE 9===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+Figure4: Top:Samplesfromthe rectangles dataset.Middle:Samplesfromthe rectanglesimages
+data set.Bottom:Samples from the convexdata set. In rectangles data sets, the image is
+formed by overlaying a small rectangle on a background. The task is to labe l the small
+rectangle as being either tall or wide. In convex, the task is to identify whether the set of
+whitepixels isconvex(images 1and4) ornot convex(images 2and3).
+Themnist rotated background images data set is a variation on mnist rotated in which the
+images have been rotated by an amount chosen randomly between 0 and 2 πradians, and then sub-
+sequentlycompositedontonaturalimagepatchbackgrounds. Thisdataset included10000training
+examples,2000validationexamples,50 000testexamples.
+Therectangles data set (Figure 4, top) is a simple synthetic data set of outlines of rectangles .
+The images are 28x28, the outlines are white (1-valued) and the backgrou nds are black (0-valued).
+The height and width of the rectangles were sampled uniformly, but when the ir difference was
+smaller than 3 pixels the samples were rejected. The top left corner of the rec tangles was also
+sampled uniformly, with the constraint that the whole rectangle ﬁts in the image. Ea ch image is
+labelledasoneoftwoclasses: tallorwide. ThistaskwaseasierthantheMNI STdigitclassiﬁcation,
+so we only used 1000 training examples, and 200 validation examples, but we still used 50 000
+testingexamples.
+Therectangles images data set (Figure 4, middle) is a variation on rectangles in which the
+foregroundrectangleswereﬁlledwithonenaturalimagepatch,andcompos itedontopofadifferent
+background natural image patch. The process for sampling rectangle sh apes was similar to the one
+used forrectangles , except a) the area covered by the rectangles was constrained to be be tween
+25% and 75% of the total image, b) the length and width of the rectangles were f orced to be of at
+least 10 pixels, and c) their difference was forced to be of at least 5 pix els. This task was harder
+thanrectangles ,soweused10000trainingexamples,2000validationexamples,and50000 testing
+examples.
+Theconvexdata set (Figure4, bottom) is a binary image classiﬁcation task. Each 28x28 ima ge
+consists entirely of 1-valued and 0-valued pixels. If the 1-valued pixels f orm a convex region in
+imagespace,thentheimageislabelledasbeingconvex,otherwiseitislabelleda snon-convex. The
+convex sets consist of a single convex region with pixels of value 1.0. Can didate convex images
+were constructed by taking the intersection of a number of half-planes who se location and orienta-
+289
+
+===PAGE 10===
+BERGSTRA AND BENGIO
+tion were chosen uniformly at random. The number of intersecting half-plan es was also sampled
+randomly according to a geometric distribution with parameter 0.195. A candidate convex image
+was rejected if there were less than 19 pixels in the convex region. Candidate non-convex images
+were constructed by taking the union of a random number of convex sets g enerated as above, but
+withthenumberofhalf-planessampledfromageometricdistributionwithparamete r0.07andwith
+a minimum number of 10 pixels. The number of convex sets was sampled uniformly from 2 to
+4. The candidate non-convex images were then tested by checking a conv exity condition for every
+pair of pixels in the non-convex set. Those sets that failed the convexity tes t were added to the data
+set. Theparametersforgeneratingtheconvexandnon-convexsetswe rebalancedtoensurethatthe
+conditional overallpixelmean isthesamefor bothclasses.
+2.4 CaseStudy: NeuralNetworks
+In Larochelle et al. (2007), the hyper-parameters of the neural netwo rk were optimized by search
+over a grid of trials. We describe the hyper-parameter conﬁguration spa ce of our neural network
+learning algorithm in terms of the distribution that we will use to randomly sample fro m that con-
+ﬁguration space. The ﬁrst hyper-parameter in our conﬁguration is the ty pe of data preprocessing:
+with equal probability, one of (a) none, (b) normalize (center each featu re dimension and divide by
+its standard deviation), or (c) PCA (after removing dimension-wise means, e xamples are projected
+onto principle components of the data whose norms have been divided by the ir eigenvalues). Part
+ofPCApreprocessingischoosinghowmanycomponentstokeep. Wechoo seafractionofvariance
+to keep with a uniform distribution between 0 .5 and 1.0. There have been several suggestions for
+how the random weights of a neural network should be initialized (we will look at unsupervised
+learningpretraining algorithmslaterinSection5). Weexperimentedwithtwodistributionsandtwo
+scalingheuristics. Thepossibledistributionswere(a)uniformon (−1,1),and(b)unitnormal. The
+two scaling heuristics were (a) a hyper-parameter multiplier between 0 .1 and 10.0 divided by the
+square root of the number of inputs (LeCun et al., 1998b), and (b) the s quare root of 6 divided by
+the square root of the number of inputs plus hidden units (Bengio and Gloro t, 2010). The weights
+themselves were chosen using one of three random seeds to the Mersenn e Twister pseudo-random
+number generator. In the case of the ﬁrst heuristic, we chose a multiplier un iformly from the range
+(0.2,2.0). The number of hidden units was drawn geometrically3from 18 to 1024. We selected
+eitherasigmoidalortanhnonlinearitywithequalprobability. Theoutputweigh tsfromhiddenunits
+to prediction units were initialized to zero. The cost function was the mean erro r over minibatches
+of either 20 or 100 (with equal probability) examples at a time: in expectation the se give the same
+gradient directions, but with more or less variance. The optimization algorithm was stochastic gra-
+dientdescentwith[initial]learningrate ε0drawngeometricallyfrom0 .001to10 .0. Weofferedthe
+possibility of an annealed learning rate via a time point t0drawn geometrically from 300 to 30000.
+Theeffectivelearningrate εtaftertminibatchiterationswas
+εt=t0ε0
+max(t,t0). (7)
+Wepermittedaminimumof100andamaximumof1000iterationsoverthetrainingdata, stopping
+if ever, at iteration t, the best validation performance was observed before iteration t/2. With 50%
+3. Wewillusethephrase drawngeometrically fromAtoBfor0<A<Btomeandrawinguniformlyinthelogdomain
+betweenlog (A)andlog(B),exponentiatingtogetanumberbetween AandB,andthenroundingtothenearestinteger.
+The phrase drawnexponentially means thesame thingbut withoutrounding.
+290
+
+===PAGE 11===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+probability,an ℓ2regularizationpenaltywasapplied,whosestrengthwasdrawnexponentia llyfrom
+3.1×10−7to 3.1×10−5. This sampling process covers roughly the same domain with the same
+densityasthegridusedinLarochelleetal.(2007),exceptfortheoption alpreprocessingsteps. The
+grid optimization of Larochelle et al. (2007) did not consider normalizing or k eeping only leading
+PCAdimensionsoftheinputs;wecomparetorandomsamplingwithandwithoutthe serestrictions.4
+We formed experiments for each data set by drawing S=256 trials from this distribution. The
+resultsoftheseexperimentsareillustratedinFigures5and6. Randomsamplin goftrialsissurpris-
+ingly effective in these settings. Figure 5 shows that even among the fractio n of jobs (71 /256) that
+used no preprocessing, the random search with 8 trials is better than the gr id search employed in
+Larochelleetal.(2007).
+Typically, the extent of a grid search is determined by a computational budge t. Figure 6 shows
+what is possible if we use random search in a larger space that requires more trials to explore. The
+largersearchspaceincludesthepossibilityofnormalizingtheinputorapply ingPCApreprocessing.
+In the larger space, 32 trials were necessary to consistently outperform grid search rather than 8,
+indicating that there are many harmful ways to preprocess the data. Howev er, when we allowed
+larger experiments of 64 trials or more, random search found superior r esults to those found more
+quickly within the more restricted search. This tradeoff between exploration a nd exploitation is
+centraltothedesignof aneffectiverandomsearch.
+The efﬁciency curves in Figures 5 and 6 reveal that different data se ts give rise to functions Ψ
+with different shapes. The mnist basic results converge very rapidly toward what appears to be a
+global maximum. The fact that experiments of just 4 or 8 trials often have the sa me maximum as
+much larger experiments indicates that the region of Λthat gives rise to the best performance is
+approximately a quarter or an eighth respectively of the entire conﬁguratio n space. Assuming that
+the random search has not missed a tiny region of signiﬁcantly better perfo rmance, we can say that
+random search has solved this problem in 4 or 8 guesses. It is hard to imag ine any optimization
+algorithmdoingmuchbetteronanon-trivial7-dimensionalfunction. Incon trastthemnistrotated
+backgroundimages andconvexcurvesshowthatevenwith16or32randomtrials,thereisconsid-
+erablevariationinthegeneralizationofthereportedlybestmodel. Thisindica testhatthe Ψfunction
+inthesecasesis morepeaked, withsmallregions ofgood performance.
+3. The LowEffective Dimensionof Ψ
+Section 2 showed that random sampling is more efﬁcient than grid sampling for optimizing func-
+tionsΨcorresponding to several neural network families and classiﬁcation task s. In this section
+weshowthatindeed Ψhasaloweffectivedimension,whichexplainswhyrandomlysampledtrials
+found better values. One simple way to characterize the shape of a high-dimen sional function is
+to look at how much it varies in each dimension. Gaussian process regress ion gives us the statis-
+tical machinery to look at Ψand measure its effective dimensionality (Neal, 1998; Rasmussen and
+Williams,2006).
+We estimated the sensitivity of Ψto each hyper-parameter by ﬁtting a Gaussian process (GP)
+with squared exponential kernels to predict Ψ(λ)fromλ. The squared exponential kernel (or
+Gaussian kernel) measures similarity between two real-valued hyper-para meter values aandbby
+exp(−/parenleftbiga−b
+l/parenrightbig2). The positive-valued lgoverns the sensitivity of the GP to change in this hyper-
+4. Source code for thesimulations is available at https://github.com/jaberg/hyperopt .
+291
+
+===PAGE 12===
+BERGSTRA AND BENGIO
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistbasic
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistbackground images
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistbackground random
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistrotated
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistrotated background images
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracyconvex
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracyrectangles
+12481632
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracyrectangles images
+Figure5: Neural network performance without preprocessing. Rand om experiment efﬁciency
+curves of a single-layer neural network for eight of the data sets used in Larochelle et al.
+(2007), looking only at trials with no preprocessing (7 hyper-parameter s to optimize).
+Theverticalaxisistest-setaccuracyofthebestmodelbycross-valida tion,thehorizontal
+axis is the experiment size (the number of models compared in cross-validation ). The
+dashed blue line represents grid search accuracy for neural networ k models based on a
+selection by grids averaging 100 trials (Larochelle et al., 2007). Random s earches of 8
+trialsmatch oroutperformgridsearches of(onaverage) 100trials.
+parameter. The kernels deﬁned for each hyper-parameter were combin ed by multiplication (joint
+Gaussian kernel). We ﬁt a GP to samples of Ψby ﬁnding the length scale (l) for each hyper-
+parameterthatmaximizedthemarginallikelihood. Toensurerelevancecouldb ecomparedbetween
+hyper-parameters, we shifted and scaled each one to the unit interval. Fo r hyper-parameters that
+were drawn geometrically or exponentially (e.g., learning rate, number of hid den units), kernel
+calculations werebasedon thelogarithmofthe effectivevalue.
+292
+
+===PAGE 13===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistbasic
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistbackground images
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistbackground random
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistrotated
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracymnistrotated background images
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracyconvex
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracyrectangles
+1248163264
+experimentsize(#trials)0.30.40.50.60.70.80.91.0accuracyrectangles images
+Figure6: Neural network performance when standard preprocessin g algorithms are considered (9
+hyper-parameters). Dashed blue line represents grid search accura cy using (on average)
+100trials(Larochelleetal.,2007),inwhichnopreprocessingwasdone . Oftentheextent
+ofasearchisdeterminedbyacomputationalbudget,andwithrandomsearc h64trialsare
+enough to ﬁnd better models in a larger less promising space. Exploring just f our PCA
+variance levels by grid search would have required 5 times as many (avera ge 500) trials
+per dataset.
+Figure 7 shows the relevance of each component of Λin modelling Ψ(λ). Finding the length
+scales that maximize marginal likelihood is not a convex problem and many local minima exist. To
+get a sense of what length scales were supported by the data, we ﬁt eac h set of samples from Ψ
+50 times, resampling different subsets of 80% of the observations every time , and reinitializing the
+length scale estimates randomly between 0.1 and 2. Figure 7 reveals two importan t properties of Ψ
+forneuralnetworksthatsuggestwhygridsearchperformssopoor lyrelativetorandomexperiments:
+1. a smallfractionof hyper-parametersmatter for anyonedata set,but
+293
+
+===PAGE 14===
+BERGSTRA AND BENGIO
+/g1 /g2 /g3 /g4 /g5/g6/g1
+relevance (1 / length scale)mnist basic
+/g1 /g2 /g3 /g4 /g5 /g6/g1
+relevance (1 / length scale)mnist background images
+/g1 /g2 /g3 /g4 /g5 /g6/g1
+relevance (1 / length scale)mnist background random
+/g1 /g6 /g2 /g7 /g3
+relevance (1 / length scale)mnist rotated
+/g1/g1/g1/g1/g1/g8/g6/g1/g1/g6/g1/g8/g2/g1/g1/g2/g1/g8/g7/g1/g1/g7/g1/g8
+relevance (1 / length scale)convex
+/g1/g6/g2/g7/g3/g8/g4/g9
+relevance (1 / length scale)mnist rotated back. images
+/g1/g6/g2/g7/g3/g8/g4
+relevance (1 / length scale)rectangles
+/g1/g6/g2/g7/g3/g8/g4/g9
+relevance (1 / length scale)rectangles images Legend
+activation .n. hidden units
+initial W algo.
+initial W norm
+weight penalty
+learning rate
+learn rate anneal.h.u.
+a.f.
+w.a.
+w.n.
+w.p.
+l.r.
+l.a.
+h.u.
+a.f.
+w.a.
+w.n.
+w.p.
+l.r.
+l.a.
+h.u.
+a.f.
+w.a.
+w.n.
+w.p.
+l.r.
+l.a.
+Figure7: Automatic Relevance Determination (ARD) applied to hyper-paramete rs of neural net-
+work experiments (with raw preprocessing). For each data set, a small nu mber of hyper-
+parameters dominate performance, but the relative importance of each hyp er-parameter
+variesfromeachdatasettothenext. Section2.4describesthesevenhyp er-parametersin
+eachpanel. Boxplotsareobtainedbyrandomizingthesubsetofdataused toﬁtthelength
+scales,and randomizingthelength scaleinitialization. ( Bestviewedincolor. )
+294
+
+===PAGE 15===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+2. differenthyper-parametersmatter ondifferentdata sets.
+Even in this simple 7-d problem, Ψhas a much lower effective dimension of between 1 and 4,
+depending on the data set. It would be impossible to cover just these few dimen sions with a reli-
+able grid however, because different data sets call for grids on diffe rent dimensions. The learning
+rate is always important, but sometimes the learning rate annealing rate was impor tant (rectangles
+images), sometimes the ℓ2-penalty was important ( convex,mnist rotated ), sometimes the number
+of hidden units was important ( rectangles ), and so on. While random search optimized these Ψ
+functionswith8to16trials,agridwith,say,fourvaluesineachoftheseaxe swouldalreadyrequire
+256trials,and yetprovidenoguaranteethat Ψfor anewdatasetwouldbewell optimized.
+Figure 7 also allows us to establish a correlation between effective dimension ality and ease of
+optimization. The data sets for which the effective dimensionality was lowest (1 or 2) were mnist
+basic,mnist background images ,mnist background random , andrectangles images . Looking
+back at the corresponding efﬁciency curves (Figure 5) we ﬁnd that th ese are also the data sets
+whosecurvesplateaumostsharply,indicatingthatthesefunctionsarethe easiesttooptimize. They
+areoftenoptimizedreasonablywellbyjust2randomtrials. LookingtoFigur e7atthedatasetswith
+largest effective dimensionality (3 or 4), we identify convex,mnist rotated ,rectangles . Looking
+at their efﬁciency curves in Figure 5 reveals that they consistently requir ed at least 8 random trials.
+This correlation offers another piece of evidence that the effective dime nsionality of Ψis playing a
+strongroleindeterminingthe difﬁcultyof hyper-parameteroptimization.
+4. Grid Searchand Setswith LowEffective Dimensionality
+It is an interesting mathematical challenge to choose a set of trials for sampling f unctions of un-
+known, but low effective dimensionality. We would like it to be true that no matter which dimen-
+sionsturnouttobeimportant,ourtrialssampletheimportantdimensionsevenly. S etsofpointswith
+this property are well studied in the literature of Quasi-Random methods for n umerical integration,
+where they are known as low-discrepancy sets because they try to match (minimize discrepancy
+with) the uniform distribution. Although there are several formal deﬁnitions of low discrepancy,
+theyallcapturetheintuitionthatthepointsshouldberoughlyequidistantfrom oneanother,inorder
+thattherebeno “clumps”or“holes” inthepointset.
+Several procedures for constructing low-discrepancy point sets in multip le dimensions also try
+toensureasmuchaspossiblethatsubspaceprojectionsremainlow-discre pancysetsinthesubspace.
+Forexample,theSobol(AntonovandSaleev,1979),Halton(Halton,196 0),andNiederreiter(Brat-
+ley et al., 1992) sequences, as well as latin hypercube sampling (McKay e t al., 1979) are all more
+or less deterministic schemes for getting point sets that are more representati ve of random uniform
+draws than actual random uniform draws. In Quasi Monte-Carlo integr ation, such point sets are
+shown to asymptotically minimize the variance of ﬁnite integrals faster than true ran dom uniform
+samples,butinthissection,wewilllookatthesepointsetsinthesettingof relati velysmallsample
+sizes,toseeif theycanbe usedformoreefﬁcientsearchthan randomd raws.
+Rather than repeat the very computationally expensive experiments condu cted in Section 2,
+we used an artiﬁcial simulation to compare the efﬁciency of grids, random dr aws, and the four
+low-discrepancy point sets mentioned in the previous paragraph. The ar tiﬁcial search problem was
+to ﬁnd a uniformly randomly placed multi-dimensional target interval, which occu pies 1% of the
+volumeoftheunithyper-cube. Welookedatfourvariantsofthesearch problem,inwhichthetarget
+was
+295
+
+===PAGE 16===
+BERGSTRA AND BENGIO
+1. a cubeina3-dimensionalspace,
+2. a hyper-rectangleina3-dimensionalspace,
+3. a hyper-cubeina 5-dimensionalspace,
+4. a hyper-rectangleina5-dimensionalspace.
+The shape of the target rectangle in variants (2) and (4) was determined b y sampling side lengths
+uniformly from the unit interval, and then scaling the rectangle to have a volume of 1%. This
+process gave the rectangles a shape that was often wide or tall - much long er along some axes than
+others. The position of the target was drawn uniformly among the positions tota lly inside the unit
+hyper-cube. In the case of tall or wide targets (2) and (4), the indicator function [of the target] had
+a lower effective dimension than the dimensionality of the overall space beca use the dimensions in
+whichthe targetiselongated canbe almostignored.
+Thesimulationexperimentbeganwiththegenerationof100randomsearchp roblems. Thenfor
+each experiment design method (random, Sobol, latin hypercube, grid) we created experiments of
+1, 2, 3, and so on up to 512 trials.5The Sobol, Niederreiter, and Halton sequences yielded similar
+results, so we used the Sobol sequence to represent the performance of these low-discepancy set
+constructionmethods. Therearemanypossiblegridexperimentsofanysize inmultipledimensions
+(at least for non-prime experiment sizes). We did not test every possib le grid, instead we tested
+every grid with a monotonic resolution. For example, for experiments of size 1 6 in 5 dimensions
+we tried the ﬁve grids with resolutions (1, 1, 1, 1, 16), (1, 1, 1, 2, 8), (1 , 1, 2, 2, 4), (1, 1, 1, 4,
+4), (1, 2, 2, 2, 2); for experiments of some prime size Pin 3 dimensions we tried one grid with
+resolution(1,1, P). Sincethetargetintervalsweregeneratedinsuchawaythatrectangles identical
+up to a permutation of side lengths have equal probability, grids with monotonic r esolution are
+representative of all grids. The score of an experiment design method f or each experiment size was
+thefractionof the100targets thatitfound.
+Tocharacterizetheperformanceofrandomsearch,weusedtheanaly ticformoftheexpectation.
+The expected probability of ﬁnding the target is 1.0 minus the probability of missin g the target
+with every single one of Ttrials in the experiment. If the volume of the target relative to the unit
+hypercubeis ( v/V=0.01)andthereare Ttrials,then thisprobabilityof ﬁndingthetargetis
+1−(1−v
+V)T=1−0.99T.
+Figure 8 illustrates the efﬁciency of each kind of point set at ﬁnding the multid imensional in-
+tervals. There were some grids that were best at ﬁnding cubes and hyp er-cubes in 3-d and 5-d, but
+most grids were the worst performers. No grid was competitive with the other methods at ﬁnding
+the rectangular-shaped intervals, which had low effective dimension (ca ses 2 and 4; Figure 8, right
+panels). Latinhypercubes,commonlyusedtoinitializeexperimentsinBayesian optimization,were
+no more efﬁcient than the expected performance of random search. In terestingly, the Sobol se-
+quence was consistently best by a few percentage points. The low-discr epancy property that makes
+the Sobol useful in integration helps here, where it has the effect of minimiz ing the size of holes
+wherethetargetmightpassundetected. TheadvantageoftheSobolseq uenceismostpronouncedin
+experimentsof 100-300trials,wheretherearesufﬁcientlymanytrialsforth estructureintheSobol
+5. Samples fromtheSobolsequence were providedby theGNU Scientiﬁc Library(M.Galassiet al.,2009).
+296
+
+===PAGE 17===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+Figure8: The efﬁciency in simulation of low-discrepancy sequences rela tive to grid and pseudo-
+randomexperiments. Thesimulationtestedhowreliablyvariousexperimentde signmeth-
+ods locate a multidimensional interval occupying 1% of a unit hyper-cube. T here is one
+greydotineachsub-plotforeverygridofeveryexperimentsizethat hasatleasttwoticks
+in each dimension. The black dots indicate near-perfect grids whose ﬁne st and coarsest
+dimensional resolutions differ by either 0 or 1. Hyper-parameter search is most typi-
+cally like the bottom-right scenario. Grid search experiments are inefﬁcient for ﬁnding
+axis-aligned elongated regions in high dimensions (i.e., bottom-right). Pseudo -random
+samples are as efﬁcient as latin hypercube samples, and slightly less efﬁcien t than the
+Sobolsequence.
+depart signiﬁcantly from i.i.d points, but not sufﬁciently many trials for rand om search to succeed
+withhighprobability.
+A thought experiment gives some intuition for why grid search fails in the cas e of rectangles.
+Long thin rectangles tend to intersect with several points if they intersect with any, reducing the
+effective sample size of the search. If the rectangles had been rotated a way from the axes used to
+build the grid, then depending on the angle the efﬁciency of grid could appr oach the efﬁciency of
+random or low-discrepancy trials. More generally, if the target manifold w ere not systematically
+aligned with subsets of trial points, then grid search would be as efﬁcient a s the random and quasi-
+randomsearches.
+297
+
+===PAGE 18===
+BERGSTRA AND BENGIO
+5. RandomSearchvs. SequentialManualOptimization
+To see how random search compares with a careful combination of grid se arch and hand-tuning
+in the context of a model with many hyper-parameters, we performed exper iments with the Deep
+Belief Network (DBN) model (Hinton et al., 2006). A DBN is a multi-layer graph ical model with
+directedandundirectedcomponents. Itisparameterizedsimilarlytoamultilayern euralnetworkfor
+classiﬁcation, and it has been argued that pretraining a multilayer neural network by unsupervised
+learning as a DBN acts both to regularize the neural network toward better g eneralization, and to
+ease the optimization associated with ﬁnetuning the neural network for a classiﬁcation task (Erhan
+etal.,2010).
+A DBN classiﬁer has many more hyper-parameters than a neural network. Firstly, there is the
+number of units and the parameters of random initialization for each layer. Se condly, there are
+hyper-parameters governing the unsupervised pretraining algorithm fo r each layer. Finally, there
+are hyper-parameters governing the global ﬁnetuning of the whole model for classiﬁcation. For the
+details of how DBN models are trained (stacking restricted Boltzmann machines tr ained by con-
+trastivedivergence),thereaderisreferredtoLarochelleetal.(20 07),Hintonetal.(2006)orBengio
+(2009). We evaluated random search by training 1-layer, 2-layer and 3-layer DBNs, sampling from
+thefollowingdistribution:
+•We chose1,2,or 3layerswith equalprobability.
+•For eachlayer,wechose:
+–anumber of hiddenunits (log-uniformlybetween128 and4000),
+–a weight initialization heuristic that followed from a distribution (uniform or nor mal),
+a multiplier (uniformly between 0.2 and 2), a decision to divide by the fan-out ( true or
+false),
+–anumberofiterationsofcontrastivedivergencetoperformforpretra ining(log-uniformly
+from1to10000),
+–whethertotreatthereal-valuedexamplesusedforunsupervisedpretra iningasBernoulli
+means(fromwhichtodrawbinary-valuedtrainingsamples)orasasamplesth emselves
+(eventhoughtheyarenotbinary),
+–an initial learning rate for contrastive divergence (log-uniformly betwee n 0.0001 and
+1.0),
+–a time point at which to start annealing the contrastive divergence learning rate as in
+Equation7(log-uniformlyfrom10to10 000).
+•There was also the choice of how to preprocess the data. Either we used th e raw pixels or
+we removed some of the variance using a ZCA transform (in which examples a re projected
+ontoprinciplecomponents,andthenmultipliedbythetransposeoftheprinciplec omponents
+toplace themback intheinputs space).
+•IfusingZCApreprocessing,wekeptanamountofvariancedrawnun iformlyfrom0.5to1.0.
+•We chosetoseedour randomnumber generator withoneof 2,3,or 4.
+•We chosealearningrateforﬁnetuning ofthe ﬁnalclassiﬁerlog-uniformly from0.001 to10.
+298
+
+===PAGE 19===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+•We choseananneal starttimeforﬁnetuning log-uniformlyfrom100to 1000 0.
+•We chose ℓ2regularization of the weight matrices at each layer during ﬁnetuning to be eith er
+0(withprobability0.5),or log-uniformlyfrom10−7to10−4.
+This hyper-parameter space includes 8 global hyper-parameters and 8 hyper-parameters for each
+layer,foratotalof 32hyper-parametersfor3-layer models.
+A grid search is not practical for the 32-dimensional search problem of DBN model selection,
+because even just 2 possible values for each of 32 hyper-parameters would yield more trials than
+we could conduct (232>109trials and each can take hours). For many of the hyper-parameters,
+especially real valued ones, we would really like to try more than two values. T he approach taken
+in Larochelle et al. (2007) was a combination of manual search, multi-resolu tion grid search and
+coordinate descent. The algorithm (including manual steps) is somewhat ela borate, but sensible,
+and we believe that it is representative of how model search is typically don e in several research
+groups,if notthecommunity atlarge. Larochelleetal.(2007) describeit as follows:
+“Thehyper-parametersearchprocedureweusedalternatesbetween ﬁxinganeuralnet-
+work architecture and searching for good optimization hyper-parameters similarly to
+coordinate descent. More time would usually be spent on ﬁnding good optimiza tion
+parameters, given some empirical evidence that we found indicating that the choice of
+theoptimizationhyper-parameters(mostlythelearningrates)hasmuchmoreinﬂu ence
+ontheobtainedperformancethanthesizeofthenetwork. Weusedthesamep rocedure
+toﬁndthehyper-parametersforDBN-1,whicharethesameasthoseofDB N-3except
+the second hidden layer and third hidden layer sizes. We also allowed ours elves to
+test for much larger ﬁrst-hidden layer sizes, in order to make the compariso n between
+DBN-1 andDBN-3 fairer.
+“We usually started by testing a relatively small architecture (between 500 an d 700
+units in the ﬁrst and second hidden layer, and between 1000 and 2000 hid den units
+in the last layer). Given the results obtained on the validation set (compared to those
+of NNet for instance) after selecting appropriate optimization parameters, w e would
+then consider growing the number of units in all layers simultaneously. The big gest
+networks we eventually tested had up to 3000, 4000 and 6000 hidden units in th e ﬁrst,
+secondand thirdhidden layersrespectively.
+“Asfortheoptimizationhyper-parameters,wewouldproceedbyﬁrsttryin gafewcom-
+binations of values for the stochastic gradient descent learning rate of th e supervised
+andunsupervisedphases(usuallybetween0.1and0.0001). Wethenre ﬁnethechoiceof
+testedvaluesforthesehyper-parameters. Theﬁrsttrialswouldsimplygiv eusatrendon
+thevalidationseterrorfortheseparameters(isachangeinthehyper-pa rametermaking
+things worse of better) and we would then consider that information in selectin g ap-
+propriateadditionaltrials. Onecouldchoosetouselearningrateadaptation techniques
+(e.g.,slowlydecreasingthelearningrateorusingmomentum)butwedidnotﬁn dthese
+techniques tobecrucial.
+TherewaslargevariationinthenumberoftrialsusedinLarochelleetal.(20 07)tooptimizethe
+DBN-3. One data set ( mnist background images ) beneﬁted from 102 trials, while another ( mnist
+backgroundrandom )only13becauseagoodresultwasfoundmorequickly. Theaveragen umber
+299
+
+===PAGE 20===
+BERGSTRA AND BENGIO
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+/c01/c02/c03/c01/c04/c05/c06/c01/c07/c08/c09/c05/c0a/c01/c0b/c0c/c08/c04/c05/c0d/c0e/c09/c0f/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07/c0d/c10/c10/c11/c04/c0d/c10/c12mnistbasic
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+/c01/c02/c03/c01/c04/c05/c06/c01/c07/c08/c09/c05/c0a/c01/c0b/c0c/c08/c04/c05/c0d/c0e/c09/c0f/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07/c0d/c10/c10/c11/c04/c0d/c10/c12mnistbackground images
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+/c01/c02/c03/c01/c04/c05/c06/c01/c07/c08/c09/c05/c0a/c01/c0b/c0c/c08/c04/c05/c0d/c0e/c09/c0f/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07/c0d/c10/c10/c11/c04/c0d/c10/c12mnistbackground random
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+experimentsize(#trials)/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07accuracymnistrotated
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+/c01/c02/c03/c01/c04/c05/c06/c01/c07/c08/c09/c05/c0a/c01/c0b/c0c/c08/c04/c05/c0d/c0e/c09/c0f/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07/c0d/c10/c10/c11/c04/c0d/c10/c12mnist rotated back. i mages
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+experimentsize(#trials)/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07accuracyconvex
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+experimentsize(#trials)/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07accuracyrectangles
+/c01/c02/c03/c04/c01/c05/c06/c02/c05/c03/c01/c02/c04
+experimentsize(#trials)/c07/c01/c06/c07/c01/c03/c07/c01/c08/c07/c01/c05/c07/c01/c09/c07/c01/c04/c07/c01/c0a/c01/c01/c07accuracyrectanglesimages
+Figure9: Deep Belief Network (DBN) performance according to random search. Here random
+search is used to explore up to 32 hyper-parameters. Results obtained by grid-assisted
+manual search using an average of 41 trials are marked in ﬁnely-dashed green (1-layer
+DBN)andcoarsely-dashedred(3-layerDBN).Randomexperimentso f128randomtrials
+foundaninferiorbestmodelforthreedatasets,acompetitivemodelinfou r,andsuperior
+modelinone ( convex). (Bestviewed incolor. )
+of trials across data sets for the DBN-3 model was 41. In considering the n umber of trials per data
+set, it is important to bear in mind that the experiments on different data sets wer e not performed
+independently. Rather,laterexperimentsbeneﬁtedfromtheexperienceth eauthorshaddrawnfrom
+earlier ones. Although grid search was part of the optimization loop, the manu al intervention turns
+the overall optimization process into something with more resemblance to an adapti ve sequential
+algorithm.
+Random search versions of the DBN experiments from Larochelle et al. ( 2007) are shown in
+Figure 9. In this more challenging optimization problem random search is still ef fective, but not
+300
+
+===PAGE 21===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+superior as it was as in the case of neural network optimization. Comparing to the 3-layer DBN
+results in Larochelle et al. (2007), random search found a better model than the manual search in
+one data set ( convex), an equally good model in four ( mnist basic ,mnist rotated ,rectangles , and
+rectanglesimages ),andaninferiormodelinthree( mnistbackgroundimages ,mnistbackground
+random,mnist rotated background images ). Comparing to the 1-layer DBN results, random
+search of the 1-layer, 2-layer and 3-layer conﬁguration space foun d at least a good a model in all
+cases. In comparing these scores, the reader should bear in mind that the scores in the original
+experiments were not computed using the same score-averaging technique that we described in
+Section 2.1, and our averaging technique is slightly biased toward underes timation. In the DBN
+efﬁciency curves we see that even experiments with larger numbers of tria ls (64 and larger) feature
+signiﬁcant variability. This indicates that the regions of the search space w ith the best performance
+aresmall,andrandomlychoseni.i.d. trialsdonotreliablyﬁndthem.
+6. FutureWork
+Ourresultonthemultidimensionalintervaltask,togetherwiththeGPRcharacte rizationoftheshape
+ofΨ, together with the computational constraint that hyper-parameter searche s only draw on a few
+hundred trials, all suggest that pseudo-random or quasi-random tria ls are optimal for non-adaptive
+hyper-parameter search. There is still work to be done for each model f amily, to establish how it
+shouldbeparametrizedfori.i.d. randomsearchtobeasreliableaspossible ,butthemostpromising
+andinterestingdirectionforfutureworkiscertainlyinadaptivealgorithms.
+Thereisalargebodyofliteratureonglobaloptimization,agreatdealofwh ichbearsontheap-
+plication of hyper-parameter optimization. General numeric methods such as s implex optimization
+(Nelder and Mead, 1965), constrained optimization by linear approximation ( Powell, 1994; Weise,
+2009), ﬁnite difference stochastic approximation and simultaneous predictio n stochastic approxi-
+mation (Kleinman et al., 1999) could be useful, as well as methods for search in discrete spaces
+such as simulated annealing (Kirkpatrick et al., 1983) and evolutionary algo rithms (Rechenberg,
+1973; Hansen et al., 2003). Drew and de Mello (2006) have already pr oposed an optimization al-
+gorithm that identiﬁes effective dimensions, for more efﬁcient search. T hey present an algorithm
+that distinguishes between important and unimportant dimensions: a low-discr epancy point set is
+used to choose points in the important dimensions, and unimportant dimensions a re “padded” with
+thinnercoverageandcheapersamples. Theiralgorithm’ssuccesshinge sontherapidandsuccessful
+identiﬁcation of important dimensions. Sequential model-based optimization method s and partic-
+ularly Bayesian optimization methods are perhaps more promising because they offer principled
+approachestoweightingtheimportanceofeachdimension(Hutter,2009;Hu tteretal.,2011;Srini-
+vasanandRamakrishnan,2011).
+With so many sophisticated algorithms to draw on, it may seem strange that grid se arch is still
+widely used, and, with straight faces, we now suggest using random se arch instead. We believe the
+reason for this state of affairs is a technical one. Manual optimization follow ed by grid search is
+easy to implement: grid search requires very little code infrastructure beyon d access to a cluster
+of computers. Random search is just as simple to carry out, uses the same too ls, and ﬁts in the
+same workﬂow. Adaptive search algorithms on the other hand require more c ode complexity. They
+requireclient-serverarchitecturesinwhichamasterprocesskeepstrac kofthetrialsthathavecom-
+pleted, the trials that are in progress, the trials that were started but failed to complete. Some kind
+ofshareddatabaseandinter-processcommunicationmechanismsarerequ ired. Trialsinanadaptive
+301
+
+===PAGE 22===
+BERGSTRA AND BENGIO
+experiment cannot be queued up all at once; the master process must be involved somehow in the
+scheduling and timing of jobs on the cluster. These technical hurdles are no t easy to jump with the
+standardtoolsofthetradesuchasMATLABorPython;signiﬁcantsoftwa reengineeringisrequired.
+Untilthatengineeringisdoneandadoptedbyacommunityofresearchers, progressonthestudyof
+sophisticatedhyper-parameteroptimizationalgorithms willbeslow.
+7. Conclusion
+Gridsearchexperimentsarecommonintheliteratureofempiricalmachinelearnin g,wheretheyare
+used to optimize the hyper-parameters of learning algorithms. It is also common to perform multi-
+stage,multi-resolutiongridexperimentsthataremoreorlessautomated,becau seagridexperiment
+with a ﬁne-enough resolution for optimization would be prohibitively expensi ve. We have shown
+thatrandomexperimentsaremoreefﬁcientthangridexperimentsforhype r-parameteroptimization
+in the case of several learning algorithms on several data sets. Our analy sis of the hyper-parameter
+response surface ( Ψ) suggests that random experiments are more efﬁcient because not all h yper-
+parameters are equally important to tune. Grid search experiments allocate too many trials to the
+exploration of dimensions that do not matter and suffer from poor covera ge in dimensions that are
+important. Compared with the grid search experiments of Larochelle et al. (20 07), random search
+foundbetter models inmostcases andrequiredlesscomputational time.
+Random experiments are also easier to carry out than grid experiments for practical reasons
+relatedtothestatisticalindependence of everytrial.
+•Theexperimentcan bestoppedanytimeandthe trialsformacomplete experimen t.
+•Ifextracomputersbecomeavailable,newtrialscanbeaddedtoanexperimen twithouthaving
+toadjustthegridandcommit toamuchlarger experiment.
+•Everytrialcan becarriedoutasynchronously.
+•If the computer carrying out a trial fails for any reason, its trial can be eith er abandoned or
+restartedwithoutjeopardizingtheexperiment.
+Random search is not incompatible with a controlled experiment. To investigate th e effect
+of one hyper-parameter of interest X, we recommend random search (in stead of grid search) for
+optimizing over other hyper-parameters. Choose one set of random valu es for these remaining
+hyper-parametersandusethatsamesetforeach valueofX.
+Random experiments with large numbers of trials also bring attention to the questio n of how
+to measure test error of an experiment when many trials have some claim to bein g best. When
+usingarelativelysmallvalidationset,theuncertaintyinvolvedinselectingthebe stmodelbycross-
+validationcanbelargerthantheuncertaintyinmeasuringthetestsetperforma nceofanyonemodel.
+It is important to take both of these sources of uncertainty into account whe n reporting the uncer-
+tainty around the best model found by a model search algorithm. This techniq ue is useful to all
+experiments(includingbothrandomandgrid)inwhichmultiplemodelsachieveap proximatelythe
+bestvalidationsetperformance.
+Low-discrepancy sequences developed for QMC integration are also g ood alternatives to grid-
+based experiments. In low dimensions (e.g., 1-5) our simulated results sugge st that they can hold
+some advantage over pseudo-random experiments in terms of search efﬁ ciency. However, the trials
+302
+
+===PAGE 23===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+ofalow-discrepancyexperimentarenoti.i.d. whichmakesitinappropriate toanalyzeperformance
+with the random efﬁciency curve. It is also more difﬁcult in practice to cond uct a quasi-random
+experiment because like a grid experiment, the omission of a single point can b e more severe.
+Finally, when there are many hyper-parameter dimensions relative to the comp utational budget for
+theexperiment,alow-discrepancytrialsetisnotexpectedtobehavever ydifferentlyfromapseudo-
+randomone.
+Finally, the hyper-parameter optimization strategies considered here are no n-adaptive: they do
+notvarythecourseoftheexperimentbyconsideringanyresultsthatar ealreadyavailable. Random
+search was not generally as good as the sequential combination of manual and grid search from
+an expert (Larochelle et al., 2007) in the case of the 32-dimensional sea rch problem of DBN op-
+timization, because the efﬁciency of sequential optimization overcame the inefﬁ ciency of the grid
+search employed at each step of the procedure. Future work should co nsider sequential, adaptive
+search/optimization algorithms in settings where many hyper-parameters of an e xpensive function
+mustbeoptimizedjointlyandtheeffectivedimensionalityishigh. Wehopethatfutu reworkinthat
+directionwillconsiderrandomsearchoftheformstudiedhereasabase lineforperformance,rather
+thangridsearch.
+Acknowledgments
+ThisworkwassupportedbytheNationalScienceandEngineeringResea rchCouncilofCanadaand
+Compute Canada, andimplemented withTheano(Bergstraetal.,2010).
+References
+I.A.AntonovandV.M.Saleev. Aneconomicmethodofcomputing LPτ-sequences. USSRCompu-
+tationalMathematics andMathematicalPhysics ,19(1):252–256,1979.
+R. Bellman. Adaptive Control Processes: A Guided Tour . Princeton University Press, New Jersey,
+1961.
+Y.Bengio. LearningdeeparchitecturesforAI. FoundationsandTrendsinMachineLearning ,2(1):
+1–127,2009. doi: 10.1561/2200000006.
+Y.BengioandX.Glorot. Understandingthedifﬁcultyoftrainingdeepfeed forwardneuralnetworks.
+In Y. W. Teh and M. Titterington, editors, Proc. of The Thirteenth International Conference on
+ArtiﬁcialIntelligence andStatistics(AISTATS’10) ,pages 249–256, 2010.
+J.Bergstra,O.Breuleux,F.Bastien,P.Lamblin,R.Pascanu,G.Desja rdins,J.Turian,andY.Bengio.
+Theano: a CPU and GPU math expression compiler. In Proceedings of the Python for Scientiﬁc
+Computing Conference (SciPy) ,June2010. Oral.
+C.Bishop. NeuralNetworksforPatternRecognition . OxfordUniversityPress,London,UK,1995.
+P. Bratley, B. L. Fox, and H. Niederreiter. Implementation and tests of low-d iscrepancy sequences.
+TransactionsonModelingand Computer Simulation,(TOMACS) ,2(3):195–213,1992.
+R.E.Caﬂisch,W.Morokoff,andA.Owen. Valuationofmortgagebacke dsecuritiesusingbrownian
+bridges toreduceeffectivedimension,1997.
+303
+
+===PAGE 24===
+BERGSTRA AND BENGIO
+C. Changand C.Lin. LIBSVM:A Libraryfor SupportVector Machines ,2001.
+I.Czogiel,K.Luebke,andC.Weihs. Responsesurfacemethodologyf oroptimizinghyperparame-
+ters. Technicalreport,Universit ¨atDortmundFachbereichStatistik,September 2005.
+S. S. Drew and T. Homem de Mello. Quasi-Monte Carlo strategies for stocha stic optimization. In
+Proc.ofthe38thConference on WinterSimulation , pages 774–782,2006.
+D.Erhan,Y.Bengio,A.Courville,P.Manzagol,P.Vincent,andS.Ben gio. Whydoesunsupervised
+pre-traininghelpdeeplearning? JournalofMachineLearningResearch ,11:625–660, 2010.
+J. H. Halton. On the efﬁciency of certain quasi-random sequences of p oints in evaluating multi-
+dimensionalintegrals. NumerischeMathematik ,2:84–90, 1960.
+N.Hansen,S.D.M ¨uller,andP.Koumoutsakos. Reducingthetimecomplexityofthederandomized
+evolution strategy with covariance matrix adaptation (CMA-ES). Evolutionary Computation , 11
+(1):1–18,2003.
+G.E.Hinton. ApracticalguidetotrainingrestrictedBoltzmannmachines. Tech nicalReport2010-
+003,Universityof Toronto,2010. version1.
+G. E. Hinton, S. Osindero, and Y. Teh. A fast learning algorithm for dee p belief nets. Neural
+Computation , 18:1527–1554, 2006.
+F.Hutter. AutomatedConﬁgurationofAlgorithmsforSolvingHardComputationalProb lems. PhD
+thesis,Universityof BritishColumbia,2009.
+F. Hutter, H. Hoos, and K. Leyton-Brown. Sequential model-based optimiz ation for general algo-
+rithmconﬁguration. In LION-5,2011. Extendedversionas UBC TechreportTR-2010-10.
+S. Kirkpatrick, C. D. Gelatt, and M. P. Vecchi. Optimization by simulated annealin g.Science, 220
+(4598):671–680,1983.
+N. L. Kleinman, J. C. Spall, and D. Q. Naiman. Simulation-based optimization with sto chastic ap-
+proximationusingcommonrandomnumbers. ManagementScience ,45(11):1570–1578,Novem-
+ber 1999. doi: doi:10.1287/mnsc.45.11.1570.
+H. Larochelle, D. Erhan, A. Courville, J. Bergstra, and Y. Bengio. An empirical evaluation of deep
+architecturesonproblemswithmanyfactorsofvariation. InZ.Ghahramani, editor,Proceedings
+oftheTwenty-fourthInternationalConferenceonMachineLearning(IC ML’07),pages473–480.
+ACM,2007.
+Y. LeCun, L. Bottou, Y. Bengio, and P. Haffner. Gradient-based lear ning applied to document
+recognition. Proceedingsof theIEEE ,86(11):2278–2324,November 1998a.
+Y. LeCun, L. Bottou, G. Orr, and K. Muller. Efﬁcient backprop. In G. Orr and K. Muller, editors,
+NeuralNetworks: Tricksofthe Trade .Springer,1998b.
+M.Galassietal. GNU ScientiﬁcLibraryReferenceManual ,3rdedition,2009.
+304
+
+===PAGE 25===
+RANDOMSEARCH FOR HYPER-PARAMETER OPTIMIZATION
+M. D. McKay, R. J. Beckman, and W. J. Conover. A comparison of three methods for selecting
+values of input variables in the analysis of output from a computer code. Technometrics , 21(2):
+239–245, May1979. doi: doi:10.2307/1268522.
+A. Nareyek. Choosing search heuristics by non-stationary reinforce ment learning. Applied Opti-
+mization,86:523–544,2003.
+R. M. Neal. Assessing relevance determination methods using DELVE. In C. M. Bishop, editor,
+NeuralNetworks andMachineLearning ,pages 97–129.Springer-Verlag,1998.
+J.A.NelderandR.Mead. Asimplexmethodforfunctionminimization. TheComputerJournal ,7:
+308–313, 1965.
+M. J. D. Powell. A direct search optimization method that models the objective an d constraint
+functions by linear interpolation. Advances in Optimization and Numerical Analysis , pages 51–
+67,1994.
+C. E. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning . MIT Press,
+2006.
+IngoRechenberg. Evolutionsstrategie-OptimierungtechnischerSystemenachPrinzipiender biol-
+ogischenEvolution . Fommann-Holzboog, Stuttgart,1973.
+A. Srinivasan and G. Ramakrishnan. Parameter screening and optimisation for ILP using designed
+experiments. JournalofMachineLearningResearch ,12:627–662,February2011.
+P. Vincent, H. Larochelle, Y. Bengio, and P. Manzagol. Extracting and c omposing robust features
+with denoising autoencoders. In W. W. Cohen, A. McCallum, and S. T. Row eis, editors, Pro-
+ceedings of the Twenty-ﬁfth International Conference on Machine Learn ing (ICML’08) , pages
+1096–1103. ACM,2008.
+T. Weise. Global Optimization Algorithms - Theory and Application . Self-Published, second edi-
+tion,2009. Onlineavailableat http://www.it-weise.de/.
+305
