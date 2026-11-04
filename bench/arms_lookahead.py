@@ -335,7 +335,16 @@ class ExactEngine:
         outs = {}
         for i in safe:
             wb = self.world_bits[i]
-            op = self.flood(wb, opened | (1 << cell), cell)
+            # ⚠️⚠️ 必须传 opened（**不含** cell 位），不能传 opened | (1 << cell)。
+            # flood 的第一行是 `if opened & bit ...: return opened`，
+            # 所以传含 bit 的集合会让 flood **立刻返回、一格都不展开**
+            # ⇒ after_click / V_exact 里没有 0 连锁展开（只开 1 格）。
+            # 实测（bench/verify_flood_chain.py，6x6 双雷构造）：
+            #   传 opened         → 新开 34 格（与独立实现的真实规则一致）✔
+            #   传 opened|bit     → 新开 1 格 ✘
+            # 这个缺陷曾让 expand_score 在平局集内恒为常数（mean_new 跨度恒
+            # [1.00,1.00]），并系统性地把所有 regret/V* 读数算偏。
+            op = self.flood(wb, opened, cell)
             outs.setdefault(self._obs(wb, opened, op), []).append(i)
         ns = len(safe)
         return ns / len(wkey), [(WKey.from_indices(v, self.n_worlds), k[0], len(v) / ns)

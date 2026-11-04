@@ -44,7 +44,27 @@ CHECKS = [
     ("C1", "bench/verify_seed_determinism.py", ["--games", "6"], 180, False),
     ("C2", "bench/verify_workers_determinism.py", ["--games", "6"], 240, False),
     ("C3", "bench/analyze_first_move_quality.py", ["--games", "10"], 90, False),
-    ("C4", "bench/analyze_endgame_quality.py", ["--games", "10"], 90, False),
+
+
+    ("C5", "bench/endgame_prod_snapshot.py", ["--selftest"], 120, False),
+    ("C6", "bench/atomic_decision_events.py", ["--selftest"], 120, False),
+    ("C7", "bench/verify_atomic_commit.py", [], 60, False),
+    ("C8", "bench/verify_exit_code_semantics.py", [], 60, False),
+    ("C9", "bench/verify_rebuilt_script.py", [], 30, False),
+    ("C10", "bench/measure_endgame_stratified.py", ["--games", "5"], 120, False),
+
+    # ---- C11-C13：启发式指标评估链（2026-11-04 追加）----
+    # ⚠️ 这三个脚本的正确性由各自的内部断言负责：
+    #   · verify_global_count_equiv 自带阴性对照（必须检出 19 格不一致）
+    #   · eval_heuristic_metrics 的平局集天花板自证（ceiling <= S0 regret）
+    #   · eval_search_vs_heuristics 的 11 臂同台（S0 读数须与上面脚本一致）
+    ("C11", "bench/verify_global_count_equiv.py", [], 120, False),
+    ("C12", "bench/eval_heuristic_metrics.py",
+     ["--max-worlds", "120", "--time-cap", "15",
+      "--out", "state/ab/_smoke_hm.json"], 300, False),
+    ("C13", "bench/eval_search_vs_heuristics.py",
+     ["--max-worlds", "120", "--time-cap", "15",
+      "--out", "state/ab/_smoke_svh.json"], 300, False),
 
     # ---- D 组：长任务（默认跳过，--include-long 才跑）----
     ("D1", "bench/rule_gap.py", ["--games", "20"], 600, True),

@@ -74,6 +74,39 @@ def sign_test(w, l):
                               for i in range(k + 1)))
 
 
+def _rank(v):
+    """平均秩（处理并列）。"""
+    order = sorted(range(len(v)), key=lambda i: v[i])
+    r = [0.0] * len(v)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            r[order[k]] = avg
+        i = j + 1
+    return r
+
+
+def spearman(a, b):
+    """Spearman 秩相关；任一向量为常数时返回 None（相关无定义）。"""
+    if len(a) < 3:
+        return None
+    ra, rb = _rank(a), _rank(b)
+    if max(ra) == min(ra) or max(rb) == min(rb):
+        return None
+    n = len(ra)
+    ma, mb = sum(ra) / n, sum(rb) / n
+    num = sum((x - ma) * (y - mb) for x, y in zip(ra, rb))
+    da = math.sqrt(sum((x - ma) ** 2 for x in ra))
+    db = math.sqrt(sum((y - mb) ** 2 for y in rb))
+    if da == 0 or db == 0:
+        return None
+    return num / (da * db)
+
+
 def bdist(w, h, pos):
     x, y = pos
     return min(x - 1, w - x, y - 1, h - y)
@@ -86,6 +119,8 @@ def main():
     ap.add_argument("--max-worlds", type=int, default=400)
     ap.add_argument("--node-cap", type=int, default=3_000_000)
     ap.add_argument("--time-cap", type=float, default=30.0)
+    ap.add_argument("--out", default=os.path.join("state", "ab",
+                                                  "heuristic_metrics.json"))
     args = ap.parse_args()
 
     with open(os.path.join(ROOT, "bench", "data", "midgame_cases.json"),
@@ -213,9 +248,20 @@ def main():
 
         saf_max = max(saf.values())
         tie_n = sum(1 for cd in cands if saf[cd] >= saf_max - 1e-12)
+        # 天花板：**只允许在安全率平局集内**做选择时能拿到的最好值。
+        # 生产贪心其实已经用了平局集（win_rate 平局时随机/按内部格选），
+        # 所以「启发式破平局」的价值上限 = 平局集内 oracle 的 regret。
+        tie_set = [cd for cd in cands if saf[cd] >= saf_max - 1e-12]
+        v_tie_opt = max(q[cd] for cd in tie_set)
         row = {"limitation": c["limitation"], "worlds": nw, "F": c["F"],
                "U": c["U"], "n_cand": len(cands), "n_tie": tie_n,
-               "v_opt": round(v_opt, 6)}
+               "v_opt": round(v_opt, 6),
+               "ceiling_regret": round(v_opt - v_tie_opt, 6)}
+        # 同一决策点内、跨候选格的指标取值（供相关性分析）
+        row["_scores"] = {m: {str(cd): round(scores[m][cd], 9) for cd in cands}
+                          for m in ("IG_expand", "U_filter_u", "E_filter_e",
+                                    "L_center")}
+        row["_safety"] = {str(cd): round(saf[cd], 9) for cd in cands}
         for m in METRICS:
             cd = picks[m]
             reg = v_opt - q[cd]
@@ -256,14 +302,53 @@ def main():
               f"{sum(d)/len(d):>+10.4f}  {'显著' if p < 0.05 else ''}")
 
     print("\n" + "=" * 100)
-    print("指标之间的相关性（在同一决策点内、跨候选格的 Spearman 秩相关均值）")
+    print("天花板：只在「安全率平局集」内选格时的最优可达")
+    print("=" * 100)
+    ceil = [r["ceiling_regret"] for r in rows]
+    print(f"  平局集内 oracle 的平均 regret = {sum(ceil)/len(ceil):.4f}"
+          f"（= 任何破平局准则的理论上限，越小空间越少）")
+    print(f"  平局集内 oracle 完全选对 {sum(1 for x in ceil if x <= 1e-12)}/{len(ceil)}")
+    print(f"  S0 自己的平均 regret = {sum(res['S0_safety'])/len(rows):.4f}")
+    gap = sum(res["S0_safety"]) / len(rows) - sum(ceil) / len(ceil)
+    print(f"  ⇒ 破平局可回收的 regret 上限 = {gap:.4f}/决策点")
+
+    print("\n" + "=" * 100)
+    print("指标之间的相关性（同一决策点内、跨候选格的 Spearman 秩相关均值）")
     print("=" * 100)
     print("  高度共线的指标合并进线性 prior 只会放大噪声、不提供新信号。")
+    pairs = [("IG_expand", "U_filter_u"), ("IG_expand", "E_filter_e"),
+             ("U_filter_u", "E_filter_e"), ("IG_expand", "L_center"),
+             ("U_filter_u", "L_center"), ("E_filter_e", "L_center")]
+    _rho = {p: [] for p in pairs}
+    _rho_s0 = {m: [] for m in ("IG_expand", "U_filter_u", "E_filter_e", "L_center")}
+    for r in rows:
+        sc = r["_scores"]
+        saf = r["_safety"]
+        keys = [k for k in saf]
+        for a, b in pairs:
+            v = spearman([sc[a][k] for k in keys], [sc[b][k] for k in keys])
+            if v is not None:
+                _rho[(a, b)].append(v)
+        for m in _rho_s0:
+            v = spearman([sc[m][k] for k in keys], [saf[k] for k in keys])
+            if v is not None:
+                _rho_s0[m].append(v)
+    print(f"\n{'指标对':<28} {'平均rho':>9} {'n点':>6}")
+    print("-" * 60)
+    for a, b in pairs:
+        v = _rho[(a, b)]
+        if v:
+            print(f"{a + ' ~ ' + b:<28} {sum(v)/len(v):>+9.3f} {len(v):>6}")
+    print()
+    for m, v in _rho_s0.items():
+        if v:
+            print(f"{m + ' ~ S0_safety':<28} {sum(v)/len(v):>+9.3f} {len(v):>6}")
 
-    out = os.path.join(ROOT, "state", "ab", "heuristic_metrics.json")
+    out = args.out if os.path.isabs(args.out) else os.path.join(ROOT, args.out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"rows": rows, "skipped": skipped}, f, ensure_ascii=False)
+        json.dump({"rows": rows, "skipped": skipped,
+                   "args": vars(args)}, f, ensure_ascii=False)
     print(f"\n明细已写 {out}")
 
 
