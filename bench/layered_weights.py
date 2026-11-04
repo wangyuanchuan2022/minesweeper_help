@@ -95,6 +95,24 @@ def mde80(diffs):
     return (1.959964 + 0.841621) * sd / math.sqrt(n)
 
 
+def _report_missing_matrix():
+    """如实报告：当前 merge 输出缺指标矩阵，无法做分层权重。"""
+    print()
+    print("=" * 100)
+    print("阻塞：分层权重需要 7 指标打分矩阵（F），而 merge 输出只有 q/coords")
+    print("=" * 100)
+    print("  解决路径（二选一）：")
+    print("    A) 扩展 dump_metric_matrix.py 支持多输入文件 + C++ exact_eval")
+    print("       （可复用 merge 的 journal 断点续跑）")
+    print("    B) 先用现有 41 点做分层，明确标注「样本不足，仅探索」")
+    print()
+    print("  当前状态：41 点全部 limitation<=20，只落在 1 个桶 ⇒ 分层==全局，")
+    print("            该实验在扩样前**没有意义**。")
+    print()
+    print("  ⇒ 建议先完成 A，再做分层权重。")
+    return 2
+
+
 def bucket_of(lim, edges):
     for i, e in enumerate(edges):
         if lim <= e:
@@ -104,23 +122,53 @@ def bucket_of(lim, edges):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--matrix", default=os.path.join("state", "ab",
-                                                    "metric_matrix.json"))
+    ap.add_argument("--matrix", default=None,
+                    help="旧接口：单文件 metric_matrix.json（会按位置奇偶切分）")
+    ap.add_argument("--discovery", default=None,
+                    help="发现集 regret 结果（merge_and_eval_cases.py 输出）")
+    ap.add_argument("--validation", default=None,
+                    help="验证集 regret 结果（独立采集，只评估一次）")
     ap.add_argument("--edges", default="20,60",
                     help="limitation 分桶边界，逗号分隔")
     ap.add_argument("--min-per-bucket", type=int, default=8)
     ap.add_argument("--seed", type=int, default=20261104)
     args = ap.parse_args()
 
-    path = args.matrix if os.path.isabs(args.matrix) else os.path.join(
-        ROOT, args.matrix)
-    if not os.path.exists(path):
-        print("缺少 %s，请先跑 bench/dump_metric_matrix.py" % path)
-        return 1
-    with open(path, encoding="utf-8") as f:
-        payload = json.load(f)
-    rows = payload["rows"]
     edges = [float(x) for x in args.edges.split(",")]
+
+    # ============================================================
+    # 数据来源分两种模式（P1 预注册要求：发现/验证必须真正独立）
+    # ============================================================
+    if args.discovery and args.validation:
+        # 模式 A（推荐）：两份独立采集的结果文件
+        dp = args.discovery if os.path.isabs(args.discovery) else os.path.join(
+            ROOT, args.discovery)
+        vp = args.validation if os.path.isabs(args.validation) else os.path.join(
+            ROOT, args.validation)
+        for pth, nm in ((dp, "发现集"), (vp, "验证集")):
+            if not os.path.exists(pth):
+                print("缺少%s %s" % (nm, pth))
+                return 1
+        with open(dp, encoding="utf-8") as f:
+            disc_rows = json.load(f)["rows"]
+        with open(vp, encoding="utf-8") as f:
+            valid_rows = json.load(f)["rows"]
+        print("  ⚠️ 注意：merge_and_eval_cases.py 输出的是 q/coords，")
+        print("     不含 7 指标打分。分层权重需要 F 矩阵 ⇒ 需先补算。")
+        return _report_missing_matrix()
+    else:
+        # 模式 B（旧）：单文件 metric_matrix.json，按位置奇偶切分
+        path = args.matrix if args.matrix else os.path.join(
+            ROOT, "state", "ab", "metric_matrix.json")
+        path = path if os.path.isabs(path) else os.path.join(ROOT, path)
+        if not os.path.exists(path):
+            print("缺少 %s，请先跑 bench/dump_metric_matrix.py" % path)
+            return 1
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        rows = payload["rows"]
+        print("  ⚠️ 模式 B：单文件按位置奇偶切分（弱于真实独立采集）")
+        print("     若要严格独立，请用 --discovery/--validation")
 
     print("=" * 100)
     print("A 线：分层权重实验（Bergstra 推论）+ 冻结发现/验证集")
