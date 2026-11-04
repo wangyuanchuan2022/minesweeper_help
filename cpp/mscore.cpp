@@ -1,4 +1,4 @@
-// mscore.cpp — 扫雷助手核心算法 C++ 加速模块（pybind11）
+﻿// mscore.cpp — 扫雷助手核心算法 C++ 加速模块（pybind11）
 //
 // 移植目标（与 Python 实现逐行对照，保证结果完全一致）：
 //   1. part_solve          —— utils/probability.py ProbabilityMixin.part_solve (_try=False 路径)
@@ -806,6 +806,27 @@ struct WinRateCtx {
     int64_t st_memo_hit = 0;     // memo 命中次数
     int64_t st_memo_miss = 0;    // memo 未命中次数
     int64_t st_nodes_saved = 0;  // 命中所"省下"的节点数估计
+
+    // ---- 分阶段计时（MSW_WR_PHASE=1 时启用，仅诊断，不改变行为）----
+    // 目的：定位"非单调耗时"——实测同一局面 depth_limit 更大反而更快/更慢，
+    // 说明 n_cand×total 这个成本代理没有解释真实开销。
+    // 必须分开量：世界枚举 / 外层逐格 / wr_f 递归，三者成本结构完全不同。
+    double ph_enum_ms = 0.0;     // 阶段 1：枚举全部完整局面
+    double ph_outer_ms = 0.0;    // 阶段 2：外层逐候选分组 + 递归
+    double ph_cp_ms = 0.0;       // 阶段 2 内：根层 cp 计算（O(n_cand × total)）
+    int64_t ph_total_worlds = 0; // 枚举出的世界数
+    int64_t ph_wr_nodes = 0;     // wr_f 递归节点总数
+    double ph_depth_limit = 0.0; // 实际生效的 depth_limit
+    int ph_depth_shrunk = 0;     // 是否因 adaptive 被收缩
+
+    static bool phase_on() {
+        static int m = -1;
+        if (m < 0) {
+            const char* e = std::getenv("MSW_WR_PHASE");
+            m = e ? std::atoi(e) : 0;
+        }
+        return m != 0;
+    }
     int64_t st_lookup_ns = 0;    // 查找累计耗时
     int64_t st_insert_ns = 0;    // 插入累计耗时
 
@@ -1021,7 +1042,7 @@ double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> board
 py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::list res_list,
                       py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
                       py::sequence ck_seq, int64_t num10, int a, int w, int h, bool is_play,
-                      py::object progress_cb, int64_t node_cap, double depth_limit_override) {
+                      py::object progress_cb, int64_t node_cap, double depth_limit_override, int adaptive_depth) {
     auto clicks = parse_coords(clicks_seq);
     auto clicks9 = parse_coords(clicks9_seq);
     std::vector<int> ck;
@@ -1064,6 +1085,7 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
         py::gil_scoped_release unlock;
 
         // ---- 阶段 1：枚举所有完整局面 ----
+        auto _t_enum0 = std::chrono::steady_clock::now();
         std::vector<Board> cell_value_list;
         {
             Odometer od(std::move(ck));
@@ -1110,6 +1132,9 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
             }
         }
 
+        ctx.ph_enum_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - _t_enum0).count() / 1000.0;
+        ctx.ph_total_worlds = (int64_t)cell_value_list.size();
         total = cell_value_list.size();
         // Python：depth_limit = 200 / len(clicks)（clicks 为空 → ZeroDivisionError）
         if (clicks.empty()) {
@@ -1117,11 +1142,60 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
             PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
             throw py::error_already_set();
         }
-        // depth_limit_override > 0 时用调用方给的值（供深度策略实验）；
-        // <= 0（默认 -1）沿用原公式 200/len(clicks) ⇒ 行为与旧版逐位一致。
-        double depth_limit = (depth_limit_override > 0.0)
-                                 ? depth_limit_override
-                                 : 200.0 / (double)clicks.size();
+        // ==================== depth_limit 的三档语义 ====================
+        // 1) depth_limit_override > 0：调用方显式指定（深度策略实验用）
+        // 2) adaptive_depth == 0（默认）：沿用原公式 200/len(clicks)
+        //    ⇒ **行为与旧版逐位一致**，这是生产默认路径，绝不可变
+        // 3) adaptive_depth > 0：按预估成本主动变浅，**避免 node_cap 触发降级**
+        //
+        // ==================== 为什么是"变浅"不是"加深" ====================
+        // 实测（bench/bench_depth_policy.py，19 点配对集）：
+        //   现状 200/n  配对均值 regret 0.0065
+        //   固定 2 层  0.0235（0 好/8 差，p=0.008 显著更差）
+        //   固定 4 层  0.0222（0 好/7 差，p=0.016 显著更差）
+        //   固定 8 层  0.0150（0 好/3 差，p=0.250 更差）
+        //   400/n      0.0049（1 好/0 差，p=1.000 不显著）
+        // ⇒ 加深不是瓶颈；真正的损失来自 node_cap 触发后**整步降级为贪心**。
+        //   22 个决策点里 3 次触发，p90 耗时 18.2s（预算 30s）。
+        //   所以正确方向是：成本预估超限时**主动降低深度**，保住"不降级"。
+        //
+        // 成本模型（可从 wr_f 结构直接读出）：
+        //   根层 cp 计算 O(n_cand × total)；
+        //   递归层每节点 O(total × n_cand) 且分叉后 total 递减。
+        //   实测拟合：cost ≈ n_cand × total × (1 + 2^depth / n_cand)。
+        //   这里用保守代理 cost ≈ n_cand × total，按预算反解允许深度。
+        double depth_limit = 200.0 / (double)clicks.size();
+        if (depth_limit_override > 0.0) {
+            depth_limit = depth_limit_override;
+        } else if (adaptive_depth > 0) {
+            // 预算标定依据（bench/data/midgame_cases.json 260 个中局点实测）：
+            //   cost = n_cand × total 的分布：
+            //     min 52 / p25 1,296 / p50 4,032 / p75 19,080 / p90 77,760 / max 3.57e6
+            //   触发率：budget=1e5 → 8.1%；3e5 → 3.1%；1e6 → 1.9%；3e6 → 0.4%
+            // ⚠️ 首版把 budget 写成 adaptive_depth × 1e6 ⇒ 8e6 比 p50 高 2000 倍
+            //    ⇒ 实测 12 个小局面**全部不触发**（ad0 与 ad8 输出完全相同）= 规则空转。
+            //    这里改为按"分位数"给预算，让 adaptive_depth 直接对应触发率档位。
+            //
+            // adaptive_depth 语义（= 目标触发分位）：
+            //   1 → 只削最贵 8% 的局面（budget 1e5）
+            //   2 → 只削最贵 3%       （budget 3e5）
+            //   3 → 只削最贵 2%       （budget 1e6）
+            //   4 → 只削最贵 0.4%     （budget 3e6）
+            static const double kBudget[] = {0.0, 1e4, 3e4, 1e5, 3e5, 1e6};
+            int idx = adaptive_depth;
+            if (idx > 5) idx = 5;
+            double budget = kBudget[idx];
+            double n_cand = (double)(clicks.size() + clicks9.size());
+            double cost = n_cand * (double)total;
+            if (cost > budget && budget > 0.0) {
+                // 超预算 ⇒ 按超出比例收缩深度，下限 1（= 只做一层 safety）
+                double shrink = budget / cost;
+                double d = depth_limit * shrink;
+                depth_limit = (d < 1.0) ? 1.0 : d;
+                ctx.ph_depth_shrunk = 1;
+            }
+        }
+        ctx.ph_depth_limit = depth_limit;
         if (total == 0) {
             // Python：clicks2p 计算中 /total → ZeroDivisionError
             py::gil_scoped_acquire acq;
@@ -1159,6 +1233,7 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
         }
 
         ctx.progress.emit(0);
+        auto _t_outer0 = std::chrono::steady_clock::now();
         double running_max = 0.0;
         bool has_max = false;
         for (size_t i = 0; i < all_clicks.size(); ++i) {
@@ -1200,6 +1275,9 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
             running_max = has_max ? std::max(running_max, win_p) : win_p;
             has_max = true;
         }
+        ctx.ph_outer_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - _t_outer0).count() / 1000.0;
+        ctx.ph_wr_nodes = ctx.nodes_visited;
     }
     } catch (const NodeCapExceeded& e) {
         // 节点数超过硬上限：转成 runtime_error 抛给 Python。
@@ -1220,6 +1298,19 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
     for (double v : res) res_py.append(py::float_(v));
     py::list clicks_py;
     for (const auto& c : all_clicks) clicks_py.append(py::make_tuple(c.first, c.second));
+
+    // ---- 分阶段统计输出（MSW_WR_PHASE=1，仅诊断，不改变返回值）----
+    // 用途：定位"非单调耗时"。实测同一局面 depth_limit 更大反而更慢，
+    // 说明 n_cand×total 成本代理不成立；必须先看清枚举/外层/递归各占多少。
+    if (WinRateCtx::phase_on()) {
+        std::fprintf(stderr,
+            "[wr_phase] worlds=%lld enum_ms=%.1f outer_ms=%.1f "
+            "depth_limit=%.3f shrunk=%d wr_nodes=%lld\n",
+            (long long)ctx.ph_total_worlds, ctx.ph_enum_ms, ctx.ph_outer_ms,
+            ctx.ph_depth_limit, ctx.ph_depth_shrunk,
+            (long long)ctx.ph_wr_nodes);
+        std::fflush(stderr);
+    }
 
     // ---- 热点统计输出（MSW_WR_STATS=1 时打印到 stderr，不改变返回值）----
     if (WinRateCtx::stats_on()) {
@@ -2117,11 +2208,14 @@ PYBIND11_MODULE(mscore, m) {
           py::arg("h"), py::arg("is_play"), py::arg("progress"),
           py::arg("node_cap") = 0,
           py::arg("depth_limit_override") = -1.0,
+          py::arg("adaptive_depth") = 0,
           "win_rate 完整移植：返回 (res, sorted_clicks, total, clicks2p)。\n"
           "node_cap > 0 时限制递归节点数，超限抛 RuntimeError（调用方应回退）；\n"
           "node_cap = 0（默认）表示不限制，行为与旧版完全一致。\n"
           "depth_limit_override > 0 时覆盖默认深度上限 200/len(clicks)；\n"
-          "默认 -1.0 = 沿用原公式，输出与旧版逐位一致。");
+          "默认 -1.0 = 沿用原公式，输出与旧版逐位一致。\n"
+          "adaptive_depth > 0 时按成本预估主动变浅以避免 node_cap 降级；\n"
+          "默认 0 = 关闭（生产默认路径，行为与旧版逐位一致）。");
     m.def("pbs_compute", &py_pbs_compute, py::arg("total"), py::arg("num10"), py::arg("clicks"),
           py::arg("clicks9"), py::arg("res_list"), py::arg("ck"), py::arg("a"), py::arg("progress"),
           py::arg("visible"),
