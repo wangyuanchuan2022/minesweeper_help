@@ -850,6 +850,17 @@ struct WinRateCtx {
 };
 
 // 节点上限触发（内部异常：基类 std::exception 并携带可读消息）
+// 最近一次 win_rate 调用的分阶段快照（thread_local，供 Python 侧查询）
+struct LastPhase {
+    int64_t worlds = 0;
+    double enum_ms = 0.0;
+    double outer_ms = 0.0;
+    double depth_limit = 0.0;
+    int shrunk = 0;
+    int64_t wr_nodes = 0;
+};
+static thread_local LastPhase g_last_phase;
+
 struct NodeCapExceeded : public std::exception {
     int64_t cap;
     int64_t visited;
@@ -1298,6 +1309,14 @@ py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::lis
     for (double v : res) res_py.append(py::float_(v));
     py::list clicks_py;
     for (const auto& c : all_clicks) clicks_py.append(py::make_tuple(c.first, c.second));
+
+    // ---- 最近一次调用的 phase 快照（供 Python 侧查询，不影响返回值）----
+    // 目的：B 线需要统计「adaptive 规则实际触发次数」与「选格是否改变」，
+    // 而 cap 率 != 触发率（可能触发但未改变选格）。
+    // 用 thread_local 存，避免改变 win_rate 的返回签名（那会破坏所有调用方）。
+    g_last_phase = LastPhase{(int64_t)ctx.ph_total_worlds, ctx.ph_enum_ms,
+                             ctx.ph_outer_ms, ctx.ph_depth_limit,
+                             ctx.ph_depth_shrunk, (int64_t)ctx.ph_wr_nodes};
 
     // ---- 分阶段统计输出（MSW_WR_PHASE=1，仅诊断，不改变返回值）----
     // 用途：定位"非单调耗时"。实测同一局面 depth_limit 更大反而更慢，
@@ -2216,6 +2235,13 @@ PYBIND11_MODULE(mscore, m) {
           "默认 -1.0 = 沿用原公式，输出与旧版逐位一致。\n"
           "adaptive_depth > 0 时按成本预估主动变浅以避免 node_cap 降级；\n"
           "默认 0 = 关闭（生产默认路径，行为与旧版逐位一致）。");
+    m.def("last_phase", []() {
+        const LastPhase& p = g_last_phase;
+        return py::make_tuple(p.worlds, p.enum_ms, p.outer_ms,
+                              p.depth_limit, p.shrunk, p.wr_nodes);
+    }, "返回最近一次 win_rate 调用的分阶段快照：\n"
+       "(worlds, enum_ms, outer_ms, depth_limit, shrunk, wr_nodes)。\n"
+       "shrunk=1 表示 adaptive_depth 规则**实际触发**并改变了 depth_limit。");
     m.def("pbs_compute", &py_pbs_compute, py::arg("total"), py::arg("num10"), py::arg("clicks"),
           py::arg("clicks9"), py::arg("res_list"), py::arg("ck"), py::arg("a"), py::arg("progress"),
           py::arg("visible"),
