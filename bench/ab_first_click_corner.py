@@ -101,13 +101,24 @@ def mde80(p, n):
 
 
 def run_arm(kind, games, seed, w, h, a, limit, node_cap):
-    """跑一个首点策略，返回逐局结果（含首格数字，用于中间指标）。"""
+    """跑一个首点策略，返回 (results, wall, failures)。
+
+    ==================== 两条硬纪律（Advisor 纠正后加）====================
+    1. **独立日志目录**：每个臂用各自的 state 目录，避免与并行任务抢
+       logs/minesweeper.log 的轮转锁（实测 PermissionError 导致大量局被丢）。
+    2. **禁止静默吞异常**：任何一局的异常都必须显式记录并计数，
+       最终要求「成功局数 == games」，否则该臂结果**不可提交**。
+       旧版 `except Exception: continue` 在 600 局后持续异常却毫无提示，
+       是"静默少样本"的直接原因。
+    """
     from sim.eval_harness import install_stubs
-    install_stubs(os.path.join(ROOT, "state", "ab", "firstclick"), True)
+    # 每个臂独立子目录（含 kind），彻底避免日志文件竞争
+    install_stubs(os.path.join(ROOT, "state", "ab", "firstclick_" + kind), True)
     import ab_policy as ab
 
     fx, fy = first_pos(kind, w, h)
     results = []
+    failures = []          # [(seed, exc_type, msg)] —— 不吞，全部记录
     t0 = time.perf_counter()
     for i in range(games):
         sd = seed + i
@@ -115,17 +126,25 @@ def run_arm(kind, games, seed, w, h, a, limit, node_cap):
             r = ab.play_one(sd, w, h, a, "baseline", limit=limit,
                             node_cap=node_cap, world_cap=4096,
                             first=(fx, fy))
-        except Exception:
+        except Exception as e:                        # noqa: BLE001
+            failures.append((sd, type(e).__name__, str(e)[:200]))
+            # 立即打印前 5 个，避免"跑到最后才发现全失败"
+            if len(failures) <= 5:
+                print("    [FAIL] %s seed=%d %s: %s"
+                      % (kind, sd, type(e).__name__, str(e)[:120]), flush=True)
             continue
-        if isinstance(r, dict):
-            results.append({"seed": sd, "won": bool(r.get("won")),
-                            "died": bool(r.get("died")),
-                            "opened": r.get("opened"),
-                            "first_num": r.get("first_num")})
+        if not isinstance(r, dict):
+            failures.append((sd, "NotDict", repr(type(r))))
+            continue
+        results.append({"seed": sd, "won": bool(r.get("won")),
+                        "died": bool(r.get("died")),
+                        "opened": r.get("opened"),
+                        "first_num": r.get("first_num")})
         if (i + 1) % 200 == 0:
-            print("    %s: %d/%d" % (kind, i + 1, games), flush=True)
+            print("    %s: %d/%d（失败 %d）"
+                  % (kind, i + 1, games, len(failures)), flush=True)
     wall = time.perf_counter() - t0
-    return results, wall
+    return results, wall, failures
 
 
 def summarize(results, kind, wall, w, h):
@@ -177,13 +196,18 @@ def main():
 
     all_res = {}
     sums = []
+    all_failures = {}
     for kind in args.compare:
         print("--- 跑 %s ---" % kind, flush=True)
-        res, wall = run_arm(kind, args.games, args.seed,
-                            args.w, args.h, args.a,
-                            args.limit, args.node_cap)
+        res, wall, fails = run_arm(kind, args.games, args.seed,
+                                   args.w, args.h, args.a,
+                                   args.limit, args.node_cap)
         all_res[kind] = res
+        all_failures[kind] = fails
         s = summarize(res, kind, wall, args.w, args.h)
+        s["failures"] = len(fails)
+        s["requested"] = args.games
+        s["complete"] = (len(res) == args.games and len(fails) == 0)
         sums.append(s)
         print("  %s: 胜率 %d/%d = %.2f%%  95%%CI [%.2f, %.2f]"
               % (kind, s["won"], s["n"], s["rate"] * 100,
@@ -197,6 +221,46 @@ def main():
         else:
             print("       中间指标：无 first_num 字段（需在 play_one 里记录）")
         print()
+
+    # ============================================================
+    # 硬门禁：每臂必须恰好完成 N 局有效配对，否则结果不可提交
+    # （Advisor 纠正：旧轮次在 600 局后持续异常且大量局被丢弃，
+    #   不能与新一轮拼接；任何异常都必须显式记为未覆盖）
+    # ============================================================
+    print()
+    print("=" * 100)
+    print("完整性校验（硬门禁）")
+    print("=" * 100)
+    all_complete = True
+    for s in sums:
+        ok = s["complete"]
+        if not ok:
+            all_complete = False
+        print("  %-8s 请求 %d 局，成功 %d，失败 %d ⇒ %s"
+              % (s["kind"], s["requested"], s["n"], s["failures"],
+                 "✔ 完整" if ok else "✘ 不完整"))
+    if not all_complete:
+        print()
+        print("  ✘ 存在不完整臂 ⇒ **本结果不可提交**。")
+        print("    原因分布：")
+        for kind, fails in all_failures.items():
+            if not fails:
+                continue
+            from collections import Counter
+            c = Counter((t, m[:60]) for _sd, t, m in fails)
+            for (t, m), cnt in c.most_common(5):
+                print("      %s: %dx %s: %s" % (kind, cnt, t, m))
+        print()
+        print("    处理：修复异常后按**冻结 seed 从头重跑**，不得与本次拼接。")
+        out = args.out or os.path.join(
+            ROOT, "state", "ab", "firstclick_%s.json" % "_".join(args.compare))
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump({"summaries": sums, "incomplete": True,
+                       "USABLE_FOR_RANKING": USABLE_FOR_RANKING,
+                       "args": vars(args)}, f, ensure_ascii=False, indent=1)
+        print("    已写不可提交标记：%s" % out)
+        return 2
 
     # ---- 配对比较 ----
     if len(args.compare) >= 2:
