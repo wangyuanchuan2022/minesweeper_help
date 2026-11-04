@@ -172,11 +172,19 @@ def main():
     print("=" * 100)
     print("  ① 在 worlds ∈ [%d, %d] 的 %d 个合格点上，C++ 口径 ok 率 = %.1f%%"
           % (min(r["worlds"] for r in rows), max_w, n, 100 * ok / n))
-    print("     （Python 同窗口仅 %.1f%%）" % (100 * sum(
-        1 for r in py_rows if r["status"] == "ok") / max(1, len(py_rows))))
+    print("     （Python 同窗口仅 %.1f%%，差异 %.1fpp）"
+          % (100 * sum(1 for r in py_rows if r["status"] == "ok")
+             / max(1, min(len(py_rows), n)),
+             100 * ok / n
+             - 100 * sum(1 for r in py_rows if r["status"] == "ok")
+             / max(1, min(len(py_rows), n))))
     print("  ② worlds > %d 的 %d 点**未测**，不得外推。" % (max_w, len(untested)))
+    n_ok_txt = "%.1f%%" % (100 * ok / n)
     print("  ③ ⇒ 可以确认：P1-c 的 40.3% 中，**相当大一部分是 Python 语言瓶颈**，")
-    print("        不是'算不出'（同窗口 C++ 达 %.0f%%）。" % (100 * ok / n))
+    print("        不是'算不出'（同窗口 C++ 达 %s，Python 同窗口仅 %.1f%%）。"
+          % (n_ok_txt,
+             100 * sum(1 for r in py_rows if r["status"] == "ok")
+             / max(1, min(len(py_rows), n))))
     print("  ④ 但**不能**声称'全样本覆盖率接近 100%'——大 worlds 段未测。")
 
     out = {
