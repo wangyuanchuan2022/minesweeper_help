@@ -1,0 +1,208 @@
+{
+  "schema_version": "1",
+  "report": "review\\代码质量域.md",
+  "at": "",
+  "total": 21,
+  "tally": {
+    "anchored": 21,
+    "anchored-fuzzy": 0,
+    "drifted": 0,
+    "refiled": 0,
+    "ambiguous": 0,
+    "unanchored": 0,
+    "no-evidence": 0,
+    "unverifiable": 0
+  },
+  "critical_high_unanchored": 0,
+  "findings": [
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 1057,
+      "raw_index": 334,
+      "evidence": "return cell_value",
+      "severity": "CRITICAL",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/vision.py",
+      "claim_line": 131,
+      "raw_index": 338,
+      "evidence": "result[i, j] = np.sum(res)",
+      "severity": "CRITICAL",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/solver.py",
+      "claim_line": 235,
+      "raw_index": 342,
+      "evidence": "_gs_save(total, win)  # 对局统计累计落盘",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/solver.py",
+      "claim_line": 359,
+      "raw_index": 346,
+      "evidence": "except ValueError:",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "tests/test_ui_heatmap.py",
+      "claim_line": 87,
+      "raw_index": 350,
+      "evidence": "self.assertIn(\"当前点击方格不是雷的概率: 87.50%\", t)",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "bench/compare_native.py",
+      "claim_line": 213,
+      "raw_index": 354,
+      "evidence": "nfn, pfn = pbs_call(total_override=10001)",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "tests/test_probability.py",
+      "claim_line": 28,
+      "raw_index": 358,
+      "evidence": "result = solver.number5_1(cell_value.copy())",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 947,
+      "raw_index": 362,
+      "evidence": "return np.array([]), 0.0, total",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/clicking.py",
+      "claim_line": 44,
+      "raw_index": 366,
+      "evidence": "sorted_clicks = dfs(degree_one_nodes[0], mst, [])",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/deduction.py",
+      "claim_line": 116,
+      "raw_index": 370,
+      "evidence": "x2 = cell_value[y, x]",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 936,
+      "raw_index": 374,
+      "evidence": "与 C++ mscore.pbs_compute 语义逐位一致；返回 (res, mine_num, total)。",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 32,
+      "raw_index": 378,
+      "evidence": "# 决策耗时预算控制：把 number5_1 单次决策的总计算时间控制在 10 秒以内。",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/vision.py",
+      "claim_line": 144,
+      "raw_index": 382,
+      "evidence": "与 compare_img 的语义保持一致：模板比待匹配补丁大时，cv.matchTemplate",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/vision.py",
+      "claim_line": 166,
+      "raw_index": 386,
+      "evidence": "（bench/bench_vision_vector.py 验证：480 格 0 格不一致）。",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/mm0.py",
+      "claim_line": 182,
+      "raw_index": 390,
+      "evidence": "mean = sum(value) / len(value)",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "tests/test_probability.py",
+      "claim_line": 29,
+      "raw_index": 394,
+      "evidence": "# 结果可能是 (confidence, ...) 元组，或需要重扫时返回 ndarray",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/solver.py",
+      "claim_line": 125,
+      "raw_index": 398,
+      "evidence": "self._last_pv_signal_value = -1",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 48,
+      "raw_index": 402,
+      "evidence": "_WR_STEP = 0.5             # 每次升降 0.5",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 435,
+      "raw_index": 406,
+      "evidence": "limitation = 12",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/solver.py",
+      "claim_line": 110,
+      "raw_index": 410,
+      "evidence": "self.p = self.a / (self.w * self.h)",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 1030,
+      "raw_index": 414,
+      "evidence": "if 1 in res:  # 有确定不为雷的地方",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    }
+  ]
+}

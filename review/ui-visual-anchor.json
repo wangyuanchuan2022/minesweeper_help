@@ -1,0 +1,208 @@
+{
+  "schema_version": "1",
+  "report": "review\\UI视觉优化.md",
+  "at": "",
+  "total": 21,
+  "tally": {
+    "anchored": 16,
+    "anchored-fuzzy": 5,
+    "drifted": 0,
+    "refiled": 0,
+    "ambiguous": 0,
+    "unanchored": 0,
+    "no-evidence": 0,
+    "unverifiable": 0
+  },
+  "critical_high_unanchored": 0,
+  "findings": [
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 189,
+      "raw_index": 32,
+      "severity": "CRITICAL",
+      "evidence": "'QLabel{color:rgb(255, 255, 255);font: 10pt \"楷体\";min-height:26px}\\n'",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 98,
+      "raw_index": 44,
+      "severity": "CRITICAL",
+      "evidence": "color:rgba(255, 255, 255, 175);",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 294,
+      "raw_index": 56,
+      "severity": "CRITICAL",
+      "evidence": "\"QProgressBar {border: none;border-radius: 12px;text-align: center;}\\n\"",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 197,
+      "raw_index": 68,
+      "severity": "CRITICAL",
+      "evidence": "self.frame_4.setMinimumSize(QtCore.QSize(0, 200))",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 343,
+      "raw_index": 84,
+      "severity": "HIGH",
+      "evidence": "\"background-color:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 0, 0, 255), stop:1 rgba(0, 255, 0, 255))\"",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 344,
+      "raw_index": 96,
+      "severity": "HIGH",
+      "evidence": "label_4",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 56,
+      "raw_index": 108,
+      "severity": "HIGH",
+      "evidence": "oklch_grad = gradient_gen.create_gradient([(1, 0, 0), (0, 1, 0)])",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 306,
+      "raw_index": 120,
+      "severity": "HIGH",
+      "evidence": "\"QFrame{background-color:rgba(44, 44, 44, 170);\" \"border: 1px solid rgba(255, 255, 255, 70);\" \"border-radius: 10px;}\"",
+      "verdict": "anchored-fuzzy",
+      "detail": "whitespace-normalized hit near line 306"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 238,
+      "raw_index": 132,
+      "severity": "HIGH",
+      "evidence": "\"QPushButton{border-radius:10px; background-color:rgba(255, 255, 255, 200);\\n\" \"color: rgb(0, 0, 0)}QPushButton:hover{background-color:rgba(255, 255, 255, 255);\\n\"",
+      "verdict": "anchored-fuzzy",
+      "detail": "whitespace-normalized hit near line 237"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 52,
+      "raw_index": 144,
+      "severity": "HIGH",
+      "evidence": "\"border-radius: none;\\n\"",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 47,
+      "raw_index": 156,
+      "severity": "HIGH",
+      "evidence": "font.setFamily(\"宋体\")",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 679,
+      "raw_index": 168,
+      "severity": "HIGH",
+      "evidence": "'background-color:rgba(208, 208, 214, 100);font: 9pt \"楷体\";' \"color: rgb(255, 255, 255)}\"",
+      "verdict": "anchored-fuzzy",
+      "detail": "whitespace-normalized hit near line 680"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 314,
+      "raw_index": 180,
+      "severity": "HIGH",
+      "evidence": "self.heatmap_label_stats.setStyleSheet(",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 31,
+      "raw_index": 196,
+      "severity": "MEDIUM",
+      "evidence": "\"QFrame {\\n\" \"    background-image:url(:/icons/background_2.bmp);\\n\" \"    border:none;\\n\" \"}\"",
+      "verdict": "anchored-fuzzy",
+      "detail": "whitespace-normalized hit near line 31"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 90,
+      "raw_index": 208,
+      "severity": "MEDIUM",
+      "evidence": "\"background-color:rgba(255, 255, 255, 150);\\n\"",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 190,
+      "raw_index": 220,
+      "severity": "MEDIUM",
+      "evidence": "'QLabel{color:rgb(255, 255, 255);font: 10pt \"楷体\";min-height:26px}\\n'",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 172,
+      "raw_index": 231,
+      "severity": "MEDIUM",
+      "evidence": "self.screenshot_help.setIconSize(QtCore.QSize(30, 30))",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 550,
+      "raw_index": 243,
+      "severity": "MEDIUM",
+      "evidence": "QtGui.QPixmap(\"image/save.png\").scaled(self.w * self.btn_width, self.h * self.btn_width)",
+      "verdict": "anchored-fuzzy",
+      "detail": "whitespace-normalized hit near line 549"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 325,
+      "raw_index": 255,
+      "severity": "MEDIUM",
+      "evidence": "'QLabel{color: rgb(255, 255, 255);font: 10pt \"楷体\";}\\n'",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "color.py",
+      "claim_line": 164,
+      "raw_index": 267,
+      "severity": "MEDIUM",
+      "evidence": "L = start_L + (end_L - start_L) * segment_t",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 54,
+      "raw_index": 279,
+      "severity": "MEDIUM",
+      "evidence": "background-color:rgba(255, 255, 255, 0);",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    }
+  ]
+}

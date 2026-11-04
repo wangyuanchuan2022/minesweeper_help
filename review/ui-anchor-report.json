@@ -1,0 +1,190 @@
+{
+  "schema_version": "1",
+  "report": "review\\UI交互域.md",
+  "at": "",
+  "total": 19,
+  "tally": {
+    "anchored": 19,
+    "anchored-fuzzy": 0,
+    "drifted": 0,
+    "refiled": 0,
+    "ambiguous": 0,
+    "unanchored": 0,
+    "no-evidence": 0,
+    "unverifiable": 0
+  },
+  "critical_high_unanchored": 0,
+  "findings": [
+    {
+      "claim_path": "main.py",
+      "claim_line": 708,
+      "raw_index": 54,
+      "severity": "CRITICAL",
+      "evidence": "btn = self.heatmap_btn_list[j][i]",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 1241,
+      "raw_index": 65,
+      "severity": "CRITICAL",
+      "evidence": "cv2.imwrite(\"image/temp.bmp\", self.img)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 102,
+      "raw_index": 76,
+      "severity": "CRITICAL",
+      "evidence": "_btn.setFocusPolicy(Qt.NoFocus)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 340,
+      "raw_index": 91,
+      "severity": "HIGH",
+      "evidence": "predicted_s = DECISION_TIME_BUDGET",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 375,
+      "raw_index": 102,
+      "severity": "HIGH",
+      "evidence": "hb.set()",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 226,
+      "raw_index": 113,
+      "severity": "HIGH",
+      "evidence": "self.auto_play_thread.end_signal.connect(self.end_timer)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/solver.py",
+      "claim_line": 240,
+      "raw_index": 124,
+      "severity": "HIGH",
+      "evidence": "time.sleep(1.2)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/vision.py",
+      "claim_line": 222,
+      "raw_index": 135,
+      "severity": "HIGH",
+      "evidence": "pil_img = ImageGrab.grab(",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/solver.py",
+      "claim_line": 110,
+      "raw_index": 146,
+      "severity": "HIGH",
+      "evidence": "self.p = self.a / (self.w * self.h)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 381,
+      "raw_index": 157,
+      "severity": "HIGH",
+      "evidence": "self.with_help = False",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/vision.py",
+      "claim_line": 88,
+      "raw_index": 168,
+      "severity": "HIGH",
+      "evidence": "res = cv.matchTemplate(screen, tem, cv.TM_SQDIFF_NORMED)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 633,
+      "raw_index": 183,
+      "severity": "MEDIUM",
+      "evidence": "self.btn_list[j][i].clicked.connect(functools.partial(self.info, string))",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 778,
+      "raw_index": 194,
+      "severity": "MEDIUM",
+      "evidence": "self.list_p = re.findall(template, s.split(\"\\n\")[0])",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/window.py",
+      "claim_line": 344,
+      "raw_index": 205,
+      "severity": "MEDIUM",
+      "evidence": "\"background-color:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 rgba(255, 0, 0, 255), stop:1 rgba(0, 255, 0, 255))\"",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 328,
+      "raw_index": 216,
+      "severity": "MEDIUM",
+      "evidence": "self.heatmap_btn_width = 24",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 343,
+      "raw_index": 227,
+      "severity": "MEDIUM",
+      "evidence": "self._hm_last = {}",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 221,
+      "raw_index": 238,
+      "severity": "MEDIUM",
+      "evidence": "lambda s: QMessageBox.warning(self, \"错误\", s)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 682,
+      "raw_index": 286,
+      "severity": "LOW",
+      "evidence": "\"color: rgb(255, 255, 255)}\"",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 304,
+      "raw_index": 293,
+      "severity": "LOW",
+      "evidence": "self.heatmap_frame.setMinimumSize(0, 400)",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    }
+  ]
+}

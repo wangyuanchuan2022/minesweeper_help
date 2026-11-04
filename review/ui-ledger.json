@@ -1,0 +1,79 @@
+{
+  "items": [
+    {
+      "path": "main.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "ui/window.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "ui/edit_setting.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "ui/screenshot.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "ui/__init__.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "utils/solver.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "utils/probability.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "utils/deduction.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "utils/vision.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "utils/mm0.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "utils/__init__.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "color.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "setting.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "logger.py",
+      "status": "reviewed",
+      "reason": ""
+    },
+    {
+      "path": "tests/test_ui_heatmap.py",
+      "status": "reviewed",
+      "reason": ""
+    }
+  ]
+}

@@ -1,0 +1,1084 @@
+{
+  "schema_version": "1",
+  "crgate_version": "1.0.0",
+  "mode": "scan",
+  "repository": "D:\\python\\projects\\minesweeper_help",
+  "from": "",
+  "to": "",
+  "head_sha": "facbb42cedb38737f6fb39328376978c90682d58",
+  "selection_hash": "551a0f3667b0d90d",
+  "generated_at": "2026-11-02T10:54:58.245Z",
+  "total_files": 258,
+  "reviewable_count": 15,
+  "excluded_count": 243,
+  "total_insertions": 5428,
+  "total_deletions": 0,
+  "reviewable_files": [
+    {
+      "path": "color.py",
+      "status": "A",
+      "insertions": 267,
+      "deletions": 0
+    },
+    {
+      "path": "logger.py",
+      "status": "A",
+      "insertions": 69,
+      "deletions": 0
+    },
+    {
+      "path": "main.py",
+      "status": "A",
+      "insertions": 1282,
+      "deletions": 0
+    },
+    {
+      "path": "setting.py",
+      "status": "A",
+      "insertions": 9,
+      "deletions": 0
+    },
+    {
+      "path": "tests/test_ui_heatmap.py",
+      "status": "A",
+      "insertions": 117,
+      "deletions": 0
+    },
+    {
+      "path": "ui/__init__.py",
+      "status": "A",
+      "insertions": 3,
+      "deletions": 0
+    },
+    {
+      "path": "ui/edit_setting.py",
+      "status": "A",
+      "insertions": 165,
+      "deletions": 0
+    },
+    {
+      "path": "ui/screenshot.py",
+      "status": "A",
+      "insertions": 128,
+      "deletions": 0
+    },
+    {
+      "path": "ui/window.py",
+      "status": "A",
+      "insertions": 528,
+      "deletions": 0
+    },
+    {
+      "path": "utils/__init__.py",
+      "status": "A",
+      "insertions": 19,
+      "deletions": 0
+    },
+    {
+      "path": "utils/deduction.py",
+      "status": "A",
+      "insertions": 278,
+      "deletions": 0
+    },
+    {
+      "path": "utils/mm0.py",
+      "status": "A",
+      "insertions": 189,
+      "deletions": 0
+    },
+    {
+      "path": "utils/probability.py",
+      "status": "A",
+      "insertions": 1577,
+      "deletions": 0
+    },
+    {
+      "path": "utils/solver.py",
+      "status": "A",
+      "insertions": 509,
+      "deletions": 0
+    },
+    {
+      "path": "utils/vision.py",
+      "status": "A",
+      "insertions": 288,
+      "deletions": 0
+    }
+  ],
+  "excluded_files": [
+    {
+      "path": ".idea/editor.xml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/cfg.bak.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/cfg.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/cfg2.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/err3.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": ".tmp_review_probe/out3.txt",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/probe1.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/probe2.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/probe3.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/probe4.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/probe5.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/probe6.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".tmp_review_probe/t.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "bench_native.log",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "chat-export/session-7fdc3308-15da-4975-bafc-59a04fa17935.raw.jsonl",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "chat-export/session-7fdc3308-15da-4975-bafc-59a04fa17935.txt",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/01-boot.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/02-vision.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/03-deduction.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/04-probability.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/05-engine.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/app.js",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/assemble.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/base.css",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/course-template.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/diag_bet.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/diag_pairing.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/diag_why.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/notes.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/01-m1.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/01-m2.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/01-m3.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/02-m4.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/02-m5.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/02-m6.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/03-m7.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/03-m8.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/03-m9.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/04-m10.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/04-m11.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/04-m12.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/04-m13.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/05-finale.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/05-m14.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/05-m15.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/05-m16.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/05-m17.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/_build/seg/index-main.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "course/index.html",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "review/.ui-spec.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "\"review//350/247/206/350/247/211/345/237/237.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "review_test.log",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "review_test2.log",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "sim/minesweeper_sim.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": ".claude/settings.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".claude/skills/debug-issue/SKILL.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".claude/skills/explore-codebase/SKILL.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".claude/skills/refactor-safely/SKILL.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".claude/skills/review-changes/SKILL.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".cursorrules",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".github/code-review-graph.instruction.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".gitignore",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/.gitignore",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/inspectionProfiles/profiles_settings.xml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/minesweeper_help.iml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/misc.xml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/modules.xml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/other.xml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".idea/vcs.xml",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": ".windsurfrules",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "CLAUDE.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "GEMINI.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "MineSweeper.zip",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "README.md",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/ablate_speed.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_big_cases.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_e2e_optimized.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_large_board.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_storage.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_ui_render.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_vision_batch.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_vision_vector.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/bench_winrate_scaling.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/compare_native.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/compare_wr.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/count_vision_work.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/dp_generating_function.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/independent_oracle.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/instrument_walltime.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/locate_prob_bug.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/profile_decision.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/profile_fitk.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/profile_hotspots.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/profile_pipeline.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/step_budget.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_fallback_parity.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_fitk_window.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_fixes_negative.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_large_speedup.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_pbs_crash.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_pbs_dp_integration.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_pbs_fix_e2e.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_pbs_independence.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_vision_accuracy.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "bench/verify_vision_batch_equiv.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cfg.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/build.bat",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/attr.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/buffer_info.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/cast.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/chrono.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/common.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/complex.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/conduit/README.txt",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/conduit/pybind11_conduit_v1.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/conduit/pybind11_platform_abi_id.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/conduit/wrap_include_python_h.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/critical_section.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/argument_vector.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/class.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/common.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/cpp_conduit.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/descr.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/dynamic_raw_ptr_cast_if_possible.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/exception_translation.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/function_record_pyobject.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/function_ref.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/holder_caster_foreign_helpers.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/init.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/internals.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/native_enum_data.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/pybind11_namespace_macros.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/struct_smart_holder.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/type_caster_base.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/typeid.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/using_smart_holder.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/detail/value_and_holder.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/eigen.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/eigen/common.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/eigen/matrix.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/eigen/tensor.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/embed.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/eval.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/functional.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/gil.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/gil_safe_call_once.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/gil_simple.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/iostream.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/native_enum.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/numpy.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/operators.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/options.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/pybind11.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/pytypes.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/stl.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/stl/filesystem.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/stl_bind.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/subinterpreter.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/trampoline_self_life_support.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/type_caster_pyobject_ptr.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/typing.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/inc/pybind11/warnings.h",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "cpp/mscore.cpp",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "data.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "icons/background_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/background_2.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/camera.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/home.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/house.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/icon.ico",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/interactive.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/interrogation.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/interrogation_1.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/play.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/play_1.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/screenshot.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/screenshot_1.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/settings.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "icons/stop.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/0.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/0_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/0_2.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/10.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/10_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/1_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/1_2.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/2.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/2_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/3.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/3_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/4.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/4_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/5.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/5_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/6.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/6_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/7.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/7_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/8.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/8_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/9.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/9_1.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/9_2.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/example.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/exit.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/exit.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/lose.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/ok.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/save.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/temp.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/win.bmp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "main.spec",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "\"md_img//350/207/252/345/212/250-/346/265/201/347/250/213/345/233/276.png\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "package-lock.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "package.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "requirements.txt",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "\"review//344/270/273/346/212/245/345/221/212.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "\"review//346/236/266/346/236/204/345/237/237.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "\"review//347/256/227/346/263/225/345/237/237.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "test_accuracy.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/__init__.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/data/test_33.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/data/test_4.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/data/test_6.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/data/wr_test.json",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/helpers.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/test_combinatorics.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/test_probability.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/test_real_io.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/test_scan.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "tests/test_solver_core.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "ui/bg.qrc",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "ui/bg_rc.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "ui/edit_setting.ui",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "ui/screenshot.ui",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "ui/window.ui",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "utils/clicking.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "utils/combinatorics.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "utils/misc.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "utils/native.py",
+      "exclude_reason": "user-excluded"
+    },
+    {
+      "path": "utils/util.py",
+      "exclude_reason": "user-excluded"
+    }
+  ],
+  "warnings": [],
+  "spec_sha": "f8c74b1f404dc585"
+}
