@@ -221,8 +221,23 @@ def decide_with_arm(arm, case, world_cap, node_cap):
 
 # ---------------------------------------------------------------------------
 def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
-             max_steps=None, wr_threshold=None):
-    """跑一局。wr_threshold 不为 None 时强制该阈值（走真实读取路径）。"""
+             max_steps=None, wr_threshold=None, first=None):
+    """跑一局。wr_threshold 不为 None 时强制该阈值（走真实读取路径）。
+
+    first：首点坐标 (x, y)，0-based；None = 默认中心 (w//2, h//2)。
+
+    ==================== 为什么首点位置值得成为实验变量 ====================
+    Arbiter 是**延迟布雷**（只保证首点**本格**安全，不保证 8 邻域）。
+    因此首格的数字 = 其真实邻域雷数，而邻域格数取决于位置：
+        角落 3 格 / 边缘 5 格 / 中心 8 格
+    精确组合数给出 P(首格数字 = 0)（= 会 flood-fill 展开一大片）：
+        角落 49.85% / 边缘 31.25% / 中心 15.45%
+    ⇒ 在 Arbiter 规则下，**角落开局反而最容易开出大片信息**，
+      而生产代码固定点中心（w//2, h//2）恰好是三者中最差的。
+    ⚠️ 注意这与**现代规则**（首点及 8 邻域无雷）的结论**相反**：
+      现代规则下角落只保护 4 格、开局面积小、胜率低约 5pp
+      （MinesweeperHQ 170 万局实测）。两套规则不可混用结论。
+    """
     import numpy as np
     from sim.eval_harness import SimDriver, GameOver, install_stubs
     from sim.minesweeper_sim import Board, UNOPENED as U
@@ -242,8 +257,19 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
     np.random.seed(seed)
     rng = random.Random(seed)
     board = Board(w, h, a, rng)
-    board.open(w // 2, h // 2)
-    board.view(set()).audit_no_leak()
+    fx, fy = first if first else (w // 2, h // 2)
+    board.open(fx, fy)
+    _view0 = board.view(set())
+    # 记录首格数字（P2 的中间指标：首格为 0 的比率）。
+    # 必须在任何后续点击前读，否则该格信息被后续状态覆盖。
+    # ⚠️ BoardView 用 cells[y][x] 访问（不是 view[y][x]）——
+    #    第一版写成 _view0[fy][fx] 直接 TypeError 被吞成 None，
+    #    导致 20 局全部 first_num=None。已修正。
+    try:
+        first_num = int(_view0.cells[fy][fx])
+    except Exception:
+        first_num = None
+    _view0.audit_no_leak()
 
     s = Solver()
     s.w, s.h, s.a = w, h, a
@@ -423,7 +449,8 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
         except Exception as e:                              # noqa: BLE001
             if os.environ.get("AB_RAISE"):
                 raise
-            return {"seed": seed, "won": False, "died": False, "steps": steps,
+            return {"seed": seed, "won": False, "died": False,
+            "first_num": first_num, "steps": steps,
                     "error": f"{type(e).__name__}: {e}"}
 
     drv.flush_clicks()
@@ -441,6 +468,7 @@ def play_one(seed, w, h, a, arm, limit=80, world_cap=4096, node_cap=200000,
             pass
     result = {
         "seed": seed, "won": bool(board.won), "died": bool(board.dead),
+        "first_num": first_num,
         "steps": steps, "opened": board.opened_count,
         "target": w * h - a, "n_click": drv.n_click,
         "ms": (time.perf_counter() - t0) * 1000.0,
