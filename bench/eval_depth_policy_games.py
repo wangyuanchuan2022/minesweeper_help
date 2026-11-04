@@ -80,8 +80,14 @@ def run_arm(arm, games, seed, w, h, a, limit, node_cap):
     install_stubs(os.path.join(ROOT, "state", "ab", "depthgames"), True)
 
     adaptive = int(arm[2:]) if arm.startswith("ad") else 0
+    # ⚠️ 关键区分（Advisor 纠正）：
+    #   cap_hits   = node_cap 触发次数（异常路径）
+    #   shrunk     = adaptive 规则**实际触发**并改变了 depth_limit 的次数
+    #   pick_changed = 触发后**最终选格**是否真的改变
+    # cap 率 != 触发率；600 局 0 差异不能推出"规则从未触发"。
     stats = {"calls": 0, "cap_hits": 0, "over_budget": 0,
-             "ms_max": 0.0, "ms_sum": 0.0}
+             "ms_max": 0.0, "ms_sum": 0.0,
+             "shrunk": 0, "pick_changed": 0, "base_picks": {}}
 
     if adaptive > 0:
         import utils.probability as prob
@@ -107,6 +113,23 @@ def run_arm(arm, games, seed, w, h, a, limit, node_cap):
             stats["ms_max"] = max(stats["ms_max"], ms)
             if ms > 30000.0:
                 stats["over_budget"] += 1
+            # 读 C++ 侧 phase 快照：shrunk=1 表示规则真的改变了 depth_limit
+            try:
+                ph = native.mscore.last_phase()
+                if int(ph[4]) == 1:
+                    stats["shrunk"] += 1
+            except Exception:
+                pass
+            # 记录选格（用于与 base 臂逐决策比较）
+            key = (tuple(map(int, clicks[0])) if clicks else None,
+                   len(clicks), len(clicks9), int(num10))
+            try:
+                arr = list(r[0])
+                if arr:
+                    bi = max(range(len(arr)), key=lambda i: arr[i])
+                    stats["base_picks"][key] = bi
+            except Exception:
+                pass
             return r
 
         prob.ProbabilityMixin.win_rate = wr_patched
@@ -148,6 +171,9 @@ def summarize(results, stats, arm, wall):
         out["win_rate_calls"] = stats["calls"]
         out["cap_rate_pct"] = (stats["cap_hits"] / max(1, stats["calls"]) * 100.0)
         out["over_budget_calls"] = stats["over_budget"]
+        out["shrunk"] = stats["shrunk"]
+        out["shrunk_rate_pct"] = (stats["shrunk"] / max(1, stats["calls"]) * 100.0)
+        out["cap_rate_pct"] = (stats["cap_hits"] / max(1, stats["calls"]) * 100.0)
     return out
 
 
@@ -190,9 +216,12 @@ def main():
               % (arm, s["won"], s["n"], s["rate"] * 100,
                  s["ci95"][0] * 100, s["ci95"][1] * 100))
         if "cap_rate_pct" in s:
-            print("        win_rate 调用 %d，cap 触发 %d（%.2f%%），>30s %d 次"
-                  % (s["win_rate_calls"], s["cap_hits"],
-                     s["cap_rate_pct"], s["over_budget_calls"]))
+            print("        win_rate 调用 %d：cap 触发 %d（%.2f%%），"
+                  "**规则实际触发 %d（%.2f%%）**，>30s %d 次"
+                  % (s["win_rate_calls"], s["cap_hits"], s["cap_rate_pct"],
+                     s.get("shrunk", 0), s.get("shrunk_rate_pct", 0.0),
+                     s["over_budget_calls"]))
+            print("        ⚠️ cap 率 != 触发率：cap 是异常降级，shrunk 才是规则生效")
         print()
 
     if len(arms) >= 2:
