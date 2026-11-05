@@ -1,4 +1,4 @@
-﻿// mscore.cpp — 扫雷助手核心算法 C++ 加速模块（pybind11）
+// mscore.cpp — 扫雷助手核心算法 C++ 加速模块（pybind11）
 //
 // 移植目标（与 Python 实现逐行对照，保证结果完全一致）：
 //   1. part_solve          —— utils/probability.py ProbabilityMixin.part_solve (_try=False 路径)
@@ -2186,6 +2186,22 @@ py::tuple py_exact_eval(py::sequence worlds_seq, py::sequence clicks_seq,
 
 }  // namespace
 
+// ==================== B1 合并编译保护宏（2026-11-05）====================
+// 目的：允许 ab_native.cpp 与本文件编进**同一个 pyd**，从而让 C++ 侧
+//      直接调用本文件已验证的枚举/决策实现（PartSolveCtx / WinRateCtx /
+//      ExactEngine），避免自制枚举器与生产语义不一致。
+//
+// 用法：
+//   · 单独编译（生产构建，cpp/build.bat）：未定义 AB_NATIVE_MERGED
+//     ⇒ 正常生成 PYBIND11_MODULE(mscore)，行为与改动前**完全一致**。
+//   · 合并编译（cpp/build_ab_native.bat）：定义 AB_NATIVE_MERGED
+//     ⇒ 跳过本文件的模块入口，由 ab_native.cpp 提供唯一入口，
+//       并在其中调用本文件的 run_ab_impl()。
+//
+// ⚠️ 本节只加预处理保护，**不改变任何逻辑**。
+//     生产 mscore.pyd 的编译产物应逐位不变（已有 verify 流程可复核）。
+// ========================================================================
+#ifndef AB_NATIVE_MERGED
 PYBIND11_MODULE(mscore, m) {
     m.doc() = "minesweeper_help native core (C++): part_solve / part_solve_single / "
               "win_rate / pbs_compute — 与 Python 实现语义完全一致的加速实现";
@@ -2271,3 +2287,4 @@ PYBIND11_MODULE(mscore, m) {
           py::arg("data"),
           "MD5 摘要（16 字节二进制），与 hashlib.md5 一致（诊断/测试用）");
 }
+#endif  // AB_NATIVE_MERGED（B1 合并编译保护宏，见模块入口处说明）

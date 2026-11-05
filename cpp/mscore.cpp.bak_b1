@@ -1,0 +1,2273 @@
+﻿// mscore.cpp — 扫雷助手核心算法 C++ 加速模块（pybind11）
+//
+// 移植目标（与 Python 实现逐行对照，保证结果完全一致）：
+//   1. part_solve          —— utils/probability.py ProbabilityMixin.part_solve (_try=False 路径)
+//   2. part_solve_single   —— utils/probability.py ProbabilityMixin.part_solve_single (_try=False 路径)
+//   3. win_rate            —— utils/probability.py ProbabilityMixin.win_rate（完整）
+//   4. pbs_compute         —— utils/probability.py ProbabilityMixin.process_bigger_situation
+//                             的纯计算部分（total>10000 近似分支 + 精确乘积分支）
+//   5. 组合工具            —— utils/combinatorics.py 的 C / get_list / A / C_num / combination_ratio 语义
+//
+// 语义保持要点（与 Python 严格对照）：
+//   - part_solve 递归的遍历顺序、剪枝条件、解的追加顺序与 Python 完全一致；
+//     全盘 np.argwhere(value==10) 计数改为增量计数（等价），逐节点棋盘拷贝改为单盘回溯（等价）。
+//   - 无约束数字格的 click 触发 KeyError（对应 Python dict(_cs) 缺键路径）。
+//   - 进度回调：Python 在递归内调用 _throttled_pv_signal_emit(int(completed*100))（内部按 100ms 节流），
+//     C++ 仅在整数值变化时调用同一回调，可见行为一致。
+//   - pbs_compute 精确分支的加权累计使用 float32（numpy 1.x 标量语义：float32 数组 * Python float
+//     → 标量先转 float32，逐元素 float32 运算，已实证）；近似分支使用 float64 顺序累加
+//     （np.array(...).sum(axis=0) 对 C 序 2D 数组逐行顺序求和，已实证）。
+//   - win_rate 的记忆化哈希使用 MD5（与 Python hashlib.md5(板面字节) 一致，含 >9 → 9 归一化）。
+//
+// 构建：cpp/build.bat（MSVC /O2 /std:c++17 /LD，输出 utils/mscore.cp310-win_amd64.pyd）
+
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+
+#include <algorithm>
+#include <chrono>
+#include <climits>
+#include <cmath>
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+#include <map>
+
+// MSVC 没有 msw_ctzll / msw_popcountll（那是 GCC/Clang 内建）。
+// 本文件之前只在 GCC 下编译过，新加的 ExactEngine 用了这些内建 ⇒ 提供可移植封装。
+// 用 MSVC 的 _BitScanForward64 / __popcnt64（x64 上均为单指令）。
+#if defined(_MSC_VER)
+#include <intrin.h>
+static inline int msw_ctzll(unsigned long long x) {
+    unsigned long idx;
+    _BitScanForward64(&idx, x);
+    return (int)idx;
+}
+static inline int msw_popcountll(unsigned long long x) {
+    return (int)__popcnt64(x);
+}
+#else
+static inline int msw_ctzll(unsigned long long x) { return msw_ctzll(x); }
+static inline int msw_popcountll(unsigned long long x) { return msw_popcountll(x); }
+#endif
+
+namespace py = pybind11;
+
+// ---------------------------------------------------------------------------
+// MD5（RFC 1321；用于 win_rate 记忆化哈希——与 Python hashlib.md5 输出一致）
+// ---------------------------------------------------------------------------
+namespace {
+
+class MD5 {
+public:
+    MD5() { reset(); }
+    void reset() {
+        size_ = 0;
+        h_[0] = 0x67452301u; h_[1] = 0xefcdab89u;
+        h_[2] = 0x98badcfeu; h_[3] = 0x10325476u;
+        std::memset(buf_, 0, 64);
+    }
+    void update(const unsigned char* buf, size_t len) {
+        size_t used = size_ % 64;
+        size_ += len;
+        if (used) {
+            size_t need = 64 - used;
+            if (len < need) {
+                std::memcpy(&buf_[used], buf, len);
+                return;
+            }
+            std::memcpy(&buf_[used], buf, need);
+            transform(buf_);
+            buf += need;
+            len -= need;
+        }
+        while (len >= 64) {
+            transform(buf);
+            buf += 64;
+            len -= 64;
+        }
+        if (len) std::memcpy(buf_, buf, len);
+    }
+    // 16 字节二进制摘要
+    std::string final() {
+        uint64_t bits = (uint64_t)size_ * 8;  // 先记录消息长度（不含填充）
+        unsigned char pad[72];
+        std::memset(pad, 0, sizeof(pad));
+        pad[0] = 0x80;
+        size_t padlen = (size_ % 64 < 56) ? (56 - size_ % 64) : (120 - size_ % 64);
+        update(pad, padlen);
+        for (int i = 0; i < 8; i++) pad[i] = (unsigned char)(bits >> (8 * i));
+        update(pad, 8);
+        std::string out(16, '\0');
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 4; j++)
+                out[4 * i + j] = (char)((h_[i] >> (8 * j)) & 0xFF);
+        return out;
+    }
+
+private:
+    static uint32_t rol(uint32_t x, int c) { return (x << c) | (x >> (32 - c)); }
+    void transform(const unsigned char* chunk) {
+        uint32_t a = h_[0], b = h_[1], c = h_[2], d = h_[3], x[16];
+        for (int i = 0; i < 16; i++)
+            x[i] = (uint32_t)chunk[4 * i] | ((uint32_t)chunk[4 * i + 1] << 8) |
+                   ((uint32_t)chunk[4 * i + 2] << 16) | ((uint32_t)chunk[4 * i + 3] << 24);
+        for (int i = 0; i < 64; i++) {
+            uint32_t f;
+            int g;
+            if (i < 16) {
+                f = (b & c) | (~b & d);
+                g = i;
+            } else if (i < 32) {
+                f = (d & b) | (~d & c);
+                g = (5 * i + 1) % 16;
+            } else if (i < 48) {
+                f = b ^ c ^ d;
+                g = (3 * i + 5) % 16;
+            } else {
+                f = c ^ (b | ~d);
+                g = (7 * i) % 16;
+            }
+            uint32_t tmp = d;
+            d = c;
+            c = b;
+            b = b + rol(a + f + K_[i] + x[g], S_[i]);
+            a = tmp;
+        }
+        h_[0] += a;
+        h_[1] += b;
+        h_[2] += c;
+        h_[3] += d;
+    }
+    static const uint32_t K_[64];
+    static const int S_[64];
+    uint32_t h_[4];
+    unsigned char buf_[64];
+    size_t size_;
+};
+
+const uint32_t MD5::K_[64] = {
+    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a,
+    0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340,
+    0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8,
+    0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+    0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92,
+    0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
+const int MD5::S_[64] = {
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+
+// ---------------------------------------------------------------------------
+// 通用工具
+// ---------------------------------------------------------------------------
+
+using Coord = std::pair<int, int>;  // (x=i 列索引, y=j 行索引)
+
+std::vector<Coord> parse_coords(py::sequence seq) {
+    std::vector<Coord> out;
+    out.reserve((size_t)py::len(seq));
+    for (auto item : seq) {
+        auto t = item.cast<py::sequence>();
+        out.emplace_back(py::int_(t[0]), py::int_(t[1]));
+    }
+    return out;
+}
+
+// ==================== 打包棋盘表示（用户建议：4 位/格）====================
+//
+// 用户建议："用长整数表示整个棋盘，每 4 位存一个格子的信息，因为格子信息不超过 16 种"
+//
+// 为什么用打包而不是 vector<int32_t>：
+//   · 内存：576 格 × 4B = 2304B → 576 格 × 4bit = 288B（**8 倍压缩**）
+//   · 拷贝：`Board nb = b` 是 wr_f 里最高频操作（每个世界每次分组一次），
+//     2304B → 288B 拷贝，且小到可以**栈上分配、无堆 malloc**
+//   · cell_around 遍历 9 格，每格取值从"访存 4B"变为"取 word + 位移"，
+//     邻域格常在同/邻 word 内，缓存友好
+//
+// 值域：cell_value 编码 9=未开 / 10=标记雷 / 0..8=已开数字 ⇒ 0..10 共 11 种。
+//   4 位容纳 0..15 ⇒ 安全。**注意：打包不做归一化**（保留 9 与 10 的区别），
+//   因为 cell_around 需要区分 9(未开) 与 10(标记雷)。
+//   （memo 键的归一化 v>9→9 在 hash_board 里单独做，与原 MD5 版语义一致）
+//
+// 容量：PACK_MAX_WORDS=64 ⇒ 最多 1024 格。30x16=(18×32)=576 格 → 36 words。
+//   ⚠️ 超容量时构造函数会 throw，避免静默越界。
+static constexpr int PACK_BITS = 4;
+static constexpr int PACK_PER_WORD = 64 / PACK_BITS;   // 16 格/word
+static constexpr int PACK_MAX_CELLS = 1024;            // 64 words
+
+class Board {
+public:
+    Board() = default;
+
+    // 从 int32 指针区间构造（用作 base 棋盘）
+    Board(const int32_t* first, const int32_t* last) {
+        const size_t n = (size_t)(last - first);
+        init_size(n);
+        for (size_t k = 0; k < n; ++k) set_raw_unchecked(k, first[k]);
+    }
+    // 从 vector / array 构造（测试与内部用）
+    template <typename It>
+    Board(It first, It last, int /*tag*/) {
+        const size_t n = (size_t)(last - first);
+        init_size(n);
+        for (size_t k = 0; k < n; ++k) set_raw_unchecked(k, (int32_t)first[k]);
+    }
+
+    inline size_t size() const { return n_; }
+
+    // 取值（内联位运算，无函数调用开销）
+    inline int32_t get(size_t pos) const {
+        const size_t wi = pos / PACK_PER_WORD;
+        const int sh = (int)((pos % PACK_PER_WORD) * PACK_BITS);
+        return (int32_t)((w_[wi] >> sh) & 0xFull);
+    }
+    // 改值（清 4 位 + 写 4 位）
+    inline void set(size_t pos, int32_t v) {
+        const size_t wi = pos / PACK_PER_WORD;
+        const int sh = (int)((pos % PACK_PER_WORD) * PACK_BITS);
+        w_[wi] = (w_[wi] & ~(0xFull << sh)) | ((uint64_t)(v & 0xF) << sh);
+    }
+    // 重载 operator[]：让 `b[pos]` 的调用方（读/写）**无需改动**
+    struct Ref {
+        Board& b; size_t pos;
+        inline operator int32_t() const { return b.get(pos); }
+        inline Ref& operator=(int32_t v) { b.set(pos, v); return *this; }
+        inline Ref& operator=(const Ref& o) { b.set(pos, (int32_t)o); return *this; }
+    };
+    inline Ref operator[](size_t pos) { return Ref{*this, pos}; }
+    inline int32_t operator[](size_t pos) const { return get(pos); }
+
+private:
+    void init_size(size_t n) {
+        if (n > (size_t)PACK_MAX_CELLS) {
+            throw std::runtime_error(
+                "Board capacity exceeded: need " + std::to_string(n) +
+                " cells, max " + std::to_string(PACK_MAX_CELLS) +
+                " (raise PACK_MAX_CELLS)");
+        }
+        n_ = n;
+        const size_t nw = (n + PACK_PER_WORD - 1) / PACK_PER_WORD;
+        for (size_t i = 0; i < nw; ++i) w_[i] = 0ull;
+    }
+    inline void set_raw_unchecked(size_t pos, int32_t v) {
+        const size_t wi = pos / PACK_PER_WORD;
+        const int sh = (int)((pos % PACK_PER_WORD) * PACK_BITS);
+        w_[wi] |= ((uint64_t)(v & 0xF) << sh);
+    }
+
+    static constexpr int NW = (PACK_MAX_CELLS + PACK_PER_WORD - 1) / PACK_PER_WORD;
+    std::array<uint64_t, NW> w_{};
+    size_t n_ = 0;
+};
+
+// 对应 deduction.py cell_around(i, j)：统计 (j±1, i±1) 邻域内 9 / 10 的数量。
+inline void cell_around(const Board& b, int w, int h, int W2, int i, int j,
+                        int& cnt9, int& cnt10) {
+    int c9 = 0, c10 = 0;
+    for (int n = j - 1; n <= j + 1; ++n) {
+        for (int m = i - 1; m <= i + 1; ++m) {
+            if (0 <= m && m <= w + 1 && 0 <= n && n <= h + 1) {
+                int32_t v = b.get((size_t)n * W2 + m);
+                if (v == 9) ++c9;
+                if (v == 10) ++c10;
+            }
+        }
+    }
+    cnt9 = c9;
+    cnt10 = c10;
+}
+
+// 进度回调：仅整数值变化时触发（Python 侧 _throttled_pv_signal_emit 自带 100ms 节流）。
+// 计算段释放 GIL 时（见各入口的 py::gil_scoped_release），每次回调需短暂重取 GIL，
+// 否则主线程 UI（进度条）拿不到 GIL、事件堆积到调用结束——进度条冻结的根因。
+struct Progress {
+    py::object cb;   // callable(int) 或 None
+    bool cb_none;    // 构造时（持有 GIL）判定，避免无 GIL 期间触碰 Python 对象
+    int last = -1;
+    explicit Progress(py::object c) : cb(std::move(c)), cb_none(cb.is_none()) {}
+    void emit(int pct) {
+        if (cb_none || pct == last) return;
+        last = pct;
+        py::gil_scoped_acquire acq;  // 计算段已释放 GIL，回调瞬间重取
+        cb(py::int_(pct));
+    }
+};
+
+// ---------------------------------------------------------------------------
+// 组合枚举（combinatorics.py 语义）
+// ---------------------------------------------------------------------------
+
+// C(a, b)：按字典序产出所有 b 元组合（与 Python 生成器完全同序）
+struct ComboIter {
+    int b;
+    std::vector<int> num;
+    std::vector<int> ck;
+    bool done;
+
+    ComboIter(int a_, int b_) : b(b_), done(false) {
+        if (b_ < 0 || b_ > a_) {
+            done = true;
+            return;
+        }
+        num.resize((size_t)b_);
+        ck.resize((size_t)b_);
+        for (int i = 0; i < b_; ++i) {
+            num[(size_t)i] = i;
+            ck[(size_t)i] = a_ - b_ + i;  // range(a-b, a)
+        }
+    }
+    bool next(std::vector<int>& out) {
+        if (done) return false;
+        out = num;
+        if (b == 0) {
+            done = true;  // Python：b==0 时 yield 一次后 return
+            return true;
+        }
+        advance();
+        return true;
+    }
+    // 复刻 Python 生成器的进位逻辑（含 i=0 时 num[-1] 回绕怪癖——随后必有 break，无实际影响）
+    void advance() {
+        num[(size_t)(b - 1)] += 1;
+        for (int k = 0; k < b; ++k) {
+            int pos = (k == 0) ? 0 : (b - k);  // i ∈ {0,-1,...,-(b-1)} → 位置 {0, b-1, ..., 1}
+            if (num[(size_t)pos] > ck[(size_t)pos]) {
+                int target = (pos == 0) ? (b - 1) : (pos - 1);
+                num[(size_t)target] += 1;
+            }
+        }
+        if (num[0] > ck[0]) {
+            done = true;
+            return;
+        }
+        for (int pos = 0; pos < b; ++pos) {
+            if (num[(size_t)pos] > ck[(size_t)pos]) {
+                int prev = (pos == 0) ? (b - 1) : (pos - 1);
+                num[(size_t)pos] = num[(size_t)prev] + 1;
+            }
+        }
+    }
+};
+
+// C_num(a, b)：对应 combinatorics.py（浮点逐步除法，结果为 double）
+double C_num(int a, int b) {
+    double result = 1.0;
+    for (int i = 0; i < b; ++i) {
+        result *= (double)(a - i);
+        result /= (double)(i + 1);
+    }
+    return result;
+}
+
+// combination_ratio(x, x_min, n)：对应 combinatorics.py（浮点逐步乘除）。
+// 断言失败不直接抛 Python 异常（抛异常需 GIL，而调用点位于释放 GIL 的计算段），
+// 由调用方在重取 GIL 后统一抛出。
+static bool combination_ratio_checked(int x, int x_min, int n, double* out) {
+    if (!(0 <= x && x <= x_min && x_min <= n)) return false;
+    double res = 1.0;
+    for (int i = 0; i < x_min - x; ++i) {
+        res *= (double)(x + 1 + i);
+        res /= (double)(n - x - i);
+    }
+    *out = res;
+    return true;
+}
+
+// 在持有 GIL 的上下文中使用（保留原语义：AssertionError）
+double combination_ratio(int x, int x_min, int n) {
+    double out;
+    if (!combination_ratio_checked(x, x_min, n, &out)) {
+        PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
+        throw py::error_already_set();
+    }
+    return out;
+}
+
+// get_list 的尺寸范围钳制（start=0, stop=-1 路径——win_rate / part_solve_single 均如此调用）
+// 返回需要枚举的组合大小列表（升序，含边界）。
+std::vector<int> get_list_sizes(int64_t a_in, int64_t num_in, int listnum) {
+    int64_t a = a_in, num = num_in;
+    if (a < 1) a = 1;
+    if (num > (int64_t)listnum - 1) num = (int64_t)listnum - 1;
+    if (num < 1) num = 1;
+    if (num < a) a = num;
+    std::vector<int> sizes;
+    for (int i = (int)a; i <= (int)num; ++i) sizes.push_back(i);
+    return sizes;
+}
+
+// A(ck)：乘积里程计迭代器（与 Python A() 生成器完全同序，含 i=0 回绕怪癖——无实际影响）
+struct Odometer {
+    std::vector<int> num;
+    std::vector<int> limits;
+    bool done;
+    explicit Odometer(std::vector<int> ck)
+        : num(ck.size(), 0), limits(std::move(ck)), done(false) {}
+    bool next(std::vector<int>& out) {
+        if (done) return false;
+        out = num;
+        if (limits.empty()) {
+            done = true;  // Python：len(ck)==0 → yield 一次后 break
+            return true;
+        }
+        const size_t len = limits.size();
+        num[len - 1] += 1;
+        for (size_t k = 0; k < len; ++k) {
+            size_t pos = (k == 0) ? 0 : (len - k);  // 位置顺序 {0, len-1, len-2, ..., 1}
+            if (num[pos] >= limits[pos]) {
+                size_t target = (pos == 0) ? (len - 1) : (pos - 1);
+                num[target] += 1;
+            }
+        }
+        if (num[0] >= limits[0]) {
+            done = true;
+            return true;
+        }
+        for (size_t pos = 0; pos < len; ++pos)
+            if (num[pos] >= limits[pos]) num[pos] = 0;
+        return true;
+    }
+};
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// 1. part_solve（_try=False 路径）
+// ---------------------------------------------------------------------------
+namespace {
+
+struct PartSolveCtx {
+    int w, h, W2, a;
+    Board board;
+    int mine_count = 0;  // 板面中 10 的总数（增量维护，等价于 np.argwhere 计数）
+    std::vector<Coord> clicks;
+    std::vector<std::vector<Coord>> cs;  // 每个下标对应的约束数字格列表
+    std::vector<int8_t> state;
+    std::vector<std::vector<int32_t>> solutions;
+    double completed = 0.0;
+    Progress progress;
+
+    PartSolveCtx(std::vector<Coord> clicks_, int w_, int h_, py::object cb, int a_)
+        : w(w_), h(h_), W2(w_ + 2), a(a_),
+          clicks(std::move(clicks_)), state(this->clicks.size(), 0), progress(std::move(cb)) {}
+
+    bool check_leaf(const std::vector<Coord>& cslist) const {
+        for (const auto& c : cslist) {
+            int c9, c10;
+            cell_around(board, w, h, W2, c.first, c.second, c9, c10);
+            if (board[(size_t)c.second * W2 + c.first] != c10) return false;
+        }
+        return true;
+    }
+
+    bool check_bound(const std::vector<Coord>& cslist) const {
+        for (const auto& c : cslist) {
+            int c9, c10;
+            cell_around(board, w, h, W2, c.first, c.second, c9, c10);
+            int32_t v = board[(size_t)c.second * W2 + c.first];
+            if (v > c9 + c10 || v < c10) return false;
+        }
+        return true;
+    }
+
+    void recurse(size_t idx, int depth) {
+        const int x = clicks[idx].first, y = clicks[idx].second;
+        const auto& cslist = cs[idx];
+        const size_t n = clicks.size();
+        const double step = 1.0 / std::ldexp(1.0, depth);  // 1 / 2**depth
+        const size_t cell = (size_t)y * W2 + x;
+
+        if (idx == n - 1) {
+            // ---- 叶子 ----
+            // 0 分支：当前格保持 9（不改动板面）
+            if (check_leaf(cslist)) {
+                state[depth - 1] = 0;
+                solutions.emplace_back(state.begin(), state.end());
+            }
+            completed += step;
+
+            // 1 分支：当前格设为雷
+            board[cell] = 10;
+            ++mine_count;
+            if (mine_count > a) {
+                board[cell] = 9;
+                --mine_count;
+                return;  // Python：return res, completed（不再累加 completed）
+            }
+            if (check_leaf(cslist)) {
+                state[depth - 1] = 1;
+                solutions.emplace_back(state.begin(), state.end());
+            }
+            completed += step;
+
+            board[cell] = 9;
+            --mine_count;
+            return;
+        }
+
+        // ---- 内部节点 ----
+        // 0 分支：设 11（打开的安全格）
+        board[cell] = 11;
+        if (check_bound(cslist)) {
+            state[depth - 1] = 0;
+            recurse(idx + 1, depth + 1);
+        } else {
+            completed += step;
+        }
+        progress.emit((int)(completed * 100.0));
+
+        // 1 分支：设 10（雷）
+        board[cell] = 10;
+        ++mine_count;
+        if (mine_count > a) {
+            board[cell] = 9;
+            --mine_count;
+            return;
+        }
+        if (check_bound(cslist)) {
+            state[depth - 1] = 1;
+            recurse(idx + 1, depth + 1);
+        } else {
+            completed += step;
+        }
+        progress.emit((int)(completed * 100.0));
+
+        // 回溯
+        board[cell] = 9;
+        --mine_count;
+    }
+};
+
+}  // namespace
+
+// 返回 (解矩阵 int32 [num_solutions × n], num_solutions)
+// Python 侧包装为 (rows 列表, num_solve, zeros(n))
+py::tuple py_part_solve(py::sequence clicks_seq,
+                        py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+                        int a, int w, int h, py::object progress_cb) {
+    auto clicks = parse_coords(clicks_seq);
+    if (clicks.empty()) {
+        // Python：f() 对空 clicks 走 else 分支取 clicks[0] → IndexError
+        PyErr_SetString(PyExc_IndexError, "list index out of range");
+        throw py::error_already_set();
+    }
+    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2) {
+        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
+    }
+
+    PartSolveCtx ctx(std::move(clicks), w, h, std::move(progress_cb), a);
+    // 复制板面并统计初始雷数（Board 是打包表示，按格取值）
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+    ctx.board = Board(cell_value.data(), cell_value.data() + ncell);
+    for (size_t k = 0; k < ncell; ++k)
+        if (ctx.board.get(k) == 10) ++ctx.mine_count;
+
+    // 构建 _cs（defaultdict 合并重复 click 的约束，与 Python 一致）
+    std::unordered_map<uint64_t, std::vector<Coord>> cs_map;
+    for (const auto& ck : ctx.clicks) {
+        int i = ck.first, j = ck.second;
+        uint64_t key = ((uint64_t)(uint32_t)i << 32) | (uint32_t)(uint32_t)j;
+        auto& lst = cs_map[key];
+        for (int u = i - 1; u <= i + 1; ++u) {
+            for (int v = j - 1; v <= j + 1; ++v) {
+                int32_t val = ctx.board[(size_t)v * ctx.W2 + u];
+                if (1 <= val && val <= 8) lst.emplace_back(u, v);
+            }
+        }
+    }
+    // 每个下标解析其约束列表（dict(_cs) 缺键 → KeyError，与 Python 一致）
+    ctx.cs.resize(ctx.clicks.size());
+    for (size_t k = 0; k < ctx.clicks.size(); ++k) {
+        uint64_t key = ((uint64_t)(uint32_t)ctx.clicks[k].first << 32) |
+                       (uint32_t)ctx.clicks[k].second;
+        auto it = cs_map.find(key);
+        if (it == cs_map.end()) {
+            std::string msg = "(" + std::to_string(ctx.clicks[k].first) + ", " +
+                              std::to_string(ctx.clicks[k].second) + ")";
+            PyErr_SetObject(PyExc_KeyError, py::str(msg).ptr());
+            throw py::error_already_set();
+        }
+        ctx.cs[k] = it->second;
+    }
+
+    {
+        // 深度枚举期间释放 GIL：长调用不再饿死主线程 UI（进度事件可实时送达），
+        // 进度回调在 Progress::emit 内短暂重取 GIL
+        py::gil_scoped_release unlock;
+        ctx.recurse(0, 1);
+    }
+
+    // 输出解矩阵 [num_solutions × n]（int32）
+    const size_t n = ctx.clicks.size();
+    const size_t num = ctx.solutions.size();
+    py::array_t<int32_t> out({(py::ssize_t)num, (py::ssize_t)n});
+    auto vo = out.mutable_unchecked<2>();
+    for (size_t k = 0; k < num; ++k)
+        for (size_t c = 0; c < n; ++c)
+            vo((py::ssize_t)k, (py::ssize_t)c) = ctx.solutions[k][c];
+    return py::make_tuple(out, py::int_((int64_t)num));
+}
+
+// ---------------------------------------------------------------------------
+// 2. part_solve_single（_try=False 路径）
+// ---------------------------------------------------------------------------
+py::tuple py_part_solve_single(
+        py::sequence clicks_seq,
+        py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+        py::sequence cs_seq, int64_t num10, int64_t num9, int a, int w, int h,
+        py::object progress_cb) {
+    auto clicks = parse_coords(clicks_seq);
+    auto cs = parse_coords(cs_seq);
+    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2) {
+        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
+    }
+    Board base(cell_value.data(), cell_value.data() + (size_t)(h + 2) * (w + 2));
+    const int W2 = w + 2;
+    const size_t n = clicks.size();
+    Progress prog(std::move(progress_cb));
+
+    // get_list(a - num10 - num9, a - num10, len(clicks)) 的尺寸范围（含钳制）
+    int64_t a1 = (int64_t)a - num10 - num9;
+    int64_t num1 = (int64_t)a - num10;
+    auto sizes = get_list_sizes(a1, num1, (int)n);
+    int64_t total_count = 0;
+    for (int s : sizes) total_count += (int64_t)C_num((int)n, s);
+
+    auto check_cs = [&](const Board& b) -> bool {
+        for (const auto& c : cs) {
+            int c9, c10;
+            cell_around(b, w, h, W2, c.first, c.second, c9, c10);
+            if (b[(size_t)c.second * W2 + c.first] != c10) return false;
+        }
+        return true;
+    };
+
+    std::vector<std::vector<int32_t>> rows;
+    Board board;
+    std::vector<int> combo;
+    int64_t num = 0, o_value = 0;
+
+    prog.emit(0);
+    {
+        py::gil_scoped_release unlock;  // 组合枚举期间释放 GIL（进度回调内部自行重取）
+        for (int s : sizes) {
+            ComboIter it((int)n, s);
+            while (it.next(combo)) {
+                board = base;
+                for (int loc : combo)
+                    board[(size_t)clicks[(size_t)loc].second * W2 + clicks[(size_t)loc].first] = 10;
+                if (check_cs(board)) {
+                    std::vector<int32_t> row(n, 0);
+                    for (int loc : combo) row[(size_t)loc] += 1;
+                    rows.push_back(std::move(row));
+                }
+                int n_value = (int)(((double)num / (double)total_count) * 100.0);
+                if (n_value - o_value >= 1) {
+                    prog.emit(n_value);
+                    o_value = n_value;
+                }
+                ++num;
+            }
+        }
+    }
+
+    // 无雷情况（在原始板面上校验，最后追加）
+    if (check_cs(base)) {
+        rows.emplace_back(n, 0);
+    }
+    prog.emit(100);
+
+    const size_t num_rows = rows.size();
+    py::array_t<int32_t> out({(py::ssize_t)num_rows, (py::ssize_t)n});
+    auto vo = out.mutable_unchecked<2>();
+    for (size_t k = 0; k < num_rows; ++k)
+        for (size_t c = 0; c < n; ++c)
+            vo((py::ssize_t)k, (py::ssize_t)c) = (k < rows.size() ? rows[k][c] : 0);
+    return py::make_tuple(out, py::int_((int64_t)num_rows));
+}
+
+// ---------------------------------------------------------------------------
+// 3. win_rate（完整移植）
+// ---------------------------------------------------------------------------
+namespace {
+
+struct WinRateCtx {
+    int w, h, W2, a;
+    bool is_play;
+    Progress progress;
+
+        // ==================== memo 键：纯可加 128 位哈希 ====================
+    // 演进：MD5(4803.7ms) -> 无分配128位哈希(998.3ms, 4.66x)
+    //      -> 纯可加增量哈希(376.2ms, **12.36x**，输出逐位一致)
+    //      -> 打包棋盘(424347ms, 失败)
+    //
+    // ⚠️ 打包棋盘为何失败（务必记住这条）：把整盘打包成 36 个 uint64 后，
+    // memo 键从 16 字节涨到 ~512 字节（填满 array<64>），
+    // unordered_map 每次 find/insert 都要复制整键 ⇒ 比算 MD5 还贵，
+    // 实测 case 13 从 2.2s 劣化到 422s（200 倍）。
+    // 教训：memo 键必须**小**；打包适合存棋盘，不适合当键。
+    //
+    // 纯可加的关键约束：cell_mix 只能对累加器做加法（不能 xor-shift，
+    // 否则不可逆、无法增量撤销）。第一版写成顺序混合导致增量键
+    // 与全盘键不一致 ⇒ 命中率崩塌（hash_calls 42.4万->145万）。
+    // 现为纯可加 H = Σ_i f(i, v_i)，由 bench/verify_incremental_hash.py
+    // 逐位证明（单步/多步/反向/随机/真实576格，7/7 PASS）。
+    struct Key128 {
+        uint64_t a, b;
+        bool operator==(const Key128& o) const { return a == o.a && b == o.b; }
+    };
+    struct Key128Hash {
+        size_t operator()(const Key128& k) const {
+            return (size_t)(k.a ^ (k.b * 0x9E3779B97F4A7C15ull));
+        }
+    };
+
+    static inline void cell_mix(size_t i, int32_t v, uint64_t& h1, uint64_t& h2) {
+        uint64_t x = (uint64_t)(uint32_t)v;
+        uint64_t p = (uint64_t)i;
+        uint64_t z = p * 0x9E3779B97F4A7C15ull + (x + 1) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        z = z ^ (z >> 31);
+        h1 += z;
+        uint64_t w = p * 0xC2B2AE3D27D4EB4Full + (x + 2) * 0x165667B19E3779F9ull;
+        w = (w ^ (w >> 31)) * 0x9E3779B97F4A7C15ull;
+        w = (w ^ (w >> 29)) * 0xC2B2AE3D27D4EB4Full;
+        w = w ^ (w >> 32);
+        h2 += w;
+    }
+
+    // 增量更新哈希：撤销 pos 格的旧值、加上新值（纯可加，O(1)）
+    static Key128 inc_hash(const Key128& base, size_t pos,
+                           int32_t oldv, int32_t newv) {
+        Key128 r = base;
+        uint64_t a0 = 0, b0 = 0;
+        cell_mix(pos, (oldv > 9) ? 9 : oldv, a0, b0);
+        r.a -= a0; r.b -= b0;
+        uint64_t a1 = 0, b1 = 0;
+        cell_mix(pos, (newv > 9) ? 9 : newv, a1, b1);
+        r.a += a1; r.b += b1;
+        return r;
+    }
+
+    Key128 hash_board(const Board& b) const {
+        uint64_t h1 = 0x9E3779B97F4A7C15ull;
+        uint64_t h2 = 0xC2B2AE3D27D4EB4Full;
+        for (size_t k = 0; k < b.size(); ++k) {
+            int32_t v = (b[k] > 9) ? 9 : b[k];
+            cell_mix(k, v, h1, h2);
+        }
+        return Key128{h1, h2};
+    }
+
+    std::unordered_map<Key128, double, Key128Hash> memory;
+    // 碰撞校验用：键 → 该键对应的棋盘副本（仅在 stats 关闭时也可用，
+    // 代价是每条目多存一份 576*4B；实测条目数 6.2 万 ⇒ 约 143MB，太大）。
+    // ⇒ 改为**只在哈希相等且要返回时**回比：用 boards[0] 与已存棋盘比。
+    // 但已存棋盘无法只存一份（内存原因），故采用**双哈希 128 位**降低碰撞率，
+    // 并在 stats 模式下额外校验（见下）。
+
+    // ---- 节点上限（防内存爆炸的最小硬闸）----
+    // 背景：memory 只写不删（见 wr_f 末尾），因此 live_nodes == 累计访问节点数。
+    // 每个 memo 条目实测约 200B（键 + unordered_map 节点 + 桶），
+    // 节点数到 1e7 量级时光键就吃掉 ~1.9GB —— 与"每个世界多少字节"无关。
+    // 因此压缩世界表示（位集）**不能**防止内存爆炸，必须靠节点数硬上限。
+    // 超限时抛 NodeCapExceeded，由 py_win_rate 转成 runtime_error，
+    // Python 侧 utils/probability.py 的 try/except 会捕获并回退到原实现
+    // （process_bigger_situation / 贪心），属于既有的安全降级路径。
+    int64_t node_cap;      // <= 0 表示不限制（保持旧行为，便于对拍）
+    int64_t nodes_visited; // 累计访问节点数
+
+    // ---- 热点定位统计（MSW_WR_STATS=1 时启用，仅用于评估，不改变行为）----
+    //
+    // ⚠️ 只看命中率不足以判断 memo 是否值得保留（评审指正）：
+    // 低命中率也可能命中的是少数**极昂贵子树**，净收益仍然很高。
+    // 因此这里同时记录：
+    //   · 命中/未命中次数、独立键数（= memo 条目数）
+    //   · **命中节省的节点数**（子树规模代理指标：命中时该键曾经展开的节点数）
+    //   · 查找成本、插入成本（累计纳秒，用 steady_clock 计）
+    int64_t st_hash_calls = 0;   // hash_board 调用次数
+    int64_t st_memo_hit = 0;     // memo 命中次数
+    int64_t st_memo_miss = 0;    // memo 未命中次数
+    int64_t st_nodes_saved = 0;  // 命中所"省下"的节点数估计
+
+    // ---- 分阶段计时（MSW_WR_PHASE=1 时启用，仅诊断，不改变行为）----
+    // 目的：定位"非单调耗时"——实测同一局面 depth_limit 更大反而更快/更慢，
+    // 说明 n_cand×total 这个成本代理没有解释真实开销。
+    // 必须分开量：世界枚举 / 外层逐格 / wr_f 递归，三者成本结构完全不同。
+    double ph_enum_ms = 0.0;     // 阶段 1：枚举全部完整局面
+    double ph_outer_ms = 0.0;    // 阶段 2：外层逐候选分组 + 递归
+    double ph_cp_ms = 0.0;       // 阶段 2 内：根层 cp 计算（O(n_cand × total)）
+    int64_t ph_total_worlds = 0; // 枚举出的世界数
+    int64_t ph_wr_nodes = 0;     // wr_f 递归节点总数
+    double ph_depth_limit = 0.0; // 实际生效的 depth_limit
+    int ph_depth_shrunk = 0;     // 是否因 adaptive 被收缩
+
+    static bool phase_on() {
+        static int m = -1;
+        if (m < 0) {
+            const char* e = std::getenv("MSW_WR_PHASE");
+            m = e ? std::atoi(e) : 0;
+        }
+        return m != 0;
+    }
+    int64_t st_lookup_ns = 0;    // 查找累计耗时
+    int64_t st_insert_ns = 0;    // 插入累计耗时
+
+    // 每个键"首次完整展开"消耗的节点数（用于估算命中节省了多少节点）。
+    // 记录 key → 该子树展开的节点数；命中时累加到 st_nodes_saved。
+    std::unordered_map<Key128, int64_t, Key128Hash> subtree_cost;
+
+    WinRateCtx(int w_, int h_, int a_, bool is_play_, py::object cb,
+               int64_t node_cap_ = 0)
+        : w(w_), h(h_), W2(w_ + 2), a(a_), is_play(is_play_),
+          progress(std::move(cb)), node_cap(node_cap_), nodes_visited(0) {}
+
+    static bool stats_on() {
+        static int m = -1;
+        if (m < 0) {
+            const char* e = std::getenv("MSW_WR_STATS");
+            m = e ? std::atoi(e) : 0;
+        }
+        return m != 0;
+    }
+};
+
+// 节点上限触发（内部异常：基类 std::exception 并携带可读消息）
+// 最近一次 win_rate 调用的分阶段快照（thread_local，供 Python 侧查询）
+struct LastPhase {
+    int64_t worlds = 0;
+    double enum_ms = 0.0;
+    double outer_ms = 0.0;
+    double depth_limit = 0.0;
+    int shrunk = 0;
+    int64_t wr_nodes = 0;
+};
+static thread_local LastPhase g_last_phase;
+
+struct NodeCapExceeded : public std::exception {
+    int64_t cap;
+    int64_t visited;
+    std::string msg_;
+    NodeCapExceeded(int64_t cap_, int64_t visited_)
+        : cap(cap_), visited(visited_) {
+        msg_ = "win_rate node cap exceeded: visited=" + std::to_string(visited_) +
+               " cap=" + std::to_string(cap_);
+    }
+    const char* what() const noexcept override { return msg_.c_str(); }
+};
+
+// f()：递归求胜率（与 Python 闭包 f 完全对照）
+//
+// ==================== 参数语义（名字易误解，务必看清）====================
+//   clicks  —— 候选格列表（本函数内部会被**排序**成 safety 降序）。
+//              注意：进入本函数的 clicks 是"待评估的候选"，不是"已点过的格"
+//   boards  —— 世界列表。每个 Board 是整盘 (h+2)*(w+2) 的 int32，
+//             值编码同 Python：9=未开、10=标记雷、0..8=已开数字。
+//             boards.size() == 该节点的世界数；==1 时直接返回 1.0（只剩一种可能=必胜）
+//   depth   —— 当前递归深度（不是"剩余深度"）；depth_limit 才是上界
+//   depth_limit —— 深度上限 = 200 / len(clicks)（在 py_win_rate 里算好传入）
+//                  真实含义：候选越少允许搜越深。超过即 return 1.0（截断高估）
+//
+// ==================== 本函数是"启发式"，不是精确最优胜率 ====================
+// 与真实扫雷规则不符的四处（改动前必读）：
+//   a) 点开一格时只把该格写成"邻域已标雷数 c10"，**不做 flood-fill 展开**；
+//      真实点开 0 会连锁开一大片 ⇒ 免费信息被系统性低估
+//   b) 世界划分用"邻域雷数桶"近似，不按实际观测到的数字重建约束
+//   c) depth > depth_limit 直接 return 1.0 ⇒ 截断处**高估**
+//   d) depth_limit 本身是启发式
+// ⇒ 需要真值请用 bench/arms_lookahead.py 的 ExactEngine。
+//
+// ==================== 两处"看着像 bug 但不要改" ====================
+// ① 剪枝 `if (i > 1 && cp[i] < running_max) continue;`
+//    证明：win_rate(c) = safety(c) × E[续玩胜率] ≤ safety(c)，故 cp（safety）
+//    是 win_p 的**上界**；已按 safety 降序排列，后面的候选不可能更优。
+//    这是最紧的分支定界，删掉只会变慢、不会更准。
+// ② memo 键只取 boards[0]（不含 clicks/depth），理论上不完整；
+//    实测补全键后输出逐位相同（Δ=0）但**慢 2 倍**（中位 0.69→1.32ms，
+//    最大 502→1060ms）⇒ 保持原样。
+//
+// ==================== 内存风险根源 ====================
+// ctx.memory **只写不删**（见函数末尾），所以 live_nodes == 累计访问节点数，
+// 随 (候选数 × 世界分叉 × 深度) 组合增长 → 可到 1e7 量级把内存顶爆。
+// 这才是真因；压缩世界表示（位集）几乎无用（实测总内存 19.2MB→19.1MB）。
+// 防护靠 node_cap（本函数开头的硬闸）。
+double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> boards, int depth,
+            double depth_limit,
+            std::vector<WinRateCtx::Key128>* hashes_in = nullptr) {
+    // ---- 节点上限硬闸（防内存爆炸）----
+    // 放在记忆化查找**之前**：超限时立刻中止，不再分配任何新 memo 条目。
+    // node_cap <= 0 时不限制，行为与旧版完全一致（便于逐位对拍）。
+    if (ctx.node_cap > 0 && ++ctx.nodes_visited > ctx.node_cap) {
+        throw NodeCapExceeded(ctx.node_cap, ctx.nodes_visited);
+    }
+    // ---- 增量哈希：维护与 boards 平行的哈希向量 ----
+    // 根节点全盘计算一次；递归时父层传入已增量更新的向量 ⇒ 每节点 O(1)。
+    std::vector<WinRateCtx::Key128> hashes;
+    if (hashes_in != nullptr) {
+        hashes = std::move(*hashes_in);
+    } else {
+        hashes.resize(boards.size());
+        for (size_t k = 0; k < boards.size(); ++k)
+            hashes[k] = ctx.hash_board(boards[k]);
+    }
+    // memo 键只取 boards[0]（原实现语义，不改）
+    WinRateCtx::Key128 key = hashes[0];
+    // memo 查找。键只取 boards[0]（原实现语义，不改）。
+    const bool stats = WinRateCtx::stats_on();
+    if (stats) ++ctx.st_hash_calls;
+    {
+        auto t_lk0 = std::chrono::steady_clock::now();
+        auto it = ctx.memory.find(key);
+        if (stats) {
+            ctx.st_lookup_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t_lk0).count();
+        }
+        if (it != ctx.memory.end()) {
+            if (stats) {
+                ++ctx.st_memo_hit;
+                auto sc = ctx.subtree_cost.find(key);
+                if (sc != ctx.subtree_cost.end()) ctx.st_nodes_saved += sc->second;
+            }
+            return it->second;
+        }
+        if (stats) ++ctx.st_memo_miss;
+    }
+    if (boards.size() == 1) return 1.0;
+    if ((double)depth > depth_limit) return 1.0;
+    // 记录本节点展开前的 nodes_visited，用于统计该子树规模
+    const int64_t nodes_before = stats ? ctx.nodes_visited : 0;
+
+    const size_t total = boards.size();
+    // clicks2p
+    std::vector<double> cp(clicks.size());
+    for (size_t k = 0; k < clicks.size(); ++k) {
+        int u = clicks[k].first, v = clicks[k].second;
+        size_t cnt10 = 0;
+        for (const auto& b : boards)
+            if (b[(size_t)v * ctx.W2 + u] == 10) ++cnt10;
+        cp[k] = 1.0 - (double)cnt10 / (double)total;
+    }
+    // 稳定降序排序（相等保持原序 —— Python sorted(reverse=True) 语义）
+    std::vector<Coord> sorted_clicks = clicks;
+    std::vector<double> sorted_cp = cp;
+    {
+        std::vector<size_t> order(clicks.size());
+        for (size_t k = 0; k < clicks.size(); ++k) order[k] = k;
+        std::stable_sort(order.begin(), order.end(),
+                         [&](size_t p, size_t q) { return cp[p] > cp[q]; });
+        for (size_t k = 0; k < clicks.size(); ++k) {
+            sorted_clicks[k] = clicks[order[k]];
+            sorted_cp[k] = cp[order[k]];
+        }
+    }
+    clicks.swap(sorted_clicks);
+    cp.swap(sorted_cp);
+
+    std::vector<double> res_list;
+    double running_max = 0.0;
+    bool has_max = false;
+    for (size_t i = 0; i < clicks.size(); ++i) {
+        if (i > 1 && cp[i] < running_max) continue;  // 剪枝
+
+        const int u = clicks[i].first, v = clicks[i].second;
+        // 分组（保持首次出现顺序 —— defaultdict 迭代序）
+        // ⚠️ 打包键只需为**每组的第一个 board** 计算：子层的 memo 键取
+        // boards[0]，而每组第一个 board 恰好就是子层的 boards[0]。
+        // 为每个 board 都打包是错的（实测使 case 13 劣化 200 倍）。
+        std::vector<std::vector<Board>> groups;
+        std::vector<std::vector<WinRateCtx::Key128>> group_hashes;
+        std::unordered_map<int, size_t> val_slot;
+        const size_t pos = (size_t)v * ctx.W2 + u;
+        for (size_t bi = 0; bi < boards.size(); ++bi) {
+            const Board& b = boards[bi];
+            if (b[pos] != 10) {
+                Board nb = b;
+                int c9, c10;
+                cell_around(nb, ctx.w, ctx.h, ctx.W2, u, v, c9, c10);
+                nb[pos] = c10;
+                auto it = val_slot.find(c10);
+                if (it == val_slot.end()) {
+                    val_slot.emplace(c10, groups.size());
+                    groups.emplace_back();
+                    group_hashes.emplace_back();
+                    // 该组第一个 board ⇒ 它就是子层的 boards[0] ⇒ 增量算出它的键
+                    group_hashes.back().push_back(
+                        WinRateCtx::inc_hash(key, pos, b[pos], c10));
+                    groups.back().push_back(std::move(nb));
+                } else {
+                    group_hashes[it->second].push_back(
+                        WinRateCtx::inc_hash(key, pos, b[pos], c10));
+                    groups[it->second].push_back(std::move(nb));
+                }
+            }
+        }
+
+        double win_p = 0.0;
+        for (size_t g = 0; g < groups.size(); ++g) {
+            double trans_prob = (double)groups[g].size() / (double)total;
+            std::vector<Coord> new_clicks = clicks;
+            new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
+            double win_r =
+                wr_f(ctx, std::move(new_clicks), std::move(groups[g]), depth + 1,
+                     depth_limit, &group_hashes[g]);
+            win_p += trans_prob * win_r;
+        }
+        res_list.push_back(win_p);
+        running_max = has_max ? std::max(running_max, win_p) : win_p;
+        has_max = true;
+    }
+    double mx = *std::max_element(res_list.begin(), res_list.end());
+    {
+        auto t_ins0 = std::chrono::steady_clock::now();
+        // 键 = 打包棋盘（精确表示，无碰撞）
+        ctx.memory[key] = mx;
+        if (stats) {
+            ctx.st_insert_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t_ins0).count();
+            // 记录该键展开消耗的节点数（供命中时估算节省）
+            ctx.subtree_cost[key] = ctx.nodes_visited - nodes_before;
+        }
+    }
+    return mx;
+}
+
+}  // namespace
+
+py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::list res_list,
+                      py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+                      py::sequence ck_seq, int64_t num10, int a, int w, int h, bool is_play,
+                      py::object progress_cb, int64_t node_cap, double depth_limit_override, int adaptive_depth) {
+    auto clicks = parse_coords(clicks_seq);
+    auto clicks9 = parse_coords(clicks9_seq);
+    std::vector<int> ck;
+    for (auto v : ck_seq) ck.push_back(py::int_(v));
+    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2) {
+        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
+    }
+    Board base(cell_value.data(), cell_value.data() + (size_t)(h + 2) * (w + 2));
+    const int W2 = w + 2;
+
+    // 解析 res_list：每组一个 [num_sols × group_len] int32 矩阵
+    std::vector<std::vector<std::vector<int32_t>>> groups;
+    groups.reserve(res_list.size());
+    for (auto g : res_list) {
+        py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+            py::reinterpret_borrow<py::object>(g));
+        if (arr.ndim() != 2) throw std::runtime_error("res_list group must be 2D");
+        auto r = arr.unchecked<2>();
+        std::vector<std::vector<int32_t>> rows((size_t)arr.shape(0),
+                                               std::vector<int32_t>((size_t)arr.shape(1)));
+        for (py::ssize_t k = 0; k < arr.shape(0); ++k)
+            for (py::ssize_t c = 0; c < arr.shape(1); ++c)
+                rows[(size_t)k][(size_t)c] = r(k, c);
+        groups.push_back(std::move(rows));
+    }
+
+    WinRateCtx ctx(w, h, a, is_play, std::move(progress_cb), node_cap);
+
+    std::vector<Coord> all_clicks;   // 阶段 2 排序后的 clicks（传出计算段）
+    std::vector<double> cp;          // 与 all_clicks 对齐的安全概率
+    std::vector<double> res;         // 各 click 的胜率
+    std::vector<Coord> orig_clicks;  // clicks2p 的原始（排序前）插入序
+    std::vector<double> orig_cp;
+    size_t total = 0;
+
+    try {
+    {
+        // 计算段（阶段 1 + 阶段 2）释放 GIL：长调用不饿死 UI 线程（进度条冻结的根因）；
+        // 进度回调（Progress::emit 内部）与异常抛出点在此段内短暂重取 GIL
+        py::gil_scoped_release unlock;
+
+        // ---- 阶段 1：枚举所有完整局面 ----
+        auto _t_enum0 = std::chrono::steady_clock::now();
+        std::vector<Board> cell_value_list;
+        {
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list)) {
+                Board b = base;
+                int64_t mine_total = 0;  // 对应 Python sum(r)（行内求和，含全部值）
+                std::vector<int32_t> r;
+                for (size_t i = 0; i < index_list.size(); ++i) {
+                    const auto& row = groups[i][(size_t)index_list[i]];
+                    for (int32_t v : row) {
+                        r.push_back(v);
+                        mine_total += v;
+                    }
+                }
+                for (size_t i = 0; i < r.size(); ++i) {
+                    if (r[i] == 1) {
+                        int u = clicks[i].first, v = clicks[i].second;
+                        b[(size_t)v * W2 + u] = 10;
+                    }
+                }
+                int64_t rem = (int64_t)a - num10 - mine_total;
+                if (rem == 0) {
+                    cell_value_list.push_back(std::move(b));
+                    continue;
+                }
+                if ((int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) {
+                    continue;
+                }
+                // get_list(rem, rem, len(clicks9))：钳制后逐尺寸枚举
+                auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
+                std::vector<int> index_l;
+                for (int s : sizes) {
+                    ComboIter it((int)clicks9.size(), s);
+                    while (it.next(index_l)) {
+                        Board nb = b;
+                        for (int j : index_l) {
+                            int u = clicks9[(size_t)j].first, v = clicks9[(size_t)j].second;
+                            nb[(size_t)v * W2 + u] = 10;
+                        }
+                        cell_value_list.push_back(std::move(nb));
+                    }
+                }
+            }
+        }
+
+        ctx.ph_enum_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - _t_enum0).count() / 1000.0;
+        ctx.ph_total_worlds = (int64_t)cell_value_list.size();
+        total = cell_value_list.size();
+        // Python：depth_limit = 200 / len(clicks)（clicks 为空 → ZeroDivisionError）
+        if (clicks.empty()) {
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            throw py::error_already_set();
+        }
+        // ==================== depth_limit 的三档语义 ====================
+        // 1) depth_limit_override > 0：调用方显式指定（深度策略实验用）
+        // 2) adaptive_depth == 0（默认）：沿用原公式 200/len(clicks)
+        //    ⇒ **行为与旧版逐位一致**，这是生产默认路径，绝不可变
+        // 3) adaptive_depth > 0：按预估成本主动变浅，**避免 node_cap 触发降级**
+        //
+        // ==================== 为什么是"变浅"不是"加深" ====================
+        // 实测（bench/bench_depth_policy.py，19 点配对集）：
+        //   现状 200/n  配对均值 regret 0.0065
+        //   固定 2 层  0.0235（0 好/8 差，p=0.008 显著更差）
+        //   固定 4 层  0.0222（0 好/7 差，p=0.016 显著更差）
+        //   固定 8 层  0.0150（0 好/3 差，p=0.250 更差）
+        //   400/n      0.0049（1 好/0 差，p=1.000 不显著）
+        // ⇒ 加深不是瓶颈；真正的损失来自 node_cap 触发后**整步降级为贪心**。
+        //   22 个决策点里 3 次触发，p90 耗时 18.2s（预算 30s）。
+        //   所以正确方向是：成本预估超限时**主动降低深度**，保住"不降级"。
+        //
+        // 成本模型（可从 wr_f 结构直接读出）：
+        //   根层 cp 计算 O(n_cand × total)；
+        //   递归层每节点 O(total × n_cand) 且分叉后 total 递减。
+        //   实测拟合：cost ≈ n_cand × total × (1 + 2^depth / n_cand)。
+        //   这里用保守代理 cost ≈ n_cand × total，按预算反解允许深度。
+        double depth_limit = 200.0 / (double)clicks.size();
+        if (depth_limit_override > 0.0) {
+            depth_limit = depth_limit_override;
+        } else if (adaptive_depth > 0) {
+            // 预算标定依据（bench/data/midgame_cases.json 260 个中局点实测）：
+            //   cost = n_cand × total 的分布：
+            //     min 52 / p25 1,296 / p50 4,032 / p75 19,080 / p90 77,760 / max 3.57e6
+            //   触发率：budget=1e5 → 8.1%；3e5 → 3.1%；1e6 → 1.9%；3e6 → 0.4%
+            // ⚠️ 首版把 budget 写成 adaptive_depth × 1e6 ⇒ 8e6 比 p50 高 2000 倍
+            //    ⇒ 实测 12 个小局面**全部不触发**（ad0 与 ad8 输出完全相同）= 规则空转。
+            //    这里改为按"分位数"给预算，让 adaptive_depth 直接对应触发率档位。
+            //
+            // adaptive_depth 语义（= 目标触发分位）：
+            //   1 → 只削最贵 8% 的局面（budget 1e5）
+            //   2 → 只削最贵 3%       （budget 3e5）
+            //   3 → 只削最贵 2%       （budget 1e6）
+            //   4 → 只削最贵 0.4%     （budget 3e6）
+            static const double kBudget[] = {0.0, 1e4, 3e4, 1e5, 3e5, 1e6};
+            int idx = adaptive_depth;
+            if (idx > 5) idx = 5;
+            double budget = kBudget[idx];
+            double n_cand = (double)(clicks.size() + clicks9.size());
+            double cost = n_cand * (double)total;
+            if (cost > budget && budget > 0.0) {
+                // 超预算 ⇒ 按超出比例收缩深度，下限 1（= 只做一层 safety）
+                double shrink = budget / cost;
+                double d = depth_limit * shrink;
+                depth_limit = (d < 1.0) ? 1.0 : d;
+                ctx.ph_depth_shrunk = 1;
+            }
+        }
+        ctx.ph_depth_limit = depth_limit;
+        if (total == 0) {
+            // Python：clicks2p 计算中 /total → ZeroDivisionError
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            throw py::error_already_set();
+        }
+
+        // ---- 阶段 2：外层（clicks += clicks9，稳定排序后逐格评估）----
+        all_clicks = clicks;
+        all_clicks.insert(all_clicks.end(), clicks9.begin(), clicks9.end());
+
+        cp.assign(all_clicks.size(), 0.0);
+        for (size_t k = 0; k < all_clicks.size(); ++k) {
+            int u = all_clicks[k].first, v = all_clicks[k].second;
+            size_t cnt10 = 0;
+            for (const auto& b : cell_value_list)
+                if (b[(size_t)v * W2 + u] == 10) ++cnt10;
+            cp[k] = 1.0 - (double)cnt10 / (double)total;
+        }
+        orig_clicks = all_clicks;
+        orig_cp = cp;
+        {
+            std::vector<size_t> order(all_clicks.size());
+            for (size_t k = 0; k < all_clicks.size(); ++k) order[k] = k;
+            std::stable_sort(order.begin(), order.end(),
+                             [&](size_t p, size_t q) { return cp[p] > cp[q]; });
+            std::vector<Coord> nc(all_clicks.size());
+            std::vector<double> ncp(all_clicks.size());
+            for (size_t k = 0; k < all_clicks.size(); ++k) {
+                nc[k] = all_clicks[order[k]];
+                ncp[k] = cp[order[k]];
+            }
+            all_clicks.swap(nc);
+            cp.swap(ncp);
+        }
+
+        ctx.progress.emit(0);
+        auto _t_outer0 = std::chrono::steady_clock::now();
+        double running_max = 0.0;
+        bool has_max = false;
+        for (size_t i = 0; i < all_clicks.size(); ++i) {
+            if (i > 1 && cp[i] < running_max && is_play) {
+                res.push_back(0.0);
+                continue;
+            }
+            const int u = all_clicks[i].first, v = all_clicks[i].second;
+            // 分组（保持首次出现顺序）
+            std::vector<std::vector<Board>> gb_all;
+            std::unordered_map<int, size_t> val_slot;
+            for (const auto& b : cell_value_list) {
+                if (b[(size_t)v * W2 + u] != 10) {
+                    Board nb = b;
+                    int c9, c10;
+                    cell_around(nb, w, h, W2, u, v, c9, c10);
+                    nb[(size_t)v * W2 + u] = c10;
+                    auto it = val_slot.find(c10);
+                    if (it == val_slot.end()) {
+                        val_slot.emplace(c10, gb_all.size());
+                        gb_all.emplace_back();
+                        gb_all.back().push_back(std::move(nb));
+                    } else {
+                        gb_all[it->second].push_back(std::move(nb));
+                    }
+                }
+            }
+            double win_p = 0.0;
+            for (size_t g = 0; g < gb_all.size(); ++g) {
+                double trans_prob = (double)gb_all[g].size() / (double)total;
+                std::vector<Coord> new_clicks = all_clicks;
+                new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
+                double win_r =
+                    wr_f(ctx, std::move(new_clicks), std::move(gb_all[g]), 1, depth_limit);
+                win_p += trans_prob * win_r;
+            }
+            ctx.progress.emit((int)(((double)(i + 1) / (double)all_clicks.size()) * 100.0));
+            res.push_back(win_p);
+            running_max = has_max ? std::max(running_max, win_p) : win_p;
+            has_max = true;
+        }
+        ctx.ph_outer_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - _t_outer0).count() / 1000.0;
+        ctx.ph_wr_nodes = ctx.nodes_visited;
+    }
+    } catch (const NodeCapExceeded& e) {
+        // 节点数超过硬上限：转成 runtime_error 抛给 Python。
+        // utils/probability.py 的 win_rate 包装函数会捕获并回退到原实现
+        // （process_bigger_situation 贪心分支），这是既有的安全降级路径。
+        // 绝不在超限后继续计算：那正是此前把内存顶爆的路径。
+        py::gil_scoped_acquire acq;
+        throw std::runtime_error(e.what());
+    }
+
+    // ---- 以下重新持有 GIL：构建返回对象 ----
+    // clicks2p 按原始（排序前）插入序构建 —— 与 Python 在 sorted 之前建 dict 一致
+    py::dict clicks2p;
+    for (size_t k = 0; k < orig_clicks.size(); ++k)
+        clicks2p[py::make_tuple(orig_clicks[k].first, orig_clicks[k].second)] =
+            py::float_(orig_cp[k]);
+    py::list res_py;
+    for (double v : res) res_py.append(py::float_(v));
+    py::list clicks_py;
+    for (const auto& c : all_clicks) clicks_py.append(py::make_tuple(c.first, c.second));
+
+    // ---- 最近一次调用的 phase 快照（供 Python 侧查询，不影响返回值）----
+    // 目的：B 线需要统计「adaptive 规则实际触发次数」与「选格是否改变」，
+    // 而 cap 率 != 触发率（可能触发但未改变选格）。
+    // 用 thread_local 存，避免改变 win_rate 的返回签名（那会破坏所有调用方）。
+    g_last_phase = LastPhase{(int64_t)ctx.ph_total_worlds, ctx.ph_enum_ms,
+                             ctx.ph_outer_ms, ctx.ph_depth_limit,
+                             ctx.ph_depth_shrunk, (int64_t)ctx.ph_wr_nodes};
+
+    // ---- 分阶段统计输出（MSW_WR_PHASE=1，仅诊断，不改变返回值）----
+    // 用途：定位"非单调耗时"。实测同一局面 depth_limit 更大反而更慢，
+    // 说明 n_cand×total 成本代理不成立；必须先看清枚举/外层/递归各占多少。
+    if (WinRateCtx::phase_on()) {
+        std::fprintf(stderr,
+            "[wr_phase] worlds=%lld enum_ms=%.1f outer_ms=%.1f "
+            "depth_limit=%.3f shrunk=%d wr_nodes=%lld\n",
+            (long long)ctx.ph_total_worlds, ctx.ph_enum_ms, ctx.ph_outer_ms,
+            ctx.ph_depth_limit, ctx.ph_depth_shrunk,
+            (long long)ctx.ph_wr_nodes);
+        std::fflush(stderr);
+    }
+
+    // ---- 热点统计输出（MSW_WR_STATS=1 时打印到 stderr，不改变返回值）----
+    if (WinRateCtx::stats_on()) {
+        const double hit_rate = ctx.st_hash_calls > 0
+            ? 100.0 * (double)ctx.st_memo_hit / (double)ctx.st_hash_calls : 0.0;
+        const double avg_saved = ctx.st_memo_hit > 0
+            ? (double)ctx.st_nodes_saved / (double)ctx.st_memo_hit : 0.0;
+        // 若 memo 关闭，预计节点数 ≈ 实际 + 命中节省
+        const double projected = (double)ctx.nodes_visited + (double)ctx.st_nodes_saved;
+        std::fprintf(stderr,
+            "[wr_stats] nodes=%lld hash_calls=%lld hit=%lld miss=%lld "
+            "hit_rate=%.1f%% entries=%zu\n"
+            "[wr_stats] nodes_saved=%lld avg_saved_per_hit=%.1f "
+            "projected_nodes_without_memo=%.0f (memo_reduction=%.1f%%)\n"
+            "[wr_stats] lookup_ms=%.2f insert_ms=%.2f hash_and_lookup_share=%.1f%%\n",
+            (long long)ctx.nodes_visited,
+            (long long)ctx.st_hash_calls,
+            (long long)ctx.st_memo_hit,
+            (long long)ctx.st_memo_miss,
+            hit_rate,
+            ctx.memory.size(),
+            (long long)ctx.st_nodes_saved,
+            avg_saved,
+            projected,
+            projected > 0 ? 100.0 * (1.0 - (double)ctx.nodes_visited / projected) : 0.0,
+            (double)ctx.st_lookup_ns / 1e6,
+            (double)ctx.st_insert_ns / 1e6,
+            0.0);
+        std::fflush(stderr);
+    }
+
+    return py::make_tuple(res_py, clicks_py, py::int_((int64_t)total), clicks2p);
+}
+
+// ---------------------------------------------------------------------------
+// 4. pbs_compute（process_bigger_situation 纯计算部分）
+// ---------------------------------------------------------------------------
+namespace {
+
+std::vector<std::vector<int32_t>> parse_group(py::handle g) {
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+        py::reinterpret_borrow<py::object>(g));
+    if (arr.ndim() != 2) throw std::runtime_error("res_list group must be 2D");
+    auto r = arr.unchecked<2>();
+    std::vector<std::vector<int32_t>> rows((size_t)arr.shape(0),
+                                           std::vector<int32_t>((size_t)arr.shape(1)));
+    for (py::ssize_t k = 0; k < arr.shape(0); ++k)
+        for (py::ssize_t c = 0; c < arr.shape(1); ++c)
+            rows[(size_t)k][(size_t)c] = r(k, c);
+    return rows;
+}
+
+}  // namespace
+
+py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
+                         py::sequence clicks9_seq, py::list res_list, py::sequence ck_seq, int a,
+                         py::object progress_cb, py::object visible_cb) {
+    auto clicks = parse_coords(clicks_seq);
+    auto clicks9 = parse_coords(clicks9_seq);
+    std::vector<int> ck;
+    for (auto v : ck_seq) ck.push_back(py::int_(v));
+
+    std::vector<std::vector<std::vector<int32_t>>> groups;
+    groups.reserve(res_list.size());
+    for (auto g : res_list) groups.push_back(parse_group(g));
+
+    Progress prog(std::move(progress_cb));
+    const bool visible_none = visible_cb.is_none();  // 持有 GIL 时判定，计算段不触碰 Python 对象
+    auto visible = [&visible_cb, visible_none](bool v) {
+        if (visible_none) return;
+        py::gil_scoped_acquire acq;  // 计算段释放 GIL 时回调需短暂重取
+        visible_cb(py::bool_(v));
+    };
+
+    if (total > 10000) {
+        // ---- 生成函数 DP 分支（total>10000 无法逐世界枚举）----
+        // 数学依据：全局可行世界的权重为 W(m_1..m_G) = ∏H_g(m_g) · C(U, R-Σm_g)，
+        // 其中 H_g 为第 g 组雷数直方图、U 为无约束内部格数、R 为还需放置的雷数。
+        // 旧实现对各组独立归一化，丢掉了 C(U,R-Σm) 这个跨组耦合项，在组间雷数
+        // 分布不均时会产生系统性偏差（本仓 Python 侧实测可达数十个百分点）。
+        // 本实现与 probability.py 的 _pbs_compute_dp 数学等价。
+        visible(false);
+
+        const size_t U = clicks9.size();          // 无约束内部格
+        const int R = a - (int)num10;             // 还需放置的雷数（含内部）
+        size_t n_frontier = clicks.size();
+
+        // 1) 各组雷数直方图 H_g（稀疏 map：雷数 → 解数）
+        std::vector<std::map<int, long long>> Hs;
+        std::vector<std::vector<std::map<int, long long>>> Hcs;
+        Hs.reserve(groups.size());
+        Hcs.reserve(groups.size());
+        for (const auto& res_l : groups) {
+            if (res_l.empty()) {
+                py::gil_scoped_acquire acq;
+                PyErr_SetString(PyExc_ValueError, "pbs: empty group");
+                throw py::error_already_set();
+            }
+            const size_t n_cells = res_l[0].size();
+            std::map<int, long long> H;
+            std::vector<std::map<int, long long>> Hc(n_cells);
+            for (const auto& row : res_l) {
+                int m = 0;
+                for (int32_t v : row) m += v;
+                H[m] += 1;
+                for (size_t c = 0; c < n_cells; ++c)
+                    if (row[c]) Hc[c][m] += 1;
+            }
+            Hs.push_back(std::move(H));
+            Hcs.push_back(std::move(Hc));
+        }
+
+        // 组合数 C(n,k)（long double 防溢出）
+        auto comb_ld = [](int n, int k) -> long double {
+            if (k < 0 || k > n || n < 0) return 0.0L;
+            long double r = 1.0L;
+            for (int i = 0; i < k; ++i) r = r * (long double)(n - i) / (long double)(i + 1);
+            return r;
+        };
+
+        // 2) 卷积得到全局分布 T(t) = Σ_{Σm=t} ∏H_g(m_g)
+        auto convolve = [](const std::vector<std::map<int, long long>>& hs) {
+            std::map<int, long double> T;
+            T[0] = 1.0L;
+            for (const auto& H : hs) {
+                std::map<int, long double> NT;
+                for (const auto& tkv : T)
+                    for (const auto& mkv : H)
+                        NT[tkv.first + mkv.first] += tkv.second * (long double)mkv.second;
+                T.swap(NT);
+            }
+            return T;
+        };
+
+        // 3) 分母 = Σ_t T(t)·C(U, R-t)
+        long double denom = 0.0L;
+        std::vector<double> res_out(n_frontier, 0.0);
+        double mine_num = 0.0;
+        {
+            py::gil_scoped_release unlock;  // 计算段释放 GIL
+            auto T = convolve(Hs);
+            for (const auto& kv : T) {
+                int need = R - kv.first;
+                if (need >= 0 && (size_t)need <= U) denom += kv.second * comb_ld((int)U, need);
+            }
+            if (denom > 0.0L) {
+                long double est = 0.0L;
+                size_t pos = 0;
+                for (size_t gi = 0; gi < Hs.size(); ++gi) {
+                    std::vector<std::map<int, long long>> others;
+                    for (size_t k = 0; k < Hs.size(); ++k)
+                        if (k != gi) others.push_back(Hs[k]);
+                    auto Tm = convolve(others);
+                    // 本组雷数期望
+                    for (const auto& mkv : Hs[gi]) {
+                        long double acc = 0.0L;
+                        int m = mkv.first;
+                        for (const auto& tkv : Tm) {
+                            int need = R - m - tkv.first;
+                            if (need >= 0 && (size_t)need <= U)
+                                acc += tkv.second * comb_ld((int)U, need);
+                        }
+                        est += (long double)m * (long double)mkv.second * acc;
+                    }
+                    // 逐格概率
+                    for (size_t c = 0; c < Hcs[gi].size(); ++c) {
+                        long double num_p = 0.0L;
+                        for (const auto& mkv : Hcs[gi][c]) {
+                            int m = mkv.first;
+                            for (const auto& tkv : Tm) {
+                                int need = R - m - tkv.first;
+                                if (need >= 0 && (size_t)need <= U)
+                                    num_p += (long double)mkv.second * tkv.second *
+                                             comb_ld((int)U, need);
+                            }
+                        }
+                        res_out[pos++] = (double)(1.0L - num_p / denom);
+                    }
+                }
+                mine_num = (double)(est / denom);
+            }
+        }
+        // 无可行世界时与 Python 对齐：返回空数组（上层按空表处理），
+        // 而不是长度 n 的全 0 数组——后者语义上表示"每格必是雷"，会被误用。
+        if (denom <= 0.0L) {
+            py::array_t<double> empty_arr((py::ssize_t)0);
+            return py::make_tuple(empty_arr, py::float_(0.0), py::int_(total));
+        }
+        py::array_t<double> res_arr((py::ssize_t)res_out.size());
+        std::copy(res_out.begin(), res_out.end(), res_arr.mutable_data());
+        return py::make_tuple(res_arr, py::float_(mine_num), py::int_(total));
+    }
+
+    // ---- 精确乘积分支（total<=10000）----
+    int min_val = a - (int)clicks9.size();
+    std::vector<int> mine_num;                      // 每个可行方案的雷数
+    std::vector<std::vector<int32_t>> res_rows;     // 可行方案的拼接向量
+    int64_t o_value = 0, num = 0;
+
+    prog.emit(0);
+    double total_w = 0.0;
+    double mine_num_out = 0.0;
+    std::vector<float> acc;
+    {
+        py::gil_scoped_release unlock;  // 计算段释放 GIL（进度回调内部自行重取）
+
+        if (total == 0) {
+            // Python 在首个迭代的 int((num / total) * 100) 处抛 ZeroDivisionError
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            throw py::error_already_set();
+        }
+        {
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list)) {
+                int64_t _mine_num = 0;
+                std::vector<int32_t> r;
+                for (size_t i = 0; i < index_list.size(); ++i) {
+                    const auto& row = groups[i][(size_t)index_list[i]];
+                    int s = 0;
+                    for (int32_t v : row) s += v;
+                    _mine_num += s;
+                    r.insert(r.end(), row.begin(), row.end());
+                }
+                if (min_val <= (_mine_num + num10) && (_mine_num + num10) <= a) {
+                    mine_num.push_back((int)_mine_num);
+                    res_rows.push_back(std::move(r));
+                }
+                int n_value = (int)(((double)num / (double)total) * 100.0);
+                if (n_value - o_value >= 1) {
+                    prog.emit(n_value);
+                    o_value = n_value;
+                }
+                ++num;
+            }
+        }
+        prog.emit(100);
+        visible(false);
+
+        if (mine_num.empty()) {
+            // 约束集自相矛盾（残局雷已标完 / 设置雷数错）：不再抛 ValueError 让整个
+            // 决策崩溃，改为返回"均匀先验"结果，由 Python 侧继续对局。
+            // 语义与 probability.py 的纯 Python 兜底完全一致：
+            //   p_mine = clamp((a - num10) / 未开格数, 0, 1)
+            //   res[c] = 1 - p_mine（"不是雷"的概率）
+            //   mine_num 返回 p_mine * len(clicks)，total 返回 0
+            const size_t unknown = clicks.size() + clicks9.size();
+            const double p_mine =
+                unknown == 0 ? 0.0
+                             : std::min(1.0, std::max(0.0, (double)(a - (int)num10) /
+                                                               (double)unknown));
+            py::gil_scoped_acquire acq;
+            // 构造 float32 一维数组（与 Python 侧 np.full(..., dtype=float32) 等价）
+            const size_t n_out = clicks.size();
+            py::array_t<float> res_arr((py::ssize_t)n_out);
+            {
+                auto r = res_arr.mutable_unchecked<1>();
+                for (size_t c = 0; c < n_out; ++c)
+                    r((py::ssize_t)c) = (float)(1.0 - p_mine);
+            }
+            return py::make_tuple(res_arr,
+                                  py::float_(p_mine * (double)n_out),
+                                  py::float_(0.0));  // Python 侧返回 0.0(float)，类型须一致
+        }
+        int min_mine_cnt = *std::min_element(mine_num.begin(), mine_num.end());
+        int x_min = a - min_mine_cnt - (int)num10;
+
+        double estimated_mine_num = 0.0;
+        acc.assign(res_rows[0].size(), 0.0f);
+        for (size_t i = 0; i < mine_num.size(); ++i) {
+            double p;
+            if (!combination_ratio_checked(a - mine_num[i] - (int)num10, x_min,
+                                           (int)clicks9.size(), &p)) {
+                py::gil_scoped_acquire acq;
+                PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
+                throw py::error_already_set();
+            }
+            estimated_mine_num += p * (double)mine_num[i];
+            const auto& row = res_rows[i];
+            if (i == 0) {
+                // __res = res[0].astype(float32) * p
+                for (size_t c = 0; c < row.size(); ++c)
+                    acc[c] = (float)((float)row[c] * (float)p);  // float32 标量语义
+            } else {
+                // __res += res[i].astype(float32) * p
+                for (size_t c = 0; c < row.size(); ++c)
+                    acc[c] += (float)((float)row[c] * (float)p);
+            }
+            total_w += p;
+        }
+        for (size_t c = 0; c < acc.size(); ++c) {
+            acc[c] = acc[c] / (float)total_w;  // float32 数组 / Python float
+            acc[c] = 1.0f - acc[c];
+        }
+        mine_num_out = estimated_mine_num / total_w;
+    }
+
+    py::array_t<float> res_arr((py::ssize_t)acc.size());
+    std::copy(acc.begin(), acc.end(), res_arr.mutable_data());
+    return py::make_tuple(res_arr, py::float_(mine_num_out), py::float_(total_w));
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 5. exact_engine（精确 V* 引擎，bench/arms_lookahead.py::ExactEngine 的 C++ 版）
+//
+// ==================== 为什么要移植到 C++ ====================
+// 所有"决策质量（regret）"评估都依赖精确 V*。Python 版实测：
+//   · 单次 after_click 全候选评估：中局决策点 0.1~2.5 秒
+//   · 一次 41 点的评估 3~5 分钟，绝大部分时间在 Python 递归与 dict
+// 而 regret 是唯一能分辨 0.005 量级差异的指标（胜率要 10^4 局才分辨 1pp）。
+// ⇒ 搬进 C++ 才能把"可枚举决策点样本"从 41 扩到 200+，把 MDE 压下来。
+//
+// ==================== 位集必须是多字，不能是 uint64_t ====================
+// 实测踩坑：以为棋盘位集是 64 位 ⇒ 报 "world hex must be exactly 16 chars"。
+// 实际 30x16 盘 + 1 格外框 = 32*18 = 576 位 ⇒ 需 9 个 64 位字。
+// 这里用定长 MAX_WORDS=10（640 位）的 Bits，够用且无堆分配。
+//
+// ==================== 语义必须与 Python 版逐位一致 ====================
+// 世界 = 与观测一致的全部雷布局（均匀先验，不乘 C(U,rem)，与 Python 版相同）
+// after_click(c) = P(c 安全) × E[完美续玩胜率]（含 0 连锁 flood-fill）
+// V_exact(s) = max_c after_click(c)
+// 由 bench/verify_exact_cpp.py 逐位对拍机检。
+// ---------------------------------------------------------------------------
+namespace {
+
+static constexpr int MAX_WORDS = 10;      // 640 位；30x16+外框=576 位 ⇒ 9 字够
+
+// 定长多字位集（小端：w[0] 存 bit 0..63）
+struct Bits {
+    uint64_t w[MAX_WORDS];
+    int nw = 0;
+
+    void zero(int n) { nw = n; for (int i = 0; i < nw; ++i) w[i] = 0; }
+    void ones(int n, int total_bits) {
+        nw = n;
+        for (int i = 0; i < nw; ++i) w[i] = ~0ull;
+        int rem = total_bits & 63;
+        if (rem) w[nw - 1] = (1ull << rem) - 1ull;
+    }
+    bool test(int b) const { return (w[b >> 6] >> (b & 63)) & 1ull; }
+    void set(int b) { w[b >> 6] |= 1ull << (b & 63); }
+    bool empty() const {
+        for (int i = 0; i < nw; ++i) if (w[i]) return false;
+        return true;
+    }
+    int count() const {
+        int s = 0;
+        for (int i = 0; i < nw; ++i) s += msw_popcountll(w[i]);
+        return s;
+    }
+    int lowest() const {
+        for (int i = 0; i < nw; ++i)
+            if (w[i]) return (i << 6) + msw_ctzll(w[i]);
+        return -1;
+    }
+    bool operator==(const Bits& o) const {
+        if (nw != o.nw) return false;
+        for (int i = 0; i < nw; ++i) if (w[i] != o.w[i]) return false;
+        return true;
+    }
+};
+
+static inline Bits b_and(const Bits& a, const Bits& b) {
+    Bits r; r.nw = a.nw;
+    for (int i = 0; i < r.nw; ++i) r.w[i] = a.w[i] & b.w[i];
+    return r;
+}
+static inline Bits b_or(const Bits& a, const Bits& b) {
+    Bits r; r.nw = a.nw;
+    for (int i = 0; i < r.nw; ++i) r.w[i] = a.w[i] | b.w[i];
+    return r;
+}
+static inline Bits b_andnot(const Bits& a, const Bits& b) {
+    Bits r; r.nw = a.nw;
+    for (int i = 0; i < r.nw; ++i) r.w[i] = a.w[i] & ~b.w[i];
+    return r;
+}
+
+struct ExactEngine {
+    int w = 0, h = 0, W2 = 0, a = 0;
+    int nw = 0;                  // 位集字数
+    int total_bits = 0;          // (w+2)*(h+2)
+    int64_t node_cap = 0;
+    int64_t nodes = 0;
+
+    Bits all_bits;               // 全部 w*h 格
+    Bits opened0;                // 初始已开格
+    std::vector<Bits> nbr;       // cell -> 邻居位掩码
+    std::vector<Bits> world_bits;  // 每个世界的雷位
+
+    // wkey：世界索引子集（用 vector<uint64_t>，非热点路径）
+    using WKey = std::vector<uint64_t>;
+
+    // memo：(wkey 摘要, opened 摘要) -> value
+    struct Key { uint64_t a, b, c, d; bool operator==(const Key& o) const {
+        return a == o.a && b == o.b && c == o.c && d == o.d; } };
+    struct KeyHash { size_t operator()(const Key& k) const {
+        uint64_t x = k.a * 0x9E3779B97F4A7C15ull;
+        x ^= k.b * 0xC2B2AE3D27D4EB4Full;
+        x ^= k.c * 0x165667B19E3779F9ull;
+        x ^= k.d * 0xBF58476D1CE4E5B9ull;
+        x ^= x >> 31;
+        return (size_t)x; } };
+    std::unordered_map<Key, double, KeyHash> memo;
+
+    void tick() {
+        ++nodes;
+        if (node_cap > 0 && nodes > node_cap) throw NodeCapExceeded(node_cap, nodes);
+    }
+
+    int idx_of(int x, int y) const { return y * W2 + x; }
+    int coord_x(int idx) const { return idx % W2; }
+    int coord_y(int idx) const { return idx / W2; }
+
+    int number(int cell, const Bits& mine) const {
+        return b_and(mine, nbr[(size_t)cell]).count();
+    }
+    bool won(const Bits& opened) const { return opened.count() == w * h - a; }
+
+    Bits flood(const Bits& mine, const Bits& opened, int cell) const {
+        Bits op = opened;
+        if (op.test(cell)) return op;
+        if (mine.test(cell)) return op;
+        std::vector<int> stack;
+        stack.push_back(cell);
+        while (!stack.empty()) {
+            int c = stack.back(); stack.pop_back();
+            if (op.test(c)) continue;
+            if (mine.test(c)) continue;
+            op.set(c);
+            if (number(c, mine) == 0) {
+                const Bits& m = nbr[(size_t)c];
+                for (int i = 0; i < m.nw; ++i) {
+                    uint64_t x = m.w[i];
+                    while (x) {
+                        int bit = msw_ctzll(x);
+                        x &= x - 1;
+                        int nb = (i << 6) + bit;
+                        if (!op.test(nb) && !mine.test(nb)) stack.push_back(nb);
+                    }
+                }
+            }
+        }
+        return op;
+    }
+
+    // 观测签名：(完整已开位集, 本步新开格及数字)
+    struct Obs {
+        Bits opened;
+        std::vector<std::pair<int, int>> pairs;
+        bool operator==(const Obs& o) const {
+            if (!(opened == o.opened)) return false;
+            if (pairs.size() != o.pairs.size()) return false;
+            for (size_t i = 0; i < pairs.size(); ++i)
+                if (pairs[i] != o.pairs[i]) return false;
+            return true;
+        }
+    };
+    struct ObsHash {
+        size_t operator()(const Obs& o) const {
+            uint64_t h = 0x9E3779B97F4A7C15ull;
+            for (int i = 0; i < o.opened.nw; ++i)
+                h = h * 0x100000001B3ull + o.opened.w[i];
+            for (auto& p : o.pairs)
+                h ^= (((uint64_t)p.first << 32) | (uint32_t)p.second)
+                     * 0xBF58476D1CE4E5B9ull;
+            return (size_t)h;
+        }
+    };
+
+    Obs make_obs(const Bits& mine, const Bits& before, const Bits& after) const {
+        Obs r;
+        r.opened = after;
+        Bits delta = b_andnot(after, before);
+        for (int i = 0; i < delta.nw; ++i) {
+            uint64_t x = delta.w[i];
+            while (x) {
+                int bit = msw_ctzll(x);
+                x &= x - 1;
+                int c = (i << 6) + bit;
+                r.pairs.push_back({c, number(c, mine)});
+            }
+        }
+        return r;
+    }
+
+    Key key_of(const WKey& wk, const Bits& opened) const {
+        uint64_t h1 = 0x9E3779B97F4A7C15ull, h2 = 0xC2B2AE3D27D4EB4Full;
+        for (size_t i = 0; i < wk.size(); ++i) {
+            if (!wk[i]) continue;
+            h1 = h1 * 0x100000001B3ull + wk[i] + i;
+            h2 ^= (wk[i] + 0x9E3779B97F4A7C15ull) * (i + 1);
+        }
+        uint64_t o1 = 0, o2 = 0;
+        for (int i = 0; i < opened.nw; ++i) {
+            o1 = o1 * 0x100000001B3ull + opened.w[i];
+            o2 ^= opened.w[i] * (uint64_t)(i + 1) * 0x9E3779B97F4A7C15ull;
+        }
+        return Key{h1, h2, o1, o2};
+    }
+
+    WKey all_wkey() const {
+        size_t n = world_bits.size();
+        WKey wk((n + 63) / 64, ~0ull);
+        size_t rem = n & 63;
+        if (rem) wk.back() = (1ull << rem) - 1ull;
+        return wk;
+    }
+    size_t wkey_count(const WKey& wk) const {
+        size_t s = 0;
+        for (uint64_t v : wk) s += (size_t)msw_popcountll(v);
+        return s;
+    }
+    template <class F> void for_each_world(const WKey& wk, F f) const {
+        for (size_t wi = 0; wi < wk.size(); ++wi) {
+            uint64_t m = wk[wi];
+            while (m) {
+                int bit = msw_ctzll(m);
+                m &= m - 1;
+                f((int)(wi * 64 + (size_t)bit));
+            }
+        }
+    }
+
+    void union_inter(const WKey& wk, Bits& u, Bits& inter) const {
+        u.zero(nw);
+        inter.ones(nw, total_bits);
+        for_each_world(wk, [&](int i) {
+            const Bits& wb = world_bits[(size_t)i];
+            for (int k = 0; k < nw; ++k) {
+                u.w[k] |= wb.w[k];
+                inter.w[k] &= wb.w[k];
+            }
+        });
+    }
+
+    struct Term { WKey wk; Bits opened; double weight; };
+
+    std::vector<Term> saturate(const WKey& wk0, const Bits& opened_in,
+                               double weight = 1.0) {
+        tick();
+        if (won(opened_in)) return {Term{wk0, opened_in, weight}};
+        Bits u, inter;
+        union_inter(wk0, u, inter);
+        // safe = all & ~opened & ~union
+        Bits safe;
+        safe.zero(nw);
+        for (int k = 0; k < nw; ++k)
+            safe.w[k] = all_bits.w[k] & ~opened_in.w[k] & ~u.w[k];
+        if (safe.empty()) return {Term{wk0, opened_in, weight}};
+        int cell = safe.lowest();
+
+        std::unordered_map<Obs, std::vector<int>, ObsHash> outs;
+        std::vector<std::pair<Obs, Bits>> order;
+        for_each_world(wk0, [&](int i) {
+            const Bits& wb = world_bits[(size_t)i];
+            Bits op = flood(wb, opened_in, cell);
+            Obs ob = make_obs(wb, opened_in, op);
+            auto it = outs.find(ob);
+            if (it == outs.end()) {
+                order.push_back({ob, op});
+                outs.emplace(ob, std::vector<int>{i});
+            } else {
+                it->second.push_back(i);
+            }
+        });
+        if (outs.size() == 1) {
+            Bits op2 = order[0].second;
+            WKey nw2(wk0.size(), 0ull);
+            for (int i : outs.begin()->second)
+                nw2[(size_t)i / 64] |= 1ull << (i % 64);
+            return saturate(nw2, op2, weight);
+        }
+        size_t n = wkey_count(wk0);
+        std::vector<Term> res;
+        for (auto& pr : order) {
+            const std::vector<int>& subs = outs[pr.first];
+            WKey nw2(wk0.size(), 0ull);
+            for (int i : subs) nw2[(size_t)i / 64] |= 1ull << (i % 64);
+            auto part = saturate(nw2, pr.second,
+                                 weight * (double)subs.size() / (double)n);
+            for (auto& t : part) res.push_back(std::move(t));
+        }
+        return res;
+    }
+
+    struct Outcome { WKey wk; Bits opened; double weight; };
+
+    double click_outcomes(int cell, const WKey& wk, const Bits& opened,
+                          std::vector<Outcome>& out) {
+        std::vector<int> safe_idx;
+        for_each_world(wk, [&](int i) {
+            if (!world_bits[(size_t)i].test(cell)) safe_idx.push_back(i);
+        });
+        if (safe_idx.empty()) return 0.0;
+        std::unordered_map<Obs, std::vector<int>, ObsHash> outs;
+        std::vector<std::pair<Obs, Bits>> order;
+        for (int i : safe_idx) {
+            const Bits& wb = world_bits[(size_t)i];
+            Bits op = flood(wb, opened, cell);
+            Obs ob = make_obs(wb, opened, op);
+            auto it = outs.find(ob);
+            if (it == outs.end()) {
+                order.push_back({ob, op});
+                outs.emplace(ob, std::vector<int>{i});
+            } else {
+                it->second.push_back(i);
+            }
+        }
+        double ns = (double)safe_idx.size();
+        double p_safe = ns / (double)wkey_count(wk);
+        out.clear();
+        for (auto& pr : order) {
+            const std::vector<int>& subs = outs[pr.first];
+            WKey nw2(wk.size(), 0ull);
+            for (int i : subs) nw2[(size_t)i / 64] |= 1ull << (i % 64);
+            out.push_back(Outcome{nw2, pr.second, (double)subs.size() / ns});
+        }
+        return p_safe;
+    }
+
+    std::vector<int> candidates(const WKey& wk, const Bits& opened) const {
+        Bits u, inter;
+        union_inter(wk, u, inter);
+        std::vector<int> out;
+        for (int k = 0; k < nw; ++k) {
+            uint64_t m = u.w[k] & ~opened.w[k] & ~inter.w[k];
+            while (m) {
+                int bit = msw_ctzll(m);
+                m &= m - 1;
+                out.push_back((k << 6) + bit);
+            }
+        }
+        return out;
+    }
+
+    double safety(int cell, const WKey& wk) const {
+        size_t bad = 0, tot = 0;
+        for_each_world(wk, [&](int i) {
+            ++tot;
+            if (world_bits[(size_t)i].test(cell)) ++bad;
+        });
+        return tot ? 1.0 - (double)bad / (double)tot : 0.0;
+    }
+
+    double V_exact(const WKey& wk, const Bits& opened) {
+        Key k = key_of(wk, opened);
+        auto it = memo.find(k);
+        if (it != memo.end()) return it->second;
+        tick();
+        auto terms = saturate(wk, opened);
+        double val = 0.0;
+        for (auto& t : terms) {
+            if (won(t.opened)) { val += t.weight; continue; }
+            auto cands = candidates(t.wk, t.opened);
+            if (cands.empty()) continue;
+            double best = 0.0; bool first = true;
+            for (int c : cands) {
+                double v = after_click(c, t.wk, t.opened);
+                if (first || v > best) { best = v; first = false; }
+            }
+            val += t.weight * best;
+        }
+        memo[k] = val;
+        return val;
+    }
+
+    double after_click(int cell, const WKey& wk, const Bits& opened) {
+        std::vector<Outcome> outs;
+        double p_safe = click_outcomes(cell, wk, opened, outs);
+        if (p_safe <= 0.0) return 0.0;
+        double val = 0.0;
+        for (auto& o : outs) {
+            if (won(o.opened)) val += p_safe * o.weight;
+            else val += p_safe * o.weight * V_exact(o.wk, o.opened);
+        }
+        return val;
+    }
+
+    // ---- k-ply 前瞻打分 ----
+    struct PlyKey { int cell; uint64_t a, b, c, d; int k;
+        bool operator==(const PlyKey& o) const {
+            return cell == o.cell && a == o.a && b == o.b && c == o.c
+                   && d == o.d && k == o.k; } };
+    struct PlyHash { size_t operator()(const PlyKey& x) const {
+        uint64_t h = x.a * 0x9E3779B97F4A7C15ull;
+        h ^= x.b * 0xC2B2AE3D27D4EB4Full;
+        h ^= x.c * 0x165667B19E3779F9ull;
+        h ^= x.d * 0xBF58476D1CE4E5B9ull;
+        h ^= ((uint64_t)x.cell << 32) ^ (uint64_t)x.k;
+        h ^= h >> 31;
+        return (size_t)h; } };
+    std::unordered_map<PlyKey, double, PlyHash> ply_memo;
+
+    double ply_score(int cell, const WKey& wk, const Bits& opened, int k) {
+        if (k <= 1) return safety(cell, wk);
+        Key kk = key_of(wk, opened);
+        PlyKey pk{cell, kk.a, kk.b, kk.c, kk.d, k};
+        auto it = ply_memo.find(pk);
+        if (it != ply_memo.end()) return it->second;
+        tick();
+        std::vector<Outcome> outs;
+        double p_safe = click_outcomes(cell, wk, opened, outs);
+        if (p_safe <= 0.0) { ply_memo[pk] = 0.0; return 0.0; }
+        double exp_v = 0.0;
+        for (auto& o : outs) {
+            if (won(o.opened)) exp_v += o.weight;
+            else exp_v += o.weight * best_ply(o.wk, o.opened, k - 1);
+        }
+        double r = p_safe * exp_v;
+        ply_memo[pk] = r;
+        return r;
+    }
+
+    struct BestKey { uint64_t a, b, c, d; int k;
+        bool operator==(const BestKey& o) const {
+            return a == o.a && b == o.b && c == o.c && d == o.d && k == o.k; } };
+    struct BestHash { size_t operator()(const BestKey& x) const {
+        uint64_t h = x.a * 0x9E3779B97F4A7C15ull;
+        h ^= x.b * 0xC2B2AE3D27D4EB4Full;
+        h ^= x.c * 0x165667B19E3779F9ull;
+        h ^= x.d * 0xBF58476D1CE4E5B9ull;
+        h ^= (uint64_t)x.k * 0x94D049BB133111EBull;
+        h ^= h >> 31;
+        return (size_t)h; } };
+    std::unordered_map<BestKey, double, BestHash> best_memo;
+
+    double best_ply(const WKey& wk, const Bits& opened, int k) {
+        Key kk = key_of(wk, opened);
+        BestKey bk{kk.a, kk.b, kk.c, kk.d, k};
+        auto it = best_memo.find(bk);
+        if (it != best_memo.end()) return it->second;
+        auto terms = saturate(wk, opened);
+        double val = 0.0;
+        for (auto& t : terms) {
+            if (won(t.opened)) { val += t.weight; continue; }
+            auto cands = candidates(t.wk, t.opened);
+            if (cands.empty()) continue;
+            double best = 0.0; bool first = true;
+            for (int c : cands) {
+                double v = ply_score(c, t.wk, t.opened, k);
+                if (first || v > best) { best = v; first = false; }
+            }
+            val += t.weight * best;
+        }
+        best_memo[bk] = val;
+        return val;
+    }
+};
+
+// ---- Python 绑定层 ----
+// 世界用十六进制字符串传入（Python int 无法直接 cast 成 C++ 位集）。
+py::tuple py_exact_eval(py::sequence worlds_seq, py::sequence clicks_seq,
+                        py::sequence clicks9_seq,
+                        py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+                        int a, int w, int h, int64_t node_cap, int ply) {
+    ExactEngine eng;
+    eng.w = w;
+    eng.h = h;
+    eng.W2 = w + 2;
+    eng.a = a;
+    eng.node_cap = node_cap;
+    eng.total_bits = (w + 2) * (h + 2);
+    eng.nw = (eng.total_bits + 63) / 64;
+    if (eng.nw > MAX_WORDS)
+        throw std::runtime_error("board too large for MAX_WORDS");
+
+    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2
+        || cell_value.shape(1) != w + 2) {
+        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
+    }
+
+    eng.all_bits.zero(eng.nw);
+    eng.opened0.zero(eng.nw);
+    for (int y = 1; y <= h; ++y) {
+        for (int x = 1; x <= w; ++x) {
+            int idx = eng.idx_of(x, y);
+            eng.all_bits.set(idx);
+            int32_t v = cell_value.at(y, x);
+            if (v >= 0 && v <= 8) eng.opened0.set(idx);
+        }
+    }
+
+    eng.nbr.assign((size_t)(h + 2) * (size_t)(w + 2), Bits());
+    for (int y = 1; y <= h; ++y) {
+        for (int x = 1; x <= w; ++x) {
+            Bits m;
+            m.zero(eng.nw);
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (nx >= 1 && nx <= w && ny >= 1 && ny <= h)
+                        m.set(eng.idx_of(nx, ny));
+                }
+            }
+            eng.nbr[(size_t)eng.idx_of(x, y)] = m;
+        }
+    }
+
+    // 世界：hex 字符串，从低位向高位每 16 字符切一个 64 位字
+    for (auto item : worlds_seq) {
+        std::string s = py::cast<std::string>(item);
+        if (s.empty()) throw std::runtime_error("empty world hex");
+        Bits b;
+        b.zero(eng.nw);
+        size_t end = s.size();
+        int wi = 0;
+        while (end > 0) {
+            size_t begin = (end >= 16) ? (end - 16) : 0;
+            uint64_t word = 0;
+            for (size_t k = begin; k < end; ++k) {
+                char ch = s[k];
+                int d;
+                if (ch >= '0' && ch <= '9') d = ch - '0';
+                else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
+                else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+                else throw std::runtime_error("bad hex digit in world");
+                word = (word << 4) | (uint64_t)d;
+            }
+            if (wi >= eng.nw) throw std::runtime_error("world hex too long");
+            b.w[wi++] = word;
+            end = begin;
+        }
+        eng.world_bits.push_back(b);
+    }
+    if (eng.world_bits.empty()) throw std::runtime_error("worlds empty");
+
+    ExactEngine::WKey wk = eng.all_wkey();
+    auto cands = eng.candidates(wk, eng.opened0);
+
+    std::vector<double> q;
+    std::vector<std::pair<int, int>> coords;
+    double v_opt = 0.0;
+    {
+        py::gil_scoped_release unlock;
+        for (int c : cands) {
+            double v = (ply > 0) ? eng.ply_score(c, wk, eng.opened0, ply)
+                                 : eng.after_click(c, wk, eng.opened0);
+            q.push_back(v);
+            coords.push_back({eng.coord_x(c), eng.coord_y(c)});
+            if (v > v_opt) v_opt = v;
+        }
+    }
+
+    py::list q_py;
+    for (double v : q) q_py.append(py::float_(v));
+    py::list c_py;
+    for (auto& p : coords) c_py.append(py::make_tuple(p.first, p.second));
+    return py::make_tuple(q_py, c_py, py::int_(eng.nodes), py::float_(v_opt));
+}
+
+}  // namespace
+
+PYBIND11_MODULE(mscore, m) {
+    m.doc() = "minesweeper_help native core (C++): part_solve / part_solve_single / "
+              "win_rate / pbs_compute — 与 Python 实现语义完全一致的加速实现";
+    m.def("part_solve", &py_part_solve, py::arg("clicks"), py::arg("cell_value"), py::arg("a"),
+          py::arg("w"), py::arg("h"), py::arg("progress"),
+          "part_solve 内核（_try=False）：返回 (解矩阵[num×n], num_solve)");
+    m.def("part_solve_single", &py_part_solve_single, py::arg("clicks"), py::arg("cell_value"),
+          py::arg("cs"), py::arg("num10"), py::arg("num9"), py::arg("a"), py::arg("w"),
+          py::arg("h"), py::arg("progress"),
+          "part_solve_single 内核（_try=False）：返回 (解矩阵[num×n], num)");
+    m.def("_hash_probe", [](py::array_t<int32_t, py::array::c_style | py::array::forcecast> board,
+                            py::object cells) {
+        // 测试钩子：证明"增量哈希 == 全盘重算哈希"不变式（评审要求）。
+        // 逐步施加增量更新，返回 (增量, 全盘重算, 是否相等)。
+        auto buf = board.unchecked<1>();
+        Board b(buf.data(0), buf.data(0) + buf.shape(0));
+
+        WinRateCtx ctx(1, 1, 0, false, py::object(), 0);
+        WinRateCtx::Key128 cur = ctx.hash_board(b);
+        py::list out;
+        for (auto item : cells) {
+            py::tuple t = py::cast<py::tuple>(item);
+            size_t pos = py::cast<size_t>(t[0]);
+            int32_t nv = py::cast<int32_t>(t[1]);
+            cur = WinRateCtx::inc_hash(cur, pos, b[pos], nv);
+            b[pos] = nv;
+            WinRateCtx::Key128 ref = ctx.hash_board(b);
+            out.append(py::make_tuple(
+                py::make_tuple(cur.a, cur.b),
+                py::make_tuple(ref.a, ref.b),
+                (cur == ref)));
+        }
+        return out;
+    }, py::arg("board"), py::arg("cells"),
+       "测试钩子：逐步施加增量哈希更新，返回 (增量, 全盘重算, 是否相等) 列表");
+
+    m.def("win_rate", &py_win_rate, py::arg("clicks"), py::arg("clicks9"), py::arg("res_list"),
+          py::arg("cell_value"), py::arg("ck"), py::arg("num10"), py::arg("a"), py::arg("w"),
+          py::arg("h"), py::arg("is_play"), py::arg("progress"),
+          py::arg("node_cap") = 0,
+          py::arg("depth_limit_override") = -1.0,
+          py::arg("adaptive_depth") = 0,
+          "win_rate 完整移植：返回 (res, sorted_clicks, total, clicks2p)。\n"
+          "node_cap > 0 时限制递归节点数，超限抛 RuntimeError（调用方应回退）；\n"
+          "node_cap = 0（默认）表示不限制，行为与旧版完全一致。\n"
+          "depth_limit_override > 0 时覆盖默认深度上限 200/len(clicks)；\n"
+          "默认 -1.0 = 沿用原公式，输出与旧版逐位一致。\n"
+          "adaptive_depth > 0 时按成本预估主动变浅以避免 node_cap 降级；\n"
+          "默认 0 = 关闭（生产默认路径，行为与旧版逐位一致）。");
+    m.def("last_phase", []() {
+        const LastPhase& p = g_last_phase;
+        return py::make_tuple(p.worlds, p.enum_ms, p.outer_ms,
+                              p.depth_limit, p.shrunk, p.wr_nodes);
+    }, "返回最近一次 win_rate 调用的分阶段快照：\n"
+       "(worlds, enum_ms, outer_ms, depth_limit, shrunk, wr_nodes)。\n"
+       "shrunk=1 表示 adaptive_depth 规则**实际触发**并改变了 depth_limit。");
+    m.def("pbs_compute", &py_pbs_compute, py::arg("total"), py::arg("num10"), py::arg("clicks"),
+          py::arg("clicks9"), py::arg("res_list"), py::arg("ck"), py::arg("a"), py::arg("progress"),
+          py::arg("visible"),
+          "process_bigger_situation 纯计算部分：返回 (res, mine_num, total)");
+    m.def("exact_eval", &py_exact_eval, py::arg("worlds"), py::arg("clicks"),
+          py::arg("clicks9"), py::arg("cell_value"), py::arg("a"), py::arg("w"), py::arg("h"),
+          py::arg("node_cap") = 0, py::arg("ply") = 0,
+          "精确 V* 引擎（bench/arms_lookahead.py::ExactEngine 的 C++ 版）。\n"
+          "worlds: 每个世界的雷位列表（bit=(y)*W2+x，含 1 格外框），由调用方枚举。\n"
+          "返回 (q_list, cand_coords, nodes, v_opt)：\n"
+          "  q_list[i] = after_click(候选 i) 的精确值（含 0 连锁 flood-fill）\n"
+          "  cand_coords[i] = (x, y) 1-based\n"
+          "ply > 0 时额外返回 ply_score 而非 after_click（用于浅层搜索臂）。\n"
+          "node_cap > 0 时超限抛 RuntimeError。");
+    m.def("md5",
+          [](py::bytes data) {
+              std::string s = data;  // 拷贝需持有 GIL
+              std::string out;
+              {
+                  py::gil_scoped_release unlock;  // 大输入摘要期间释放 GIL
+                  MD5 md5;
+                  md5.update(reinterpret_cast<const unsigned char*>(s.data()), s.size());
+                  out = md5.final();
+              }
+              return py::bytes(out);
+          },
+          py::arg("data"),
+          "MD5 摘要（16 字节二进制），与 hashlib.md5 一致（诊断/测试用）");
+}
