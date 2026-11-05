@@ -43,7 +43,16 @@
 
 namespace py = pybind11;
 
+// ==================== 生产桥接声明（B1-a-1）====================
+// 定义在 mscore.cpp 末尾（同名 extern "C"），此处只声明。
+// 合并编译时（build_ab_native.bat 定义 AB_NATIVE_MERGED 并同时编译两个源文件）
+// 由链接器解析；单独编译 ab_native 会链接失败 —— 因此必须合并编译。
+extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
+                                int64_t node_cap, int* out_x, int* out_y,
+                                int* out_total_worlds, double* out_best_rate);
+
 namespace abnative {
+
 
 // ==================== MSVC 兼容的位操作 ====================
 // 注意：MSVC 不支持 GCC 内建 __builtin_ctzll / __builtin_popcountll，
@@ -449,6 +458,39 @@ static AbResult play_one(int seed, int w, int h, int a, Arm arm,
             continue;
         }
 
+        // ==================== 生产桥接决策（B1-a-1）====================
+        // 不再使用自制的 enumerate_worlds / pick_* 近似器，改为直接调用
+        // mscore.cpp 末尾的 abnative_decide()，它内部串起生产的
+        // 切分 -> part_solve -> win_rate -> argmax 链路。
+        {
+            std::vector<int32_t> cv((size_t)g.total_bits, 9);
+            for (int y = 1; y <= h; ++y)
+                for (int x = 1; x <= w; ++x) {
+                    int i = g.idx_of(x, y);
+                    cv[(size_t)i] = (int32_t)g.cell[(size_t)i];
+                }
+            int ox = -1, oy = -1, nw_total = 0;
+            double best_rate = 0.0;
+            int ok2 = abnative_decide(cv.data(), w, h, a, world_cap,
+                                      &ox, &oy, &nw_total, &best_rate);
+            if (ok2 == 1 && ox >= 1 && oy >= 1) {
+                g.click(g.idx_of(ox, oy));
+            } else {
+                ++R.cap;
+                // 降级：确定性取第一个未开格（生产语义是 process_bigger_situation）
+                std::vector<int> unopened;
+                for (int y = 1; y <= h; ++y)
+                    for (int x = 1; x <= w; ++x) {
+                        int i = g.idx_of(x, y);
+                        if (g.cell[(size_t)i] == 9) unopened.push_back(i);
+                    }
+                if (unopened.empty()) break;
+                g.click(unopened[0]);
+            }
+            continue;
+        }
+
+        // ---- 以下为旧的近似器路径（保留但不再执行，便于对照与回滚）----
         WorldSet ws;
         std::vector<int> frontier, inner;
         bool ok = enumerate_worlds(g, ws, world_cap, frontier, inner);
@@ -548,7 +590,13 @@ static py::dict run_ab(int games, int seed0, int w, int h, int a,
 
 }  // namespace abnative
 
+// 合并编译（AB_NATIVE_MERGED）时模块名为 mscore，与 mscore.cpp 的
+// PyInit_mscore 符号一致；单独编译时仍叫 ab_native。
+#ifdef AB_NATIVE_MERGED
+PYBIND11_MODULE(mscore, m) {
+#else
 PYBIND11_MODULE(ab_native, m) {
+#endif
     m.doc() = "C++ whole-game A/B driver for minesweeper (Arbiter deferred rules)";
     m.def("run_ab", &abnative::run_ab,
           py::arg("games"), py::arg("seed0"),

@@ -2288,3 +2288,280 @@ PYBIND11_MODULE(mscore, m) {
           "MD5 摘要（16 字节二进制），与 hashlib.md5 一致（诊断/测试用）");
 }
 #endif  // AB_NATIVE_MERGED（B1 合并编译保护宏，见模块入口处说明）
+
+#ifdef AB_NATIVE_MERGED   // 桥接只在合并编译时存在，保证生产 pyd 可复现
+// ==========================================================================
+// ============ B1-a-1 桥接：整局 A/B 驱动的生产决策入口 ====================
+// ==========================================================================
+// 用户批准方案 B1-a-1：**只在本文件末尾追加**纯 C++ 桥接，
+// 不改动上方任何一行已有代码；桥接内部直接调用 PartSolveCtx + wr_f，
+// 复现生产 `number5_1` 的「切分 → part_solve → win_rate → argmax」链路。
+//
+// 为什么必须这样做（历史教训）：
+//   ab_native.cpp 曾自己写了一套朴素 2^nf 全枚举 + 自设 `nf>20` 上限，
+//   实测三个真实臂 0/100 胜、兜底率 100%，而生产约 36%
+//   ⇒ 自制近似器**不可代表生产**。必须复用生产实现。
+//
+// 语义对齐要点：
+//   · clicks / clicks9 切分：生产用 OpenCV 距离变换 res<=1.5 判前沿。
+//     几何等价规则：未开格若与任一「已开数字格(1..8)」8 邻域相邻 ⇒ 前沿(clicks)，
+//     否则 ⇒ 内部(clicks9)。（dist<=1.5 的几何含义即"紧贴已开数字格"）
+//   · part_solve：直接构造 PartSolveCtx，复现 py_part_solve 的 cs 构建 + recurse。
+//   · win_rate：复现 py_win_rate 的阶段1（枚举世界）+ 阶段2（逐候选 wr_f）。
+//   · argmax：取最大胜率；并列取坐标序最小（确定性，生产用随机，这里为可复现）。
+//
+// ⚠️ 本桥接**不被生产路径调用**。生产构建（无 AB_NATIVE_MERGED）时，
+//    它只是被编译进来；有宏时由 ab_native.cpp 的 extern 声明调用。
+// ==========================================================================
+namespace abnative_bridge {
+
+// ---------- 切分 clicks / clicks9（几何等价于生产的 dist<=1.5）----------
+static void split_frontier(const std::vector<int32_t>& cv, int w, int h,
+                           std::vector<Coord>& clicks,
+                           std::vector<Coord>& clicks9) {
+    const int W2 = w + 2;
+    clicks.clear();
+    clicks9.clear();
+    for (int y = 1; y <= h; ++y) {
+        for (int x = 1; x <= w; ++x) {
+            if (cv[(size_t)y * W2 + x] != 9) continue;   // 只看未开格
+            bool touches_number = false;
+            for (int dy = -1; dy <= 1 && !touches_number; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (!dx && !dy) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (nx < 1 || nx > w || ny < 1 || ny > h) continue;
+                    int32_t v = cv[(size_t)ny * W2 + nx];
+                    if (v >= 1 && v <= 8) { touches_number = true; break; }
+                }
+            }
+            if (touches_number) clicks.emplace_back(x, y);
+            else clicks9.emplace_back(x, y);
+        }
+    }
+}
+
+// ---------- part_solve：复现 py_part_solve 的 cs 构建 + recurse ----------
+// 返回 solutions（每行是对应 clicks 的 0/1 解）；失败返回 false
+static bool run_part_solve(const std::vector<int32_t>& cv, int w, int h, int a,
+                           const std::vector<Coord>& clicks,
+                           std::vector<std::vector<int32_t>>& solutions) {
+    solutions.clear();
+    if (clicks.empty()) return false;
+    // Progress 需要 py::object；桥接运行在无 GIL 上下文时传空对象即可。
+    // Progress 的 emit 内部会检查回调有效性（见其实现）。
+    PartSolveCtx ctx(clicks, w, h, py::reinterpret_borrow<py::object>(Py_None), a);
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+    ctx.board = Board(cv.data(), cv.data() + ncell);
+    for (size_t k = 0; k < ncell; ++k)
+        if (ctx.board.get(k) == 10) ++ctx.mine_count;
+
+    // 构建 cs（照抄 py_part_solve:581-607）
+    std::unordered_map<uint64_t, std::vector<Coord>> cs_map;
+    for (const auto& ck : ctx.clicks) {
+        int i = ck.first, j = ck.second;
+        uint64_t key = ((uint64_t)(uint32_t)i << 32) | (uint32_t)(uint32_t)j;
+        auto& lst = cs_map[key];
+        for (int u = i - 1; u <= i + 1; ++u) {
+            for (int v = j - 1; v <= j + 1; ++v) {
+                int32_t val = ctx.board[(size_t)v * ctx.W2 + u];
+                if (1 <= val && val <= 8) lst.emplace_back(u, v);
+            }
+        }
+    }
+    ctx.cs.resize(ctx.clicks.size());
+    for (size_t k = 0; k < ctx.clicks.size(); ++k) {
+        uint64_t key = ((uint64_t)(uint32_t)ctx.clicks[k].first << 32) |
+                       (uint32_t)ctx.clicks[k].second;
+        auto it = cs_map.find(key);
+        if (it == cs_map.end()) return false;
+        ctx.cs[k] = it->second;
+    }
+    ctx.recurse(0, 1);
+    solutions = std::move(ctx.solutions);
+    return !solutions.empty();
+}
+
+
+// 排序后的 clicks（供 argmax 后映射回原坐标）
+static std::vector<Coord> clicks_check_;
+// ---------- win_rate：复现 py_win_rate 的阶段1 + 阶段2 ----------
+// 输入：clicks / clicks9 / part_solve 的 solutions（= res_list 单组展开）
+// 输出：每候选的胜率（与 clicks 对齐）；失败返回 false
+static bool run_win_rate(const std::vector<int32_t>& cv, int w, int h, int a,
+                        const std::vector<Coord>& clicks,
+                        const std::vector<Coord>& clicks9,
+                        const std::vector<std::vector<int32_t>>& solutions,
+                        int64_t node_cap,
+                        std::vector<double>& out_res) {
+    out_res.clear();
+    const int W2 = w + 2;
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+
+    // num10 = 盘面中已标雷数
+    int64_t num10 = 0;
+    for (size_t k = 0; k < ncell; ++k) if (cv[k] == 10) ++num10;
+
+    WinRateCtx ctx(w, h, a, false, py::reinterpret_borrow<py::object>(Py_None), node_cap);
+
+    std::vector<double> cp(clicks.size(), 0.0);
+    std::vector<double> res(clicks.size(), 0.0);
+    size_t total = 0;
+    try {
+        // ---- 阶段 1：枚举所有完整局面（照抄 py_win_rate:1098-1160 语义）----
+        std::vector<Board> cell_value_list;
+        {
+            Board base(cv.data(), cv.data() + ncell);
+            size_t ncl = clicks.size();
+            std::vector<int> index((size_t)ncl, 0);
+            while (true) {
+                Board b = base;
+                int64_t mine_total = 0;
+                for (size_t i = 0; i < ncl; ++i) {
+                    const auto& row = solutions[(size_t)index[i]];
+                    if (row[(size_t)i] == 1) {
+                        int u = clicks[i].first, v = clicks[i].second;
+                        b[(size_t)v * W2 + u] = 10;
+                        ++mine_total;
+                    }
+                }
+                int64_t rem = (int64_t)a - num10 - mine_total;
+                if (rem == 0) {
+                    cell_value_list.push_back(std::move(b));
+                } else if ((int64_t)a <= num10 + mine_total + (int64_t)clicks9.size()) {
+                    auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
+                    std::vector<int> index_l;
+                    for (int s2 : sizes) {
+                        ComboIter it((int)clicks9.size(), s2);
+                        while (it.next(index_l)) {
+                            Board nb = b;
+                            for (int j : index_l) {
+                                int u = clicks9[(size_t)j].first;
+                                int v = clicks9[(size_t)j].second;
+                                nb[(size_t)v * W2 + u] = 10;
+                            }
+                            cell_value_list.push_back(std::move(nb));
+                        }
+                    }
+                }
+                // 里程表进位
+                size_t p = 0;
+                while (p < ncl) {
+                    if (++index[p] < (int)solutions[p].size()) break;
+                    index[p] = 0;
+                    ++p;
+                }
+                if (p >= ncl) break;
+            }
+        }
+        total = cell_value_list.size();
+        if (total == 0) return false;
+
+        // ---- 阶段 2 前置：算每候选 safety（cp），并稳定降序排序 ----
+        for (size_t k = 0; k < clicks.size(); ++k) {
+            int u = clicks[k].first, v = clicks[k].second;
+            size_t cnt10 = 0;
+            for (const auto& b : cell_value_list)
+                if (b[(size_t)v * W2 + u] == 10) ++cnt10;
+            cp[k] = 1.0 - (double)cnt10 / (double)total;
+        }
+        std::vector<Coord> sorted_clicks = clicks;
+        std::vector<double> sorted_cp = cp;
+        {
+            std::vector<size_t> order(clicks.size());
+            for (size_t k = 0; k < clicks.size(); ++k) order[k] = k;
+            std::stable_sort(order.begin(), order.end(),
+                             [&](size_t p, size_t q) { return cp[p] > cp[q]; });
+            for (size_t k = 0; k < clicks.size(); ++k) {
+                sorted_clicks[k] = clicks[order[k]];
+                sorted_cp[k] = cp[order[k]];
+            }
+        }
+        clicks_check_ = sorted_clicks;   // 记录排序后顺序，供 argmax 映射回坐标
+
+        // ---- 阶段 2：逐候选 wr_f ----
+        std::vector<double> res_sorted(clicks.size(), 0.0);
+        double running_max = 0.0;
+        bool has_max = false;
+        double depth_limit = 200.0 / (double)clicks.size();
+        for (size_t i = 0; i < clicks.size(); ++i) {
+            const int u = sorted_clicks[i].first, v = sorted_clicks[i].second;
+            std::vector<std::vector<Board>> gb_all;
+            std::unordered_map<int, size_t> val_slot;
+            for (const auto& b : cell_value_list) {
+                if (b[(size_t)v * W2 + u] != 10) {
+                    Board nb = b;
+                    int c9, c10;
+                    cell_around(nb, w, h, W2, u, v, c9, c10);
+                    nb[(size_t)v * W2 + u] = c10;
+                    auto it = val_slot.find(c10);
+                    if (it == val_slot.end()) {
+                        val_slot.emplace(c10, gb_all.size());
+                        gb_all.emplace_back();
+                        gb_all.back().push_back(std::move(nb));
+                    } else {
+                        gb_all[it->second].push_back(std::move(nb));
+                    }
+                }
+            }
+            double win_p = 0.0;
+            for (size_t g = 0; g < gb_all.size(); ++g) {
+                double trans_prob = (double)gb_all[g].size() / (double)total;
+                std::vector<Coord> new_clicks = sorted_clicks;
+                new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
+                double win_r = wr_f(ctx, std::move(new_clicks),
+                                    std::move(gb_all[g]), 1, depth_limit, nullptr);
+                win_p += trans_prob * win_r;
+            }
+            res_sorted[i] = win_p;
+            running_max = has_max ? std::max(running_max, win_p) : win_p;
+            has_max = true;
+        }
+        out_res = res_sorted;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+
+}  // namespace abnative_bridge
+
+// ==========================================================================
+// 对外纯 C 接口（供 ab_native.cpp 以 extern 声明调用）
+// ==========================================================================
+// 生产决策入口：给定当前盘面，返回按生产链路（切分→part_solve→win_rate→argmax）
+// 选出的最优格坐标（1-based，通过 out_x/out_y 返回）。
+// 返回：1=成功；0=失败（枚举/超限/无候选，调用方应按生产语义降级）
+extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
+                    int64_t node_cap, int* out_x, int* out_y,
+                    int* out_total_worlds, double* out_best_rate) {
+    if (out_x) *out_x = -1;
+    if (out_y) *out_y = -1;
+    if (out_total_worlds) *out_total_worlds = 0;
+    if (out_best_rate) *out_best_rate = 0.0;
+
+    std::vector<int32_t> cel(cv, cv + (size_t)(h + 2) * (w + 2));
+    std::vector<Coord> clicks, clicks9;
+    abnative_bridge::split_frontier(cel, w, h, clicks, clicks9);
+    if (clicks.empty()) return 0;
+
+    std::vector<std::vector<int32_t>> sols;
+    if (!abnative_bridge::run_part_solve(cel, w, h, a, clicks, sols)) return 0;
+
+    std::vector<double> rates;
+    if (!abnative_bridge::run_win_rate(cel, w, h, a, clicks, clicks9, sols,
+                                      node_cap, rates)) return 0;
+    if (rates.empty()) return 0;
+
+    const auto& order = abnative_bridge::clicks_check_;
+    if (order.size() != rates.size()) return 0;
+    size_t best = 0;
+    for (size_t i = 1; i < rates.size(); ++i)
+        if (rates[i] > rates[best]) best = i;
+    if (out_x) *out_x = order[best].first;
+    if (out_y) *out_y = order[best].second;
+    if (out_best_rate) *out_best_rate = rates[best];
+    return 1;
+}
+#endif  // AB_NATIVE_MERGED (bridge)
