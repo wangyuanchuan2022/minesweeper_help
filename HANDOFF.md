@@ -1,19 +1,26 @@
 # 会话交接文档（Session Handoff）
 
-日期：2026-11-04
-上一会话：`session-d88a2d3b-bc8b-4512-b930-6cba9a920020`（上下文 99%，按用户生命周期规则交接）
-git HEAD：`87976d3`（分支 main）
+日期：2026-11-05（**本轮大改：第 2.11~2.16、五、六、七、八、九、十节全部重写，新增第十一节**）
+上一会话：`session-d88a2d3b-bc8b-4512-b930-6cba9a920020`
+本轮会话：`session-52163914-802f-4361-b991-f7a27b4ff18c`（上下文紧张，按用户生命周期规则交接）
+git HEAD：`ff1fa52`（分支 main）
+
+> ⚠️ **本轮有两份文档必须一起读**：
+> 1. 本文件（主交接，含全部结论与状态）
+> 2. **`HANDOFF_ADDENDUM_Cpp桥接事故.md`**
+>    —— 内存顶爆根因 + 「闸门与计算同侧」的代码组织形式建议（用户点名要的）
 
 ---
 
 ## 一、What We Are Building
 
-**目标（goal 仍 active，未达成）**：
+**目标（未达成）**：
 > 通过优化算法，使胜率达到 **40% 以上**
 
-- Goal id：`goal-93401fa9-4dc0-42b2-af17-a0650f5bfd05`，revision 4，round 7/256
+- 原 Goal id：`goal-93401fa9-4dc0-42b2-af17-a0650f5bfd05`
+  （⚠️ 新会话 `get_goal` 返回 null 属正常：goal 是会话级的，以 HANDOFF 记录为准）
 - 项目：`D:\python\projects\minesweeper_help`（扫雷助手，PyQt5 + C++ pybind11 加速）
-- 环境：Python `D:\anaconda3\envs\py310\python.exe`（3.12.7 不行，DLL 报错）
+- 环境：Python `D:\anaconda3\envs\py310\python.exe`（3.10.16；3.12.7 会 DLL 报错）
 
 ### 关键背景：规则决定了难度
 - **Arbiter = 延迟布雷**：首点只保证**本格**安全，不保证 8 邻域（已逆向 `ms_arbiter.exe @0x4d9228`）
@@ -216,6 +223,115 @@ node_cap 重试（约 2 小时）**暂不启动**，因为回收改变不了
    ⇒ 同口径应为 **Δ+0.0060**，而非历史报的 Δ+0.0110 ⇒ **历史 Δ 被高估约 83%**。
    **方向不变**（LOO 仍劣于 S0 = 过拟合），幅度须更正。
 
+### 2.11 ⭐ 数学证否：线性权重调参不可分离（**本轮最重要的否定结论**）
+
+`review/数学论证_权重调参的有效性边界.md`，脚本 `bench/verify_lp_separability.py` 等。
+
+**方法**：把「是否存在权重使每点都选对」转成**线性不等式组**，用 HiGHS LP 精确判定
+（不是采样搜索，是可判定性证明）。
+
+| 检验 | 结果 |
+|---|---|
+| 7 维指标（342 点 / 6399 约束） | **LP1 infeasible** ⇒ 不存在任何权重能让全部点选对 |
+| 阳性对照（q=w*·F 合成数据） | LP 判 **可行** ⇒ 判定器有区分力 |
+| 扩展到 **12 维**（加 2-ply/3-ply/NEW/交互项） | **仍不可分离** |
+| **分层权重**（5 种桶宽，共 25 桶） | **全部不可分离**（对桶宽稳健） |
+| 调参收益上限 | S0 0.026018 → 20 万次搜索最优 0.023353，**差距仅 0.002666** |
+| LOO 方差（16 个 init 实测） | **0.005251** ⇒ 收益上限只有方差的 **0.51 倍** |
+
+**结论**：继续在 7 维线性权重里搜索**不可能产出可信收益**——上限小于自身噪声。
+正确方向是**非线性决策规则**或**整局验证**，不是调权重。
+
+⚠️ **适用范围：worlds ≤ 2016 的浅局面**（深局面是否同样不可分离**未验证**）。
+
+### 2.12 ⭐ 前言作主准则：简单局面上显著优于纯 safety
+
+`review/前瞻作主准则_实测确认.md`，脚本 `bench/ply_as_primary.py`。
+
+| 形态 | mean regret | Δ vs S0 | 更好/更差 | p |
+|---|---:|---:|---:|---:|
+| A: 纯 S0（安全度） | 0.033371 | — | — | — |
+| **B: `argmax(PLY3)`（前瞻作主准则）** | **0.008604** | **−0.024767** | 57/17 | **<0.0001** |
+| C: PLY2 主准则 | 0.016757 | −0.016613 | 41/21 | 0.0151 |
+| D: min-max(S0, PLY3) | 0.009955 | −0.023415 | 50/10 | <0.0001 |
+| E: 自适应（lim≤12 用 PLY3） | 0.012195 | −0.021176 | 45/15 | 0.0001 |
+
+- **B 优于 D**（纯前瞻主准则 > min-max）⇒ 让 S0 参与"取小"会削弱更强的准则
+- bootstrap 95%CI(Δ) = **[−0.0340, −0.0156]** 全负
+- **tie-break 稳健性**：3 种确定性规则全通过（Δ −0.0204~−0.0244），
+  但**并列率高达 64.9%**，需明确指定 tie-break 规则
+
+⚠️ **样本 worlds 仅 2~180（中位 61）**，是全部样本里最简单的一批 ⇒ **不能外推到深局面**。
+⚠️ 不构成"整局胜率提升"的证据（未做整局 A/B）。
+
+### 2.13 ⭐ 生产已在用前瞻作主准则（重要事实）
+
+`utils/probability.py:833-837`：
+```python
+win_rate = np.around(win_rate, decimals=5)
+where_max = np.where(win_rate == np.max(win_rate), 1, 0)
+arg = np.random.choice(np.arange(len(clicks)), p=p)   # 并列时随机破平局
+pos = [clicks[arg]]
+```
+而 `cpp/mscore.cpp:911 wr_f` 是**带深度上限的递归前瞻**（`depth_limit = 200/len(clicks)`）。
+
+⇒ **生产已经用 argmax(win_rate) 作主准则**。
+  所以 2.12 的「相对 S0 的改进」**不能**当作「相对生产的改进」——
+  真实对比基线必须是生产 `win_rate` 臂，不是纯 safety。
+
+### 2.14 ⭐ C++ 覆盖率重测：40.3% 主要是 Python 语言瓶颈
+
+`state/ab/coverage_cpp_report.json`，脚本 `bench/coverage_cpp.py`。
+
+| worlds 区间 | Python ok | C++ ok | 提升 |
+|---|---:|---:|---:|
+| [0,200) | 135/153 | **153/153** | +11.8pp |
+| [200,500) | 37/69 | **69/69** | +46.4pp |
+| [500,1000) | 11/55 | **55/55** | +80.0pp |
+| [1000,1500) | 1/24 | **24/24** | +95.8pp |
+| [1500,1914) | 0/17 | **17/17** | +100.0pp |
+
+已测 358 点（worlds ≤ 3080）：C++ ok **99.7%**，Python 同窗口 **52.0%**。
+
+⇒ **P1-c 的 40.3% 里相当大一部分是「Python 太慢」造成的假缺口**，不是"算不出"。
+⚠️ 但**不能**说"全样本覆盖率接近 100%"——worlds>3080 的 104 点未测。
+
+### 2.15 ⭐ 单格/双格推理已被全枚举覆盖（核查结论）
+
+`review/核查_单格与双格推理.md`，脚本 `bench/verify_deduction_levels.py`。
+
+项目**没有**独立的单格/双格推理模块，用的是**全枚举约束求解**：
+`union = 所有一致世界的并集`（可能是雷）、`inter = 交集`（一定是雷）、
+`safe = all & ~opened & ~union` ⇒ **并集都不是雷 ⇒ 必然安全**。
+
+用 4 个已知答案用例验证（独立实现）：
+
+| 用例 | 结果 |
+|---|---|
+| A 单格推理（邻域雷数已满⇒其余安全） | ✔ |
+| B 双格推理（重叠约束差集） | ✔ |
+| C 1-2 型差集 | ✔ |
+| D 阴性对照（无结论时不过度断言） | ✔ |
+
+⇒ **单格、双格、k 阶推理全部被枚举覆盖**，严格强于显式有限阶推理。
+⚠️ 例外：`node_cap`/`time_cap` 超限时枚举不完整，推理可能缺失。
+⚠️ 降级路径 `process_bigger_situation` 仍枚举求解（非简单贪心），保留基础推理。
+
+### 2.16 ⭐ C++ A/B 驱动的 Oracle 阳性对照通过（模拟层已验证）
+
+脚本 `cpp/ab_native.cpp` + `cpp/build_ab_native.bat`，合并编译方案 B1-a-1。
+
+| 臂 | 胜率 | 兜底 | 步/局 |
+|---|---:|---:|---:|
+| **oracle（看真雷位、永远点安全格）** | **100/100 = 100%** | 0 | 200 |
+| safety / ply3 / production（自制枚举器版） | 0/100 = 0% | **100%** | 4 |
+
+⇒ **模拟层（棋盘生成/flood-fill/胜负判定/步数）正确**。
+  真实臂 0 胜是因为被兜底支配（自制枚举器 `nf>20` 上限判死大半局面），
+  **不是模拟器坏**。这是区分"驱动有 bug"与"局面真难"的关键对照。
+
+⚠️ Oracle 臂必须**绕过枚举**，否则它自己也会掉进兜底（首版就踩了这个坑）。
+
 ---
 
 ## 三、What Did NOT Work（+ 确切原因）
@@ -228,74 +344,135 @@ node_cap 重试（约 2 小时）**暂不启动**，因为回收改变不了
 | **破平局准则整局 A/B（640 局）** | `open_plus_frontier` +0.16pp，CI [−3.53,+3.84]，p=1.000 | 两轮换 seed 后**符号翻转** |
 | **位置先验 L 单独使用** | regret 0.0968，显著**更差**（p=0.001） | 但**消融显示它是最大边际贡献项**（+0.0224，第二名 4.6 倍）⇒ 只在破平局时有用 |
 | **G（全局雷数一致性）** | **机检恒等于 S0**（330/330 逐点相等，阴性对照 19 格） | 结构性冗余，设计矩阵秩亏 1 |
+| **⭐ 分层权重（本会话 LP 证否）** | 5 种桶宽共 25 桶，**全部不可分离** | LP1 infeasible；"全局不可分离"不能推出"分层不可分离"，故单独验，结果同样否定 |
+| **⭐ 加指标到 12 维** | 2-ply/3-ply/NEW/交互项全加，**仍不可分离** | 问题是指标集的表达力，不是搜索算法 |
+| **⭐ 自制 C++ 枚举器（两版）** | 三臂 **0/100 胜、兜底率 100%**（生产约 36%） | 自设 `nf>20` 上限（生产无此限）；真实前沿格中位 22/p90 34/最大 67 ⇒ 大半局面判死进兜底。**自制近似器不可代表生产** |
+| **⭐ C++ 桥接直调 PartSolveCtx+wr_f** | **真实局面内存顶爆** | 绕过了 `_wr_memory_ok` 闸门（成本 `nworlds×2304B×n_cands×层数`，乘积结构）；闸门在 Python 侧、计算在 C++ 侧是**结构性风险** |
+| **⭐ 多步估计器当收益特征（PLY3）** | **读数作废** | PLY3 与真值 q 精确相等的点占 45.3%、相关中位 0.9998 ⇒ 浅样本上退化为"拿答案选格"。详见 `review/B三撇_结果作废_多步估计器退化为真值.md` |
+| **⭐ Python 300 局策略臂 A/B** | **已 kill，读数不采信** | 用户要求全部测试用 C++；且 Python 路径与生产 C++ 不同源 |
+
+### ⚠️ 三类"看起来是结论其实不是"的陷阱（本会话踩过）
+
+1. **耗时外推**：`10000 局 17.3 小时` 是 Python 10 局预检的线性外推，
+   C++ 通常快一个量级，**不能沿用**。
+2. **二进制哈希**：MSVC 非确定性，同源两编哈希就不同
+   ⇒ **不能用哈希论证"逻辑未变"**。
+3. **一致性判据当泄漏判据**：用"估计器与 q 的排序一致率"判泄漏是**错的**——
+   与真值高度一致恰是强准则的优点。正确做法是**核对实现来源**
+   （特征是否读了 q 字段）。
 
 ---
 
 ## 四、What Has NOT Been Tried Yet
 
-1. **分层权重**（Bergstra 推论）：按 limitation 分桶、每桶独立选准则。
-   论文依据：Ψ 有效维度 7 维实测只有 1~4，且"不同数据集上重要参数不同"。
-   **这是解释"全局单一权重永远赢不了 S0"的关键假设，未验证。**
-2. **GA / 更复杂搜索**：连续权重不可穷举 ⇒ 需启发式搜索。
-   但按 Bergstra，随机搜索是基线；**GA 不是唯一路径**（坐标下降/局部搜索都是候选）。
-3. **3-ply 整局 A/B**：regret 最优（0.0048，回收 87.6%）但覆盖率仅 **53.1%**，整局未测。
-4. **降级的真实质量损失**：只有间接证据（22 点 3 次 cap、p90 18.2s），**未量化**。
+### 4.1 已被本轮证否（**不要再尝试**）
+
+1. ~~**分层权重**~~ ⇒ **已试并 LP 证否**：5 种桶宽共 25 桶全部不可分离。
+2. ~~**加更多线性指标**~~ ⇒ **已试**：12 维仍不可分离。
+3. ~~**GA / 更复杂搜索**~~ ⇒ **无意义**：问题不在搜索算法，而在线性打分框架本身的表达力上限
+   （收益上限 0.002666 < LOO 方差 0.005251）。
+
+### 4.2 仍未尝试（有价值）
+
+4. **⭐ 非线性决策规则**：LP 只否定了**线性打分**，未否定树/规则组合/非线性特征。
+   这是当前最有希望的方向，但需重新设计特征与验证协议。
+5. **⭐ 「开格收益」作为独立规则**（不是并入线性权重）：
+   外部参照 [MinesweeperHQ 170 万局](https://minesweeperhq.com/minesweeper-odds/) 指出现代规则下
+   提升来自 "if a square reveals"；该文明确说 50.7% 是 *"a strong baseline, not a ceiling"*。
+   ⚠️ 该数据是**现代规则**，本项目是 Arbiter，**不可移植数字**。
+6. **⭐ 深局面上的前瞻收益**：简单局面已测得 Δ=−0.0248（p<0.0001），
+   但 worlds 2~180，**深局面零证据**（深点 worlds 中位 5880，单点可达 70s+）。
+7. **⭐ C++ `decide()` 统一入口**（内存闸门 + 计算同侧）：见附录与第九节第 1 步。
+8. **降级的真实质量损失**：只有间接证据（22 点 3 次 cap、p90 18.2s），**未量化**。
+9. **完整 V* 的已知答案对照**：5×5 探针在 4 个 cap 配置下**都未求出值**，仍是缺口。
+10. **`wr_f` 的 flood-fill 缺失修复**：`docs/变量名与算法细节.md:180` 记载
+    `wr_f` 点开一格**不做连锁展开**（真实点开 0 会开一大片，免费信息被系统性低估），
+    且 `depth > depth_limit` 时 `return 1.0`（截断处**高估**胜率）。
+    这两条与"开格收益被低估"同源，**局部修 wr_f 比整体换引擎风险小**，值得优先试。
 5. **完整 V* 的已知答案对照**：5×5 探针在 4 个 cap 配置下**都未求出值**，仍是缺口。
 
 ---
 
 ## 五、Current State of Files（关键）
 
-### 数据
-| 文件 | 内容 |
-|---|---|
-| `bench/data/midgame_cases.json` | 400 点（发现集一部分） |
-| `bench/data/midgame_cases_ext.json` | 1430 点（发现集另一部分） |
-| `bench/data/midgame_cases_ext2.json` | 456 点 = **验证集，未评估，禁止提前查看** |
-| `state/ab/merged_regret.json` | 300 点 q（无 F） |
-| `state/ab/mm_discovery.json` | **77 点**（有 F） |
-| `state/ab/firstclick_p2_formal.json` | P2 正式结果 |
+### ⭐ 核心数据（**注意口径，v3 才可用**）
 
-### 脚本
-| 脚本 | 用途 |
-|---|---|
-| `bench/ab_first_click_corner.py` | P2 首点 A/B（含完整性硬门禁） |
-| `bench/dump_metric_matrix_ext.py` | F 矩阵导出（多输入 + C++ 真值 + journal） |
-| `bench/optimize_weights.py` | 随机搜索 + 坐标下降（固定预算对比） |
-| `bench/layered_weights.py` | 分层权重（支持 discovery/validation 模式） |
-| `bench/classify_p1_coverage.py` | 全样本失败分类 + 分层成功率 |
-| `bench/verify_*` | 各类仪器验证（exact_cpp / vstar_precision / p2_wiring / journal_resume / after_click_semantics） |
+| 文件 | 内容 | 口径 |
+|---|---|---|
+| `bench/data/midgame_cases.json` | 400 点（发现集一部分） | 原始快照 |
+| `bench/data/midgame_cases_ext.json` | 1430 点（发现集另一部分） | 原始快照 |
+| `bench/data/midgame_cases_ext2.json` | 456 点 = **验证集，仍未评估，禁止提前查看** | 原始快照 |
+| **`state/ab/mm_v3.json.journal.jsonl`** | **342 点，正确口径矩阵** | **初始状态 + C++ 全枚举（推荐）** |
+| `state/ab/mm_full.json` | 287 点 | ⚠️ v1，含 P0-3 单分支截断缺陷，**勿用** |
+| `state/ab/mm_full_v2.json` | 283 点 | ⚠️ v2 仍建在 saturate 状态上，**勿用** |
+| `state/ab/merged_regret.json` | 300 点 q（无 F） | ✅ 全枚举 + C++，**无 P0-3 缺陷** |
+| `state/ab/p1_coverage.json` | P1-c 全样本分类（462 点） | Python 口径 |
+| `state/ab/p1_coverage_cpp.json.journal.jsonl` | C++ 覆盖率重测（358 点，未完成） | C++ 口径 |
+| `state/ab/firstclick_p2_formal.json` / `_replication.json` | P2 正式 / 复现 | 2000 局/臂 |
+| `state/ab/ply_primary.json` | 前瞻作主准则对比（5 种形态） | v3 前 150 点 |
 
-### 报告（review/）
-- `P2预注册_角落开局.md`、`P2复现预注册.md`
-- `P1预注册_发现验证集冻结.md`
-- `F矩阵说明与口径边界.md`、`regret评估原理与口径边界.md`
-- `B线_自适应深度未生效.md`、`论文研读_随机搜索与MCTS扫雷.md`
+### 关键脚本（**含仪器自测**）
+
+| 脚本 | 用途 | 自测 |
+|---|---|---|
+| `bench/dump_metric_matrix_v3.py` | **正确口径矩阵**（初始状态 + C++ 全枚举） | 3 项（候选集/S0/q 对拍） |
+| `bench/verify_lp_separability.py` | LP 判定线性可分离性 | 阳性对照 |
+| `bench/verify_lp_newfeatures.py` / `verify_lp_layered.py` | 增指标 / 分层 LP 判定 | — |
+| `bench/ply_as_primary.py` | 前瞻作主准则 vs 其他形态 | — |
+| `bench/coverage_cpp.py` + `coverage_cpp_report.py` | C++ 覆盖率重测与分段报告 | 同状态 q 对拍 |
+| `bench/verify_deduction_levels.py` | 单格/双格推理核查 | 4 个已知答案用例 |
+| `bench/validate_cost_proxy.py` | 成本代理秩相关（limitation vs n_cand×n_worlds） | — |
+| `bench/fast_loo.py` | 向量化 LOO | 与标量实现逐位对拍 |
+| `bench/judge_p2_replication.py` | P2 冻结判据判定器 | 6 情形自测 |
+| `bench/report_p1_coverage.py` | P1-c 定型报告 | 快照模式拒绝出结论 |
+| **`cpp/ab_native.cpp`** + `cpp/build_ab_native.bat` | **C++ 整局 A/B 驱动（当前阻塞）** | **Oracle 阳性对照** |
+| `cpp/check_mscore_exports.cpp` | 导出符号比对（判 MSVC 确定性） | — |
+| `bench/ab_policy.py` | 生产流水线 + 策略臂 monkey-patch | 历史实验验证过 |
+
+### 报告（review/ 关键）
+
+- **本轮新增核心**：
+  - `数学论证_权重调参的有效性边界.md`（**LP 证否线性调参**）
+  - `前瞻作主准则_实测确认.md`
+  - `minmax准则_定义_样本_判据稳健性.md`
+  - `成本代理验证_limitation不可靠.md`
+  - `三项前置统计_limitation分布_深局面_平局覆盖率.md`
+  - `你的设计_自适应前瞻与破平局.md`
+  - `核查_单格与双格推理.md`
+  - `Cpp_AB驱动_仪器验证进度与阻塞.md`
+  - `开格收益并列主准则_首轮干净评估.md`
+  - `LOO方差预演_n77.md`、`第1-3步结项_*.md`、`本轮收口_可信结论与阻塞.md`
+  - `B三撇_结果作废_多步估计器退化为真值.md`（**作废声明，勿引用其读数**）
+- 预注册（判据冻结，勿改）：`P2预注册_角落开局.md`、`P2复现预注册.md`、
+  `P1预注册_发现验证集冻结.md`、`预注册_Cpp口径覆盖率判据.md`
+- 顶层交接补充：**`HANDOFF_ADDENDUM_Cpp桥接事故.md`**（内存顶爆根因 + 组织形式建议）
 
 ---
 
-## 六、三个后台任务（**新会话必须先核验再续跑**）
+## 六、后台任务状态（**全部已完成，不要再等**）
 
-| 任务 | 状态 | 读数 |
-|---|---|---|
-| **P1-c 全样本覆盖分类** | ✅ **已完成** | 见第 2.8 节 |
-| **P2 独立复现** | ✅ 已完成 | 见第 2.7 节 |
-| **F 矩阵扩样** | ✅ 完成但**不达标** | 287 点（目标 300+），skip 175；原因见第 2.9 节 |
+| 任务 | 状态 | 读数 | 详见 |
+|---|---|---|---|
+| **P1-c 全样本覆盖分类** | ✅ **已完成**（462/462） | ok 186 = **40.3%**，未覆盖 59.7% | 第 2.8 节 |
+| **P2 独立复现** | ✅ 已完成（2000/臂，失败 0） | Δ=+1.10pp，p=0.4389 **不显著** | 第 2.7 节 |
+| **F 矩阵扩样** | ✅ 完成但**不达标** | 287 点（目标 300+），skip 175 全为 `exact_eval` node_cap | 第 2.9 节 |
+| **C++ 覆盖率重测** | ⏸ 部分（358/462，已停） | worlds≤3080 段 C++ ok **99.7%** vs Python 同窗口 52.0% | `review/Cpp_AB驱动_仪器验证进度与阻塞.md` 等 |
+| **Python 300 局策略臂 A/B** | ❌ **已中枪作废** | 用户要求全部测试用 C++，该任务已 kill，读数不采信 | — |
 
-### ⚠️ 新会话第一步必须做的核验
+### ⚠️ 已核验：无残留进程
+
 ```powershell
-# 1. 进程是否还活着
-Get-Process -Id 35916,43744,47664 -ErrorAction SilentlyContinue | Select Id,CPU
-
-# 2. 日志是否还在推进（间隔 60s 对比 mtime 与尾行）
-Get-Item bench\data\p1_coverage.log,bench\data\p2_repl.log,bench\data\mm_full.log | Select Name,LastWriteTime,Length
-Get-Content bench\data\p1_coverage.log -Tail 3
-Get-Content bench\data\p2_repl.log -Tail 3
-Get-Content bench\data\mm_full.log -Tail 3
+Get-Process -Name python* -ErrorAction SilentlyContinue | Measure-Object   # 应为 0
+(Get-FileHash utils\mscore.cp310-win_amd64.pyd -Algorithm SHA256).Hash
+# 必须 = 5B22EC2BDE70ACC8E64DAD8A8CBF9305970DF8EB228A744F06ED22AAC50219CD
 ```
-- **进程已死但 journal 存在** ⇒ 用 `--no-resume` 之外的默认参数**续跑**（journal 会自动跳过已完成点）
-- **不得重跑已完成样本**
-- **P1-c 进度不能当最终结果**：样本按 worlds 升序排列，先跑简单的 ⇒ 当前 72.4% 不代表全样本
+
+### 两个 journal 可续跑（**不得重跑已完成点**）
+
+| 文件 | 已完成 | 说明 |
+|---|---:|---|
+| `state/ab/p1_coverage_cpp.json.journal.jsonl` | 358 | C++ 覆盖率重测；剩余 104 点 worlds>3080，幂律外推约 40h，性价比低 |
+| `state/ab/mm_v3.json.journal.jsonl` | 342 | **正确口径矩阵**（初始状态 + C++ 全枚举）；剩余为大 worlds 长尾 |
 
 ---
 
@@ -307,84 +484,201 @@ Get-Content bench\data\mm_full.log -Tail 3
 4. **验证集只评估一次**，看到结果后不得改配置重试
 5. **每个配置独立新进程**测耗时，或随机交替取中位/p99 并报极差
 6. **预注册判据不得事后修改**
+7. **⭐ 所有测试一律用 C++**（用户 2026-11-05 两次强调）：不要再写 Python 测试脚本、
+   不要在 Python 层跑 A/B。Python 仅作薄调用层。
+8. **⭐ 不得自制近似器替代生产算法**（本会话血泪）：
+   - 我写了两版自制枚举器（朴素 2^nf + 自设 `nf > 20` 上限），
+     实测三臂 **0/100 胜、兜底率 100%**，而生产约 36%
+   - 根因：生产的 `part_solve` 是**约束分组递归**，不是 2^nf 全枚举；
+     真实前沿格中位 **22**、p90 34、最大 **67**，`nf>20` 直接判死大半局面
+   - ⇒ 必须复用生产实现，不得自己重写
+9. **⭐ 任何 C++ 侧决策调用必须自带内存闸门**（本会话内存顶爆事故）：
+   - 生产 `_wr_memory_ok`（`probability.py:1321`）的成本结构是
+     `nworlds × 2304B × n_candidates × 递归层数`（**乘积结构**，可到 GB 级）
+   - 我的桥接绕过它 ⇒ 真实局面直接顶爆
+   - ⇒ 闸门必须与计算**同侧**，不能只留在 Python 侧
+10. **⭐ 二进制哈希不能作为"逻辑未变"的证据**：MSVC 编译**非确定性**
+    （同源连续两编 sha256 就不同）。须用**导出符号对比** + 分进程数值对拍。
+11. **⭐ 不改生产 `mscore.cpp` 的既有逻辑**：只允许加 `#ifndef` 预处理保护与
+    文件末尾追加桥接；且桥接必须包在 `#ifdef AB_NATIVE_MERGED` 内，
+    保证生产 pyd 可复现基线。
 
 ---
 
 ## 八、Blockers & Open Questions
 
-1. **40% 目标未达成**：corner 39.60% < 40%，CI 跨 40% ⇒ 需独立复现确认
-2. ~~P2 复现未完成~~ ⇒ **已完成**：方向一致（+1.10pp）但**未显著**（p=0.4389）；
-   角落开局实际收益仍不确定（见 2.7 节）
-3. **全样本未覆盖率未知**（P1-c 250/462）——此前"47% 点被丢弃"是**错误外推**，已删
-4. **F 矩阵只有 77 点**（扩样中 130/462），不足以支撑 7 维权重优化
-5. **完整 V* 的已知答案对照缺失**（5×5 探针跑不完）
-6. **regret → 整局胜率的转换关系未量化**
+### 8.1 目标相关（40% 未达成）
+
+1. **40% 目标未达成**：正式轮 corner 39.60%（CI [37.48,41.76] 跨 40%）、
+   复现轮 37.25%（CI [35.16,39.39] 全在 40% 以下）
+2. **角落开局**：方向一致（+3.25pp / +1.10pp）但复现轮**不显著**（p=0.4389），
+   实际收益仍不确定（见 2.7 节）
+3. **regret → 整局胜率的转换关系未量化**（长期缺口）
+
+### 8.2 结构性阻塞（本会话新增，**这是当前主线**）
+
+4. **⭐ 权重优化线已被 LP 数学证否**（见 `review/数学论证_权重调参的有效性边界.md`）
+   - 7 维指标全局**线性不可分离**（LP1 infeasible，阳性对照通过）
+   - 加指标到 12 维仍不可分离；分层权重 5 种桶宽共 25 桶**全部不可分离**
+   - 调参收益上限 **0.002666** < LOO 方差 **0.005251**（仅 0.51 倍）
+   - **适用范围：worlds ≤ 2016 的浅局面**（深局面未验证）
+   - ⇒ 不要再在 7 维线性权重里加大搜索预算
+
+5. **⭐ 样本偏简单，深局面证据为零**
+   - v3 矩阵 342 点 worlds 中位仅 **252**；此前评估用的 150 点中位 **61**
+   - 深局面（worlds>2000）可用 137 点（中位 5880），但计算极慢（单点可达 70s+）
+   - 自适应深度的价值**只在深局面上体现**，用简单点评估必然得"无差异"
+
+6. **⭐ C++ A/B 驱动不可用（当前最大阻塞）**
+   - 自制枚举器版本：真实臂 0/100 胜、兜底率 100% ⇒ 不代表生产
+   - 生产桥接版本：**绕过内存闸门，真实局面顶爆内存**
+   - **Oracle 阳性对照已通过**（100/100 胜、0 兜底、200 步/局）
+     ⇒ 模拟层（棋盘生成/flood-fill/胜负判定）正确，问题在决策层与内存保护
+   - 详见 `HANDOFF_ADDENDUM_Cpp桥接事故.md`
+
+### 8.3 数据/仪器遗留
+
+7. **F 矩阵 287 点**含 P0-3 缺陷（单分支截断），已用 v3 重算 342 点替代
+8. **完整 V* 的已知答案对照缺失**（5×5 探针跑不完）
+9. **审计 P0-1 口径分歧**：审计称重复键 51 组/内容不同 18 组，
+   我实测 41/14；两方一致的关键结论是**同棋盘多决策点泄漏 = 0**
 
 ---
 
-## 九、Exact Next Step（固定顺序，不要跳步）
+## 九、Exact Next Step（**2026-11-05 重写：旧顺序的第 4-7 步已被证否或阻塞**）
 
-### 第 0 步：核验（见第六节命令）
-确认三个任务状态，决定是等还是续跑。
+### ⚠️ 旧顺序已作废的步骤
 
-### 第 1 步：等 P1-c 完成 → 得到真实全样本未覆盖率
-- 输出：`state/ab/p1_coverage.json`
-- 必须报告：ok/node_cap/time_cap/err 各多少，按 limitation/worlds 分层成功率
-- **用这个替换掉所有"47%"表述**
+| 旧步 | 状态 |
+|---|---|
+| 第 4 步 随机搜索基线 | ❌ **不再有意义**：线性调参已被 LP 证否（见 8.2 第 4 条） |
+| 第 5 步 坐标下降精修 | ❌ 同上；且历史 LOO Δ 因口径混用高估 **83%** |
+| 第 6 步 冻结权重 → 验证集 | ❌ 前置不成立；**不得**在没有可用权重时读验证集 |
+| 第 7 步 整局 A/B（走权重） | ❌ 前置不成立 |
 
-### 第 2 步：等 P2 复现完成 → 判定角落开局
-- 读 `bench/data/p2_repl.log` 与 `state/ab/firstclick_p2_replication.json`
-- 判据（已冻结在 `review/P2复现预注册.md`）：
-  - **主判据：Δ 方向与正式实验一致（corner > center）**
-  - 不因结果修改判据
-  - 不把两轮合并成"官方"数字宣称达标
-- 若方向相反 ⇒ 判定**未复现**，不得采纳
+### 新顺序（按依赖）
 
-### 第 3 步：等 F 矩阵扩样完成（目标 300+ 点）
-- 输出 `state/ab/mm_full.json`
-- 检查 `skipped` 分布，报告真实成功率
-
-### 第 4 步：随机搜索基线（固定预算）
-```bash
-python bench/optimize_weights.py --matrix state/ab/mm_full.json \
-       --random-trials 800 --cd-rounds 20
+#### 第 0 步：核验环境（必做）
+```powershell
+Get-Process -Name python* -ErrorAction SilentlyContinue | Measure-Object   # 应为 0
+(Get-FileHash utils\mscore.cp310-win_amd64.pyd -Algorithm SHA256).Hash
+# 必须 = 5B22EC2BDE70ACC8E64DAD8A8CBF9305970DF8EB228A744F06ED22AAC50219CD
+git log --oneline -3
 ```
-- 必须报 LOO，不报 in-sample 作结论
+若二进制不是基线 ⇒ `Copy-Item utils\mscore.cp310-win_amd64.pyd.bak_baseline utils\mscore.cp310-win_amd64.pyd -Force`
 
-### 第 5 步：坐标下降精修
-- 同一脚本内已实现，记录**实际评估次数**保证公平比较
+#### 第 1 步：做 C++ `decide()` 入口（**当前主线**）
+把「闸门 + 计算」下沉进 C++，使任何调用方都无法绕过内存保护。
+详见 `HANDOFF_ADDENDUM_Cpp桥接事故.md` 第三节。
 
-### 第 6 步：冻结权重 → 验证集**只评估一次**
-```bash
-python bench/dump_metric_matrix_ext.py \
-       --inputs bench/data/midgame_cases_ext2.json \
-       --max-worlds 20000 --out state/ab/mm_validation.json
-```
-- ⚠️ 这一步**必须等权重完全冻结后**才做
+**迁移顺序（每步都要先通过才进下一步）**：
 
-### 第 7 步：整局胜率 A/B 验证 40% 目标
-- 把优化出的权重接入生产选格逻辑，跑 2000 局/臂配对 A/B
+| 子步 | 内容 | 通过判据 |
+|---|---|---|
+| 1a | C++ 实现 `estimate_mem(clicks, clicks9, total)`，与 Python `_wr_memory_ok` **对拍** | 同一批盘面 allow/deny **完全一致** |
+| 1b | C++ 实现 `split_frontier()`，与 `probability.py:523-530` 对拍 | clicks/clicks9 集合完全一致 |
+| 1c | C++ `decide()`，**先只给 A/B 驱动用**，生产仍走 Python | 真实局面不再顶爆内存 |
+| 1d | 同 seed 逐步对齐（C++ 驱动 vs 生产，逐格比对） | 若干局**全步**一致 |
+
+⚠️ **1a/1b 未通过就做 1c，必然重复顶爆内存**（本会话已验证一次）。
+
+#### 第 2 步：补深局面样本
+- 现有 342 点 worlds 中位 252，**太浅**，无法评估任何"深局面收益"
+- 深局面 137 点可用（中位 5880），但单点可达 70s+
+- 建议分层抽样（每层 20 点），而非全量
+
+#### 第 3 步：在深局面上验证「前瞻作主准则」
+- 简单局面上已测得 `argmax(PLY3)` 优于纯 safety：Δ=−0.024767（57 好/17 差，
+  p<0.0001，bootstrap CI [−0.034, −0.016]）
+- **但该结论只覆盖 worlds 2~180**，深局面**零证据**
+- 必做：泄漏校验（估计器不得读 q；用实现来源核对，**不要**用一致性判据）
+
+#### 第 4 步：整局 A/B（唯一能验证胜率）
+- 前置：第 1 步完成（否则会顶爆内存）
+- 设计：同 seed 配对；p≈0.36 时 10000 局标准误约 **0.48pp**
+- 若目的是判定"改进是否有效"，**配对设计所需局数远少于 10000**
 - 预注册判据后再跑，不得事后改
+
+### ❌ 明确不要做的事
+
+- ❌ 不再调 7 维线性权重（LP 已证否，含分层）
+- ❌ 不自制枚举器/近似器替代生产算法
+- ❌ 不在 Python 层跑长测试（用户明确要求全部 C++）
+- ❌ 不在没有可用权重时读验证集 `midgame_cases_ext2.json`
+- ❌ 不用二进制哈希论证"逻辑未变"
+- ❌ 不用耗时读数做策略排序（同进程漂移 2.4~5.4x）
 
 ---
 
 ## 十、复现全部关键读数
 
 ```bash
-# 二进制版本（必须一致）
+# ==================== 环境与版本（必须先核对）====================
+# 二进制必须是基线（生产用）
 sha256sum utils/mscore.cp310-win_amd64.pyd
 # 5B22EC2BDE70ACC8E64DAD8A8CBF9305970DF8EB228A744F06ED22AAC50219CD
+# 若不符：cp utils/mscore.cp310-win_amd64.pyd.bak_baseline utils/mscore.cp310-win_amd64.pyd
 
-# P2 正式（已完成，勿重跑）
+# Python 环境（3.10.16；3.12.7 会 DLL 报错）
+# D:\anaconda3\envs\py310\python.exe
+
+# 生产预算常量（从代码读，勿凭记忆）
+grep -n "DECISION_TIME_BUDGET\|_PS_RESERVE_S\|_WR_NODE_CAP_RECOMMENDED" utils/probability.py
+# DECISION_TIME_BUDGET = 30.0   (单次决策总预算，用户确认上限)
+# _PS_RESERVE_S = 3.0           (为 win_rate/pbs/输出预留)
+# _WR_NODE_CAP_RECOMMENDED = 2000000
+
+# ==================== P2（已完成，勿重跑）====================
 python bench/ab_first_click_corner.py --compare center corner --games 2000 --seed 20272000
-
-# P2 复现（进行中）
 python bench/ab_first_click_corner.py --compare center corner --games 2000 --seed 20273000
+python bench/judge_p2_replication.py        # 冻结判据机械判定
 
-# 仪器验证全套
+# ==================== 数学证明（LP 证否线性调参）====================
+python bench/verify_lp_separability.py      # 7 维：infeasible + 阳性对照
+python bench/verify_lp_newfeatures.py --limit 60   # 12 维：仍不可分离
+python bench/verify_lp_layered.py --bucket 2.0     # 分层：全不可行
+
+# ==================== 前瞻作主准则 ====================
+python bench/ply_as_primary.py --limit 150
+
+# ==================== 正确口径矩阵（v3）====================
+python bench/dump_metric_matrix_v3.py --self-test
+python bench/dump_metric_matrix_v3.py --out state/ab/mm_v3.json   # 可续跑
+
+# ==================== 覆盖率（C++ 口径）====================
+python bench/coverage_cpp.py --verify-only        # 先过仪器验证
+python bench/coverage_cpp.py                      # 全量重测（可续跑）
+python bench/coverage_cpp_report.py               # 分段定型报告
+
+# ==================== 推理层级核查 ====================
+python bench/verify_deduction_levels.py           # 4 个已知答案用例
+
+# ==================== C++ 编译（两种构建）====================
+cpp\build.bat                # 生产版（无 AB_NATIVE_MERGED，不含桥接）
+cpp\build_ab_native.bat      # 合并版（有宏，含桥接；当前会顶爆内存，勿跑真实局面）
+cpp\build_check_exports.bat  # 导出符号检查器（需设 PYTHONHOME）
+
+# ==================== 历史仪器验证（仍有效）====================
 python bench/verify_exact_cpp.py
 python bench/verify_after_click_semantics.py
 python bench/verify_vstar_precision.py --limit 25
 python bench/verify_p2_wiring.py
 python bench/verify_journal_resume.py
 ```
+
+---
+
+## 十一、本轮会话的核心结论一句话总结
+
+1. **权重调参已被数学证否**（LP 证不了线性可分离；收益上限 0.002666 < 方差 0.005251），
+   **不要再调 7 维线性权重**（含分层）。
+2. **前瞻作主准则在简单局面上显著**（Δ=−0.0248，p<0.0001），
+   但样本 worlds 仅 2~180，**深局面零证据**。
+3. **生产已在用前瞻作主准则**（`argmax(win_rate)`），
+   所以"相对 S0 的改进"≠"相对生产的改进"，真实基线必须用生产 `win_rate` 臂。
+4. **P1-c 的 40.3% 主要是 Python 语言瓶颈**（C++ 同窗口 99.7%），
+   但深局面（worlds>3080）未测，不能外推。
+5. **C++ A/B 驱动当前不可用**：自制枚举器不代表生产（0/100 胜），
+   生产桥接绕过内存闸门会顶爆内存。Oracle 对照已证明**模拟层正确**。
+6. **下一步主线**：把「内存闸门 + 计算」下沉进 C++ `decide()` 入口，
+   先做 `estimate_mem` 与 `split_frontier` 的 C++/Python 对拍，再切换。
