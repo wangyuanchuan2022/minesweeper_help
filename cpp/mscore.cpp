@@ -41,6 +41,7 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <set>
 
 // MSVC 没有 msw_ctzll / msw_popcountll（那是 GCC/Clang 内建）。
 // 本文件之前只在 GCC 下编译过，新加的 ExactEngine 用了这些内建 ⇒ 提供可移植封装。
@@ -462,10 +463,16 @@ struct PartSolveCtx {
     std::vector<std::vector<int32_t>> solutions;
     double completed = 0.0;
     Progress progress;
+    int64_t node_cap = 0;       // 0 = preserve production unlimited behavior
+    int64_t solution_cap = 0;   // 0 = unlimited
+    int64_t nodes_visited = 0;
+    bool aborted = false;
 
-    PartSolveCtx(std::vector<Coord> clicks_, int w_, int h_, py::object cb, int a_)
+    PartSolveCtx(std::vector<Coord> clicks_, int w_, int h_, py::object cb, int a_,
+                 int64_t node_cap_ = 0, int64_t solution_cap_ = 0)
         : w(w_), h(h_), W2(w_ + 2), a(a_),
-          clicks(std::move(clicks_)), state(this->clicks.size(), 0), progress(std::move(cb)) {}
+          clicks(std::move(clicks_)), state(this->clicks.size(), 0), progress(std::move(cb)),
+          node_cap(node_cap_), solution_cap(solution_cap_) {}
 
     bool check_leaf(const std::vector<Coord>& cslist) const {
         for (const auto& c : cslist) {
@@ -487,6 +494,11 @@ struct PartSolveCtx {
     }
 
     void recurse(size_t idx, int depth) {
+        if (aborted) return;
+        if (node_cap > 0 && ++nodes_visited > node_cap) {
+            aborted = true;
+            return;
+        }
         const int x = clicks[idx].first, y = clicks[idx].second;
         const auto& cslist = cs[idx];
         const size_t n = clicks.size();
@@ -499,6 +511,10 @@ struct PartSolveCtx {
             if (check_leaf(cslist)) {
                 state[depth - 1] = 0;
                 solutions.emplace_back(state.begin(), state.end());
+                if (solution_cap > 0 && (int64_t)solutions.size() >= solution_cap) {
+                    aborted = true;
+                    return;
+                }
             }
             completed += step;
 
@@ -513,6 +529,12 @@ struct PartSolveCtx {
             if (check_leaf(cslist)) {
                 state[depth - 1] = 1;
                 solutions.emplace_back(state.begin(), state.end());
+                if (solution_cap > 0 && (int64_t)solutions.size() >= solution_cap) {
+                    aborted = true;
+                    board[cell] = 9;
+                    --mine_count;
+                    return;
+                }
             }
             completed += step;
 
@@ -2186,6 +2208,1135 @@ py::tuple py_exact_eval(py::sequence worlds_seq, py::sequence clicks_seq,
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Decision-layer primitives (safe migration stage)
+//
+// These helpers intentionally have no UI/state side effects.  They mirror the
+// Python decision preflight so callers cannot accidentally run the expensive
+// win_rate stage without first checking the same conservative memory bound.
+// ---------------------------------------------------------------------------
+namespace decision_layer {
+
+static constexpr int32_t CELL_CLOSED = 9;
+static constexpr int32_t CELL_FLAGGED = 10;
+static constexpr int64_t DEFAULT_MEM_BUDGET = 1536LL * 1024LL * 1024LL;
+static constexpr int64_t WORLD_BYTES = 2304;
+
+struct MemEstimate {
+    int64_t bytes;
+    int64_t budget;
+    int64_t worlds;
+    int64_t candidates;
+    bool allowed;
+};
+
+static MemEstimate estimate_mem_impl(int64_t worlds, int64_t candidates,
+                                     int64_t budget) {
+    if (worlds < 0 || candidates < 0) {
+        throw std::invalid_argument("worlds and candidates must be non-negative");
+    }
+    if (budget <= 0) budget = DEFAULT_MEM_BUDGET;
+    // Saturate instead of overflowing: an overflow must never turn into allow.
+    const long double raw = static_cast<long double>(worlds) *
+                            static_cast<long double>(candidates) * WORLD_BYTES;
+    const int64_t bytes = raw >= static_cast<long double>(INT64_MAX)
+        ? INT64_MAX : static_cast<int64_t>(raw);
+    return {bytes, budget, worlds, candidates, bytes <= budget};
+}
+
+static py::dict py_estimate_mem(int64_t worlds, int64_t candidates,
+                                int64_t budget) {
+    const auto e = estimate_mem_impl(worlds, candidates, budget);
+    py::dict out;
+    out["bytes"] = e.bytes;
+    out["budget"] = e.budget;
+    out["worlds"] = e.worlds;
+    out["candidates"] = e.candidates;
+    out["allowed"] = e.allowed;
+    return out;
+}
+
+static py::tuple py_split_frontier(
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board) {
+    auto info = board.request();
+    if (info.ndim != 2) throw std::invalid_argument("cell_value must be a 2D array");
+    const int rows = static_cast<int>(info.shape[0]);
+    const int cols = static_cast<int>(info.shape[1]);
+    if (rows < 3 || cols < 3) throw std::invalid_argument("cell_value is too small");
+    const auto* p = static_cast<const int32_t*>(info.ptr);
+    auto at = [&](int y, int x) -> int32_t { return p[y * cols + x]; };
+    py::list frontier;
+    py::list interior;
+    int num9 = 0;
+    int num10 = 0;
+    // Python uses 1-based coordinates and a one-cell sentinel border.
+    for (int y = 1; y < rows - 1; ++y) {
+        for (int x = 1; x < cols - 1; ++x) {
+            const int32_t v = at(y, x);
+            if (v == CELL_CLOSED) ++num9;
+            if (v == CELL_FLAGGED) ++num10;
+            if (v != CELL_CLOSED) continue;
+            // Production uses cv2.distanceTransform on an interior-only mask
+            // where 9/10 are obstacles.  res<=1.5 means: within the 8-neighbor
+            // interior window there exists a cell whose value is NOT 9 and NOT
+            // 10.  The sentinel border is excluded (it is not part of bg).
+            bool near_non_obstacle = false;
+            for (int dy = -1; dy <= 1 && !near_non_obstacle; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (dx == 0 && dy == 0) continue;
+                    const int ny = y + dy, nx = x + dx;
+                    if (ny < 1 || ny > rows - 2 || nx < 1 || nx > cols - 2) continue;
+                    const int32_t n = at(ny, nx);
+                    if (n != CELL_CLOSED && n != CELL_FLAGGED) {
+                        near_non_obstacle = true;
+                        break;
+                    }
+                }
+            }
+            auto coord = py::make_tuple(x, y);
+            if (near_non_obstacle) frontier.append(coord);
+            else interior.append(coord);
+        }
+    }
+    return py::make_tuple(frontier, interior, num9, num10);
+}
+
+static py::dict py_decision_preflight(
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board,
+    int64_t worlds, int64_t budget) {
+    py::tuple split = py_split_frontier(board);
+    py::list frontier = split[0].cast<py::list>();
+    py::list interior = split[1].cast<py::list>();
+    const int64_t candidates = 1 + static_cast<int64_t>(frontier.size()) +
+                               static_cast<int64_t>(interior.size());
+    const auto mem = estimate_mem_impl(worlds, candidates, budget);
+    py::dict out;
+    out["frontier"] = frontier;
+    out["interior"] = interior;
+    out["num9"] = split[2];
+    out["num10"] = split[3];
+    out["worlds"] = mem.worlds;
+    out["candidates"] = mem.candidates;
+    out["estimated_bytes"] = mem.bytes;
+    out["budget"] = mem.budget;
+    out["allowed"] = mem.allowed;
+    return out;
+}
+
+}  // namespace decision_layer
+
+#ifdef MSW_TRIAL_DECIDE  // TRIAL ONLY: isolated build, never in production pyd
+//
+// Advisor concern (accepted): before exposing this entry point, the full
+// Python number5_1 orchestration must be verified line-by-line against the
+// C++ kernel call sequence.  A forced win_rate test already exposed a real
+// mismatch: production catches node-cap and falls back to pbs, while this
+// draft propagated RuntimeError.  Do not re-enable until semantic parity is
+// demonstrated on paired decision cases.
+//
+// Python is reduced to I/O: it builds cell_value and clicks the coordinate.
+// All reasoning lives here: split, group, enumerate, gate, lookahead/pbs.
+// ---------------------------------------------------------------------------
+namespace decision_layer {
+
+static py::list coords_to_pylist(const std::vector<Coord>& v) {
+    py::list out;
+    for (const auto& c : v) out.append(py::make_tuple(c.first, c.second));
+    return out;
+}
+
+static py::dict make_response(int x, int y, double confidence, int path,
+                              const char* reason, int64_t estimated_bytes,
+                              int64_t world_upper, py::object prob = py::dict(),
+                              py::object tied = py::list(),
+                              py::object weighted = py::list()) {
+    py::dict d;
+    d["x"] = x;
+    d["y"] = y;
+    d["confidence"] = confidence;
+    d["path"] = path;          // 0=win_rate, 1=pbs, 2=random/interior
+    d["reason"] = reason;
+    d["estimated_bytes"] = estimated_bytes;
+    d["world_upper"] = world_upper;
+    d["prob"] = prob;
+    d["tied"] = tied;          // diagnostic: exact tie-set coordinates
+    d["weighted"] = weighted;  // diagnostic: open_num5x5 max group
+    return d;
+}
+
+// Deterministic tie-break (user-approved strategy change, option A):
+// among all candidates sharing the maximum value, pick the smallest
+// coordinate (x, then y).  decide() is a PURE function of cell_value+config;
+// no Python RNG, no hidden state.  Python parity harness must apply the SAME
+// rule on its side (replacing np.random.choice) before comparing outputs.
+// RULE: among tied candidates pick the lexicographically smallest (x, y)
+// coordinate VALUE.  This does NOT depend on the clicks list order -- C++
+// ordered_clicks is reordered by grouping, production clicks is (x,y)-sorted,
+// so comparing values (not positions) is the only order-independent rule.
+static Coord deterministic_tie_break(const std::vector<Coord>& tied) {
+    Coord best = tied[0];
+    for (const auto& c : tied)
+        if (c.first < best.first || (c.first == best.first && c.second < best.second))
+            best = c;
+    return best;
+}
+
+// DIAGNOSTIC: pbs branch candidate count / max safety (whole-game debugging).
+static std::string g_last_pbs_diag;
+
+static py::dict decide_impl(
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+    int a, int w, int h, double wr_threshold, int64_t node_cap,
+    int64_t mem_budget) {
+    if (cell_value.ndim() != 2 ||
+        cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2)
+        throw std::invalid_argument("cell_value shape mismatch (expect (h+2, w+2))");
+    if (w <= 0 || h <= 0 || a <= 0)
+        throw std::invalid_argument("w/h/a must be positive");
+    const int W2 = w + 2;
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+    const int32_t* raw = static_cast<const int32_t*>(cell_value.request().ptr);
+    std::vector<int32_t> cv(raw, raw + ncell);
+
+    int num9 = 0, num10 = 0;
+    for (int y = 1; y <= h; ++y)
+        for (int x = 1; x <= w; ++x) {
+            const int32_t v = cv[(size_t)y * W2 + x];
+            if (v == 9) ++num9;
+            if (v == 10) ++num10;
+        }
+
+    py::tuple split = py_split_frontier(cell_value);
+    py::list f_py = split[0].cast<py::list>();
+    py::list i_py = split[1].cast<py::list>();
+    std::vector<Coord> clicks, clicks9;
+    for (auto item : f_py) { auto t = item.cast<py::tuple>(); clicks.emplace_back(py::int_(t[0]), py::int_(t[1])); }
+    for (auto item : i_py) { auto t = item.cast<py::tuple>(); clicks9.emplace_back(py::int_(t[0]), py::int_(t[1])); }
+
+    // No frontier: production picks an interior cell by open_num5x5; we use a
+    // deterministic first-cell fallback here (Python I/O layer owns the click).
+    if (clicks.empty()) {
+        if (clicks9.empty()) return make_response(-1, -1, 0.0, 2, "no_closed_cell", 0, 0);
+        return make_response(clicks9[0].first, clicks9[0].second,
+                             1.0 - (double)(a - num10) / (double)clicks9.size(),
+                             2, "no_frontier", 0, 0);
+    }
+
+    // Group frontier by shared constraint numbers (production click_list).
+    std::vector<std::vector<Coord>> groups;
+    std::vector<std::set<Coord>> group_sets;
+    std::vector<std::set<Coord>> cell_sets(clicks.size());
+    // PRODUCTION PARITY (advisor): grouping uses get_set_1's 0<v<8 => 1..7.
+    // Do NOT unify with part_solve's _cs which uses 1<=v<=8 => 1..8.
+    // The two ranges are intentionally different in number5_1.
+    for (size_t k = 0; k < clicks.size(); ++k) {
+        const auto& p = clicks[k];
+        for (int u = p.first - 1; u <= p.first + 1; ++u)
+            for (int v = p.second - 1; v <= p.second + 1; ++v) {
+                const int32_t val = cv[(size_t)v * W2 + u];
+                if (val > 0 && val < 8) cell_sets[k].emplace(u, v);
+            }
+    }
+    for (size_t k = 0; k < clicks.size(); ++k) {
+        std::vector<size_t> hit;
+        for (size_t g = 0; g < groups.size(); ++g)
+            for (const auto& c : cell_sets[k])
+                if (group_sets[g].count(c)) { hit.push_back(g); break; }
+        if (hit.empty()) { groups.push_back({clicks[k]}); group_sets.push_back(cell_sets[k]); }
+        else {
+            const size_t keep = hit.front();
+            groups[keep].push_back(clicks[k]);
+            group_sets[keep].insert(cell_sets[k].begin(), cell_sets[k].end());
+            for (size_t hi = hit.size(); hi-- > 1;) {
+                const size_t src = hit[hi];
+                groups[keep].insert(groups[keep].end(), groups[src].begin(), groups[src].end());
+                group_sets[keep].insert(group_sets[src].begin(), group_sets[src].end());
+                groups.erase(groups.begin() + (std::ptrdiff_t)src);
+                group_sets.erase(group_sets.begin() + (std::ptrdiff_t)src);
+            }
+        }
+    }
+    std::vector<Coord> ordered_clicks;
+    for (const auto& g : groups) ordered_clicks.insert(ordered_clicks.end(), g.begin(), g.end());
+
+    // Per-group part_solve via the validated C++ kernel.
+    py::list res_list;
+    py::list ck_list;
+    int64_t world_upper = 1;
+    py::object no_progress = py::none();
+    try {
+        for (const auto& g : groups) {
+            py::tuple r = py_part_solve(coords_to_pylist(g), cell_value, a, w, h, no_progress);
+            py::array_t<int32_t, py::array::c_style | py::array::forcecast> sol(r[0]);
+            const int64_t n = py::int_(r[1]);
+            if (n <= 0) return make_response(-1, -1, 0.0, 1, "empty_group", 0, 0);
+            res_list.append(sol);
+            ck_list.append(py::int_(n));
+            if (world_upper > INT64_MAX / n) { world_upper = INT64_MAX; break; }
+            world_upper *= n;
+        }
+    } catch (const std::exception& e) {
+        // Production part_solve falls back on ANY C++ exception; do not let a
+        // single failing group abort the whole decision.  Report as a safe
+        // pbs-style fallback with the reason preserved.
+        return make_response(-1, -1, 0.0, 1,
+                             ("part_solve_error:" + std::string(e.what())).c_str(),
+                             0, 0);
+    }
+
+    const int64_t candidates = 1 + (int64_t)ordered_clicks.size() + (int64_t)clicks9.size();
+    const auto mem = estimate_mem_impl(world_upper, candidates, mem_budget);
+    const double limitation = (double)clicks9.size() * 0.8 + std::log2((double)world_upper);
+
+    // =========================================================================
+    // LAYER 1 — OPTIMAL (user directive 2026-11-05: "实现论文里的最优策略，
+    // 当 win rate 穷举时间小于一秒时，进行残局的穷举，精确找到最优解").
+    //
+    // Paper (AAAI-17 WS-17-15, sec 6 "Quasi-optimal Strategies"):
+    //   popt(B,f) = 1 if solved, else max_b popt(B,f,b) — exact optimal play.
+    //   Trigger: |S| <= criterion (their D*); here world_upper <= DSTAR.
+    //
+    // DSTAR=400 chosen by user decision ("按 400 开工、验收时看触发率再调").
+    // Timing anchor: ExactEngine on worlds 2..180 measured ms-level; the
+    // acceptance gate re-verifies per-decision wall time < 1s (user hard
+    // constraint) on raw per-call data.  Overflow-safe: world_upper saturates
+    // at INT64_MAX, so a huge world never accidentally enters this branch.
+    //
+    // Implementation reuses the existing exact-V* kernel (ExactEngine, line
+    // ~1735) — zero new kernel code.  Worlds are materialized exactly like
+    // py_win_rate stage-1 (Odometer over groups + clicks9 combinations), then
+    // converted to bit-packed worlds for the engine.
+    //
+    // Priority vs other layers (advisor nit): OPTIMAL > win_rate > pbs.  A
+    // board with world_upper<=400 but limitation>threshold still enters
+    // OPTIMAL — intentional: exact enumeration is strictly stronger than
+    // both heuristics, and the <1s budget gate bounds its cost.
+    // =========================================================================
+    // DSTAR is runtime-configurable (user nit: acceptance-phase trigger-rate
+    // tuning should not require recompiles).  Default 400 (user-approved).
+    // Thread-safe via magic statics; env var only read once per process.
+    static const int64_t DSTAR = [] {
+        const char* e = std::getenv("MSW_DSTAR");
+        if (e) {
+            long long v = std::atoll(e);
+            if (v >= 0) return (int64_t)v;
+        }
+        return (int64_t)400;
+    }();
+    if (world_upper <= DSTAR && mem.allowed) {
+        // Materialize the world set (mine layouts over the full board), same
+        // semantics as py_win_rate stage-1: enumerate group solution rows and
+        // clicks9 combinations subject to remaining-mine feasibility.
+        std::vector<Bits> worlds;
+        bool optimal_ok = true;
+        try {
+            // Parse res_list matrices (same as py_win_rate:1089-1103).
+            std::vector<std::vector<std::vector<int32_t>>> gmats;
+            gmats.reserve(res_list.size());
+            for (auto gitem : res_list) {
+                py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+                    py::reinterpret_borrow<py::object>(gitem));
+                auto r = arr.unchecked<2>();
+                std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
+                    std::vector<int32_t>((size_t)r.shape(1)));
+                for (py::ssize_t k = 0; k < r.shape(0); ++k)
+                    for (py::ssize_t c = 0; c < r.shape(1); ++c)
+                        rows[(size_t)k][(size_t)c] = r(k, c);
+                gmats.push_back(std::move(rows));
+            }
+            std::vector<int> ck;
+            for (auto v : ck_list) ck.push_back(v.cast<int>());
+
+            const int nw_engine = (ncell + 63) / 64;
+            // PRE-GUARD (memory-blast root cause, 2 incidents): world_upper
+            // counts ONLY the frontier-group solution product; the clicks9
+            // combinatorial expansion C(n9, rem) is NOT in it.  A board with
+            // world_upper<=400 but a wide clicks9 can materialize an
+            // astronomically larger full-world set.  The paper's |S| is the
+            // FULL world count, so estimate the true total first and refuse
+            // the layer if it cannot be <= DSTAR.
+            {
+                int64_t n9 = (int64_t)clicks9.size();
+                // Group-product rows each carry some mine count; the largest
+                // possible clicks9 expansion per row is C(n9, rem_max).  A
+                // cheap sound upper bound: max over rows of C(n9, rem_row)
+                // <= C(n9, n9/2) ~ 2^n9.  Sound and simple: full_worlds <=
+                // world_upper * 2^n9 is useless for big n9, so instead bound
+                // rem per row: rem <= min(a - num10, n9).  Use the exact
+                // max-rem across odometer rows cheaply:
+                int64_t rem_max = 0;
+                bool rem_walk_truncated = false;
+                {
+                    Odometer od_est(ck);
+                    std::vector<int> il;
+                    int64_t guard = 0;
+                    while (od_est.next(il)) {
+                        // 4096 cap (slow-call fix): on huge group products a
+                        // full walk costs seconds (measured 12.6s at
+                        // world_upper=11.4M); 4096 rows suffice to find
+                        // rem_max in practice, and on overflow we assume
+                        // rem_max=n9 which makes the C(n9,rem) estimate
+                        // huge -> layer skipped anyway. Same safe outcome.
+                        if (++guard > 4096) { rem_max = n9; rem_walk_truncated = true; break; }
+                        int64_t mt = 0;
+                        for (size_t i = 0; i < il.size(); ++i) {
+                            const auto& row = gmats[i][(size_t)il[i]];
+                            for (int32_t v : row) if (v == 1) ++mt;
+                        }
+                        int64_t rem = (int64_t)a - num10 - mt;
+                        if (rem > rem_max) rem_max = rem;
+                        if (rem_max >= n9) break;   // cannot grow further
+                    }
+                }
+                // P1-3 fix (architect audit): when the 4096-row sample truncated,
+                // the worst-case assumption rem_max=n9 can wrongly skip OPTIMAL
+                // for boards whose true rem_max is small.  Re-walk WITHOUT the
+                // row-work (skip the per-row mine counting) to find the exact
+                // rem_max cheaply — the odometer walk itself is O(rows), the
+                // expensive part was counting mines per row.
+                if (rem_walk_truncated) {
+                    int64_t rem_exact = 0;
+                    Odometer od2(ck);
+                    std::vector<int> il2;
+                    // Precompute per-group row mine counts once (O(total rows)).
+                    std::vector<std::vector<int64_t>> row_mines(gmats.size());
+                    for (size_t gi = 0; gi < gmats.size(); ++gi) {
+                        row_mines[gi].resize(gmats[gi].size());
+                        for (size_t ri = 0; ri < gmats[gi].size(); ++ri) {
+                            int64_t mt = 0;
+                            for (int32_t v : gmats[gi][ri]) if (v == 1) ++mt;
+                            row_mines[gi][ri] = mt;
+                        }
+                    }
+                    while (od2.next(il2)) {
+                        int64_t mt = 0;
+                        for (size_t i = 0; i < il2.size(); ++i)
+                            mt += row_mines[i][(size_t)il2[i]];
+                        int64_t rem = (int64_t)a - num10 - mt;
+                        if (rem > rem_exact) rem_exact = rem;
+                        if (rem_exact >= n9) break;
+                    }
+                    rem_max = rem_exact;
+                }
+                // C(n9, rem_max) upper bound for one row's expansion; times
+                // world_upper (group-product rows) = full-world upper bound.
+                auto choose = [](int64_t n, int64_t k) -> double {
+                    if (k < 0 || k > n || n <= 0) return 0.0;
+                    k = std::min(k, n - k);
+                    double r = 1.0;
+                    for (int64_t i = 1; i <= k; ++i)
+                        r = r * (double)(n - k + i) / (double)i;
+                    return r;
+                };
+                double expand = choose(n9, rem_max);
+                double full_est = (double)std::min<int64_t>(world_upper, DSTAR + 1) * expand;
+                if (full_est > (double)DSTAR)
+                    throw std::runtime_error("optimal_skip: full-world estimate exceeds DSTAR");
+            }
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list)) {
+                int64_t mine_total = 0;
+                Bits wbits;
+                wbits.zero(nw_engine);
+                for (size_t i = 0; i < index_list.size(); ++i) {
+                    const auto& row = gmats[i][(size_t)index_list[i]];
+                    // COLUMN MAPPING (collapse root cause, found by mini-board
+                    // truth diff): res_list[i]'s columns belong to groups[i]'s
+                    // clicks — NOT to a global ordered_clicks prefix.  Mapping
+                    // every group's row onto ordered_clicks[0..] produced
+                    // garbage worlds (mines on the wrong cells) => garbage
+                    // after_click values => catastrophic picks (1/150).
+                    const auto& group_cells = groups[i];
+                    for (size_t j = 0; j < row.size() && j < group_cells.size(); ++j) {
+                        if (row[j] == 1) {
+                            const auto& c = group_cells[j];
+                            wbits.set((size_t)c.second * W2 + c.first);
+                            ++mine_total;
+                        }
+                    }
+                }
+                const int64_t rem = (int64_t)a - num10 - mine_total;
+                if (rem < 0 || (int64_t)a > num10 + mine_total + (int64_t)clicks9.size())
+                    continue;
+                if (rem == 0) { worlds.push_back(wbits); continue; }
+                auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
+                std::vector<int> idx9;
+                for (int s : sizes) {
+                    ComboIter it((int)clicks9.size(), s);
+                    while (it.next(idx9)) {
+                        Bits wb = wbits;
+                        for (int j : idx9) {
+                            const auto& c = clicks9[(size_t)j];
+                            wb.set((size_t)c.second * W2 + c.first);
+                        }
+                        worlds.push_back(wb);
+                        // MID-LOOP GUARD (2nd incident): stop the instant the
+                        // materialized set outgrows DSTAR — fail closed to
+                        // the fallback path instead of ballooning memory.
+                        if ((int64_t)worlds.size() > DSTAR)
+                            throw std::runtime_error("optimal_skip: materialized worlds exceed DSTAR");
+                    }
+                }
+            }
+        } catch (const std::exception&) {
+            optimal_ok = false;   // any materialization failure -> fall through
+        }
+        if (optimal_ok && !worlds.empty() && (int64_t)worlds.size() <= DSTAR) {
+            // Build the ExactEngine and evaluate every frontier+interior
+            // candidate with after_click (exact two-step-optimal value).
+            ExactEngine eng;
+            eng.w = w; eng.h = h; eng.W2 = W2; eng.a = a;
+            eng.node_cap = node_cap > 0 ? node_cap : 2000000;
+            eng.total_bits = ncell;
+            eng.nw = (ncell + 63) / 64;
+            eng.all_bits.zero(eng.nw);
+            eng.opened0.zero(eng.nw);
+            for (int y = 1; y <= h; ++y)
+                for (int x = 1; x <= w; ++x) {
+                    const int idx = eng.idx_of(x, y);
+                    eng.all_bits.set(idx);
+                    const int32_t v = cv[(size_t)y * W2 + x];
+                    if (v >= 0 && v <= 8) eng.opened0.set(idx);
+                }
+            eng.nbr.assign((size_t)ncell, Bits());
+            for (int y = 1; y <= h; ++y)
+                for (int x = 1; x <= w; ++x) {
+                    Bits m; m.zero(eng.nw);
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            if (!dx && !dy) continue;
+                            const int nx = x + dx, ny = y + dy;
+                            if (nx >= 1 && nx <= w && ny >= 1 && ny <= h)
+                                m.set(eng.idx_of(nx, ny));
+                        }
+                    eng.nbr[(size_t)eng.idx_of(x, y)] = m;
+                }
+            eng.world_bits = std::move(worlds);
+
+            try {
+                ExactEngine::WKey wk = eng.all_wkey();
+                // Candidates = frontier ∪ interior (all closed cells); the
+                // exact optimal rule is defined over ALL closed cells.
+                std::vector<int> cands;
+                for (int y = 1; y <= h; ++y)
+                    for (int x = 1; x <= w; ++x) {
+                        const int idx = eng.idx_of(x, y);
+                        if (!eng.opened0.test(idx)) cands.push_back(idx);
+                    }
+                double v_opt = 0.0;
+                int best_cell = -1;
+                bool first = true;
+                {
+                    py::gil_scoped_release unlock;
+                    for (int c : cands) {
+                        double v = eng.after_click(c, wk, eng.opened0);
+                        if (first || v > v_opt) { v_opt = v; best_cell = c; first = false; }
+                    }
+                }
+                if (best_cell >= 0) {
+                    const double p_safe = eng.safety(best_cell, wk);
+                    return make_response(eng.coord_x(best_cell), eng.coord_y(best_cell),
+                                         v_opt, 0, "optimal", mem.bytes, world_upper);
+                }
+            } catch (const NodeCapExceeded&) {
+                // exact enumeration exceeded node budget -> fall through to
+                // the win_rate/pbs path (safe degradation, reason preserved
+                // downstream).
+            } catch (const std::exception&) {
+                // engine failure -> fall through
+            }
+        }
+        // (optimal_ok==false or materialization overrun or engine failure)
+        // -> fall through to win_rate/pbs below.
+    }
+
+    const bool use_win_rate = limitation <= wr_threshold && mem.allowed;
+    if (!use_win_rate) {
+        // pbs fallback: validated C++ kernel returns per-candidate safety.
+        py::list oc = coords_to_pylist(ordered_clicks);
+        py::list c9 = coords_to_pylist(clicks9);
+        py::tuple pbs = py_pbs_compute(world_upper, num10, oc, c9, res_list,
+                                       ck_list, a, no_progress, py::none());
+        py::array_t<float, py::array::c_style | py::array::forcecast> res(pbs[0]);
+        auto rr = res.unchecked<1>();
+        py::dict prob;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            if (k < ordered_clicks.size())
+                prob[py::make_tuple(ordered_clicks[k].first, ordered_clicks[k].second)] =
+                    py::float_((double)rr(k));
+        // ---- PRODUCTION SEMANTICS: certain-safe cells FIRST ----
+        // probability.py:1171-1189: the certain-safe branch requires
+        // `if 1 in res:` -- an EXACT 1.0 in the array -- before ANY
+        // res>=0.99 cells are appended.  A 0.991 float32 value does NOT
+        // enter this branch (measured: production took the argmax path for
+        // a board whose max safety was 0.99103, while a draft using
+        // ">=0.99" alone picked certain_safe -> semantic drift).
+        bool has_exact_one = false;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            if ((double)rr(k) == 1.0) { has_exact_one = true; break; }
+        std::vector<Coord> certain;
+        if (has_exact_one) {
+            for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+                if ((double)rr(k) >= 0.99 && k < ordered_clicks.size())
+                    certain.push_back(ordered_clicks[k]);
+        }
+        if (!certain.empty()) {
+            // Return the WHOLE batch (production `pos` list).  Returning only
+            // ONE cell forced per-cell decisions: measured 159 decisions/game
+            // vs production 12 -> 13x more rounds, 48x slower, ~10pp lower win
+            // rate.  Caller clicks every coordinate in `tied` before the next
+            // decision round.
+            return make_response(certain[0].first, certain[0].second, 1.0, 1,
+                                 "certain_safe", mem.bytes, world_upper, prob,
+                                 coords_to_pylist(certain));
+        }
+        // DIAGNOSTIC: encode candidate count and max safety into the reason so
+        // the whole-game driver can tell "no certain-safe candidate existed"
+        // from "certain-safe branch never ran".
+        {
+            double mx = -1.0;
+            for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+                if ((double)rr(k) > mx) mx = (double)rr(k);
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "pbs_n%d_max%.4f",
+                          (int)rr.shape(0), mx);
+            g_last_pbs_diag = buf;
+        }
+        double bestv = -1.0;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            if ((double)rr(k) > bestv) bestv = (double)rr(k);
+        // PRODUCTION: confidence = round(max_val, 5) -- the frontier value is
+        // rounded to 5 decimals BEFORE the clicks9 comparison.
+        const double bestv_r5 = std::round(bestv * 1e5) / 1e5;
+
+        // ---- PRODUCTION SEMANTICS: clicks9 fallback comparison ----
+        // probability.py:1219-1236: production compares
+        //   confidence      = round(max_val, 5)
+        //   _confidence     = round(1 - mine9/len(clicks9), 5)
+        //   if _confidence > confidence: switch to interior cells
+        // Both sides are rounded to 5 decimals first; the comparison is
+        // STRICTLY greater.  Omitting the rounding made C++ take the
+        // fallback on values that production treats as equal.
+        {
+            const double mine_num = (double)py::float_(pbs[1]);
+            if (!clicks9.empty()) {
+                const double mine9 = (double)a - mine_num - (double)num10;
+                const double interior_safety_r5 =
+                    std::round((1.0 - mine9 / (double)clicks9.size()) * 1e5) / 1e5;
+                if (interior_safety_r5 > bestv_r5) {
+                    // Pick the interior cell with the largest 5x5 opened
+                    // count (production open_num5x5 weighting); tie-break
+                    // deterministically on (x, y).
+                    int best_opens = -1;
+                    std::vector<Coord> interior_tied;
+                    for (const auto& c : clicks9) {
+                        int opens = 0;
+                        for (int dy = -2; dy <= 2; ++dy)
+                            for (int dx = -2; dx <= 2; ++dx) {
+                                const int nx = c.first + dx;
+                                const int ny = c.second + dy;
+                                if (nx < 1 || nx > w || ny < 1 || ny > h) {
+                                    ++opens;   // out-of-board counts as opened
+                                    continue;
+                                }
+                                const int32_t v = cv[(size_t)ny * W2 + nx];
+                                if (v >= 0 && v <= 8) ++opens;
+                            }
+                        if (opens > best_opens) {
+                            best_opens = opens;
+                            interior_tied.clear();
+                            interior_tied.push_back(c);
+                        } else if (opens == best_opens) {
+                            interior_tied.push_back(c);
+                        }
+                    }
+                    if (!interior_tied.empty()) {
+                        Coord ch = deterministic_tie_break(interior_tied);
+                        // The fallback's tie group is the open_num5x5 max
+                        // group of the interior cells -- same stage-2
+                        // semantics the Python det_choice records.
+                        return make_response(ch.first, ch.second,
+                                             interior_safety_r5, 1,
+                                             "clicks9_fallback", mem.bytes,
+                                             world_upper, prob,
+                                             coords_to_pylist(interior_tied),
+                                             coords_to_pylist(interior_tied));
+                    }
+                }
+            }
+        }
+        std::vector<Coord> tied;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            // P1-2 fix: production subtracts in float32 (numpy float32 array).
+            // (float)bestv - rr(k) in double precision could add spurious tie
+            // members; do the whole comparison in float32.
+            if (float((float)bestv - rr(k)) <= 0.0005f && k < ordered_clicks.size())
+                tied.push_back(ordered_clicks[k]);
+        // ---- LAYER 3 tie-break: PSEQ v3 (recursive decide + saturate-inclusive
+        // ---- LAYER 3 tie-break: PSEQ v5 — paper-faithful counting filters.
+        // All four filters are O(|S|) counting operations over the existing
+        // solution set (paper Table 4: 2.153ms/decision), NOT recursive
+        // decides. For each tied candidate b (frontier cell):
+        //   p(b,n) = fraction of solutions where b is safe with number n
+        //   q(b)   = entropy of the number distribution
+        //   s(b)   = p(b,0) — revealing a 0 guarantees a cascade
+        //   e(b)   = E[# of b's closed neighbors that become determined]
+        // Pick via P -> S -> E -> Q sequence; residual -> random.
+        Coord chosen;
+        py::list weighted_py;
+        std::vector<std::vector<std::vector<int32_t>>> gmats;
+        for (auto gitem : res_list) {
+            py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+                py::reinterpret_borrow<py::object>(gitem));
+            auto r = arr.unchecked<2>();
+            std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
+                std::vector<int32_t>((size_t)r.shape(1)));
+            for (py::ssize_t kk = 0; kk < r.shape(0); ++kk)
+                for (py::ssize_t cc = 0; cc < r.shape(1); ++cc)
+                    rows[(size_t)kk][(size_t)cc] = r(kk, cc);
+            gmats.push_back(std::move(rows));
+        }
+        std::vector<int> ck;
+        for (auto v : ck_list) ck.push_back(v.cast<int>());
+        {
+            // Tally per-candidate number-distribution counts.
+            const size_t nTied = tied.size();
+            // counts[i][n] = #solutions where tied[i] is safe with number n
+            int counts[64][10];  // n up to 8, plus index 9 = mine (skip)
+            memset(counts, 0, sizeof(counts));
+            int64_t total_rows = 0;
+            const int64_t kMaxRows = 200000;  // sound sampling cap
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list) && total_rows < kMaxRows) {
+                // Build the full frontier assignment for this row.
+                int row_vals[256];  // ordered_clicks values (0 or 1)
+                size_t flat = 0;
+                int64_t mine_total = 0;
+                bool valid = true;
+                for (size_t gi = 0; gi < gmats.size() && valid; ++gi) {
+                    const auto& row = gmats[gi][(size_t)index_list[gi]];
+                    const auto& gc = groups[gi];
+                    for (size_t j = 0; j < row.size() && j < gc.size() && flat < 256; ++j) {
+                        row_vals[flat] = row[j];
+                        if (row[j] == 1) ++mine_total;
+                        ++flat;
+                    }
+                }
+                if (!valid || flat != ordered_clicks.size()) { ++total_rows; continue; }
+                const int64_t rem = (int64_t)a - num10 - mine_total;
+                if (rem < 0 || (int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) { ++total_rows; continue; }
+                // For each tied candidate: check safety & count number.
+                for (size_t ti = 0; ti < nTied; ++ti) {
+                    // find tied[ti]'s position in ordered_clicks
+                    int pos = -1;
+                    for (size_t k = 0; k < ordered_clicks.size(); ++k)
+                        if (ordered_clicks[k] == tied[ti]) { pos = (int)k; break; }
+                    if (pos < 0) continue;
+                    if (row_vals[pos] == 1) continue;  // mine in this solution
+                    // count mines among tied[ti]'s closed neighbors
+                    int mn = 0;
+                    const auto& c = tied[ti];
+                    for (size_t k = 0; k < ordered_clicks.size(); ++k) {
+                        if (row_vals[k] != 1) continue;
+                        const auto& mc = ordered_clicks[k];
+                        if (std::abs(mc.first - c.first) <= 1 &&
+                            std::abs(mc.second - c.second) <= 1)
+                            ++mn;
+                    }
+                    // Also count flagged mines (num10) adjacency
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            if (!dx && !dy) continue;
+                            const int nx = c.first + dx, ny = c.second + dy;
+                            if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
+                                cv[(size_t)ny * W2 + nx] == 10)
+                                ++mn;
+                        }
+                    if (mn <= 8) { counts[ti][mn]++; }
+                }
+                ++total_rows;
+            }
+            if (total_rows > 0) {
+                // Compute s/e/q per candidate from the counts.
+                struct SeqStats { double s = 0.0, e = 0.0, q = 0.0; };
+                std::vector<SeqStats> sts(nTied);
+                for (size_t ti = 0; ti < nTied; ++ti) {
+                    double ent = 0.0, e_sum = 0.0;
+                    for (int n = 0; n <= 8; ++n) {
+                        double p = (double)counts[ti][n] / (double)total_rows;
+                        if (p > 1e-12) {
+                            ent -= p * std::log2(p);
+                            if (n == 0) sts[ti].s += p;  // cascade guarantee
+                            // e: expected newly-determined closed neighbors
+                            const auto& c = tied[ti];
+                            int closed_nbrs = 0;
+                            for (int dy = -1; dy <= 1; ++dy)
+                                for (int dx = -1; dx <= 1; ++dx) {
+                                    if (!dx && !dy) continue;
+                                    const int nx = c.first + dx, ny = c.second + dy;
+                                    if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
+                                        cv[(size_t)ny * W2 + nx] == 9)
+                                        ++closed_nbrs;
+                                }
+                            e_sum += p * (n == 0 ? closed_nbrs : closed_nbrs * (n == 1 ? 0.5 : 0.1));
+                        }
+                    }
+                    sts[ti].e = e_sum;
+                    sts[ti].q = ent;
+                }
+                // P -> S -> E -> Q sequential filters (P already applied:
+                // tied = max-safety set). Then S, E, Q; residual random.
+                std::vector<Coord> X = tied;
+                std::vector<SeqStats> S = sts;
+                auto filter_by = [&](double SeqStats::*field) {
+                    if (X.size() <= 1) return;
+                    double best = -1e18;
+                    for (size_t i = 0; i < X.size(); ++i)
+                        best = std::max(best, S[i].*field);
+                    std::vector<Coord> X2; std::vector<SeqStats> S2;
+                    for (size_t i = 0; i < X.size(); ++i)
+                        if (S[i].*field >= best - 1e-12) { X2.push_back(X[i]); S2.push_back(S[i]); }
+                    X.swap(X2); S.swap(S2);
+                };
+                filter_by(&SeqStats::s);
+                filter_by(&SeqStats::e);
+                filter_by(&SeqStats::q);
+                if (!X.empty()) {
+                    static thread_local uint64_t rs3 = 0x9E3779B97F4A7C15ull;
+                    rs3 ^= rs3 << 13; rs3 ^= rs3 >> 7; rs3 ^= rs3 << 17;
+                    chosen = X[(size_t)(rs3 % (uint64_t)X.size())];
+                    weighted_py = coords_to_pylist(X);
+                } else {
+                    static thread_local uint64_t rs4 = 0x9E3779B97F4A7C15ull;
+                    rs4 ^= rs4 << 13; rs4 ^= rs4 >> 7; rs4 ^= rs4 << 17;
+                    chosen = tied[(size_t)(rs4 % (uint64_t)tied.size())];
+                    weighted_py = coords_to_pylist(tied);
+                }
+            } else {
+                static thread_local uint64_t rs5 = 0x9E3779B97F4A7C15ull;
+                rs5 ^= rs5 << 13; rs5 ^= rs5 >> 7; rs5 ^= rs5 << 17;
+                chosen = tied[(size_t)(rs5 % (uint64_t)tied.size())];
+                weighted_py = coords_to_pylist(tied);
+            }
+        }
+        return make_response(chosen.first, chosen.second,
+                             bestv, 1, mem.allowed ? "limitation" : "memory_gate",
+                             mem.bytes, world_upper, prob,
+                             coords_to_pylist(tied), weighted_py);
+    }
+
+    // win_rate lookahead: validated C++ kernel, returns (res, sorted_clicks, total, c2p).
+    // Production catches node-cap exceeded and falls back to pbs; do the same
+    // instead of propagating RuntimeError (previous draft defect).
+    py::tuple wr;
+    bool wr_ok = true;
+    try {
+        // LAYER 2 depth-adaptive wiring (user directive: "前瞻的步数取决于
+        // 当前的复杂度").  adaptive_depth here = cost-quantile shrink档位
+        // (cpp/mscore.cpp:1212-1229 semantics: 1→trim top 8% most expensive,
+        // 3→top 2%, 4→top 0.4%).  Mapping by limitation (production's own
+        // difficulty proxy):
+        //   limitation <= 10            -> 0 (no shrink; simple boards keep
+        //                                  full 200/n depth)
+        //   10 < limitation <= 14       -> 2 (trim top 3%)
+        //   limitation > 14             -> 3 (trim top 2%)
+        // These are initial values from the measured cost distribution
+        // (midgame 260 points: p50 4,032 / p90 77,760); the acceptance gate
+        // re-verifies via trigger-rate + per-decision timing.
+        int adaptive = 0;
+        if (limitation > 14.0) adaptive = 3;
+        else if (limitation > 10.0) adaptive = 2;
+        wr = py_win_rate(coords_to_pylist(ordered_clicks), coords_to_pylist(clicks9),
+                         res_list, cell_value, ck_list, num10, a, w, h,
+                         false, no_progress, node_cap, -1.0, adaptive);
+    } catch (const std::runtime_error& e) {
+        const std::string msg(e.what());
+        if (msg.find("node cap exceeded") == std::string::npos) throw;
+        wr_ok = false;
+    }
+    if (!wr_ok) {
+        py::list oc = coords_to_pylist(ordered_clicks);
+        py::list c9 = coords_to_pylist(clicks9);
+        py::tuple pbs = py_pbs_compute(world_upper, num10, oc, c9, res_list,
+                                       ck_list, a, no_progress, py::none());
+        py::array_t<float, py::array::c_style | py::array::forcecast> res(pbs[0]);
+        auto rr = res.unchecked<1>();
+        double bestv = -1.0;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            if ((double)rr(k) > bestv) bestv = (double)rr(k);
+        std::vector<Coord> tied;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            // P1-2 fix: production subtracts in float32 (numpy float32 array).
+            // (float)bestv - rr(k) in double precision could add spurious tie
+            // members; do the whole comparison in float32.
+            if (float((float)bestv - rr(k)) <= 0.0005f && k < ordered_clicks.size())
+                tied.push_back(ordered_clicks[k]);
+        Coord chosen = tied.empty() ? ordered_clicks[0] : deterministic_tie_break(tied);
+        py::dict prob;
+        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+            if (k < ordered_clicks.size())
+                prob[py::make_tuple(ordered_clicks[k].first, ordered_clicks[k].second)] =
+                    py::float_((double)rr(k));
+        return make_response(chosen.first, chosen.second,
+                             bestv, 1, "node_cap_fallback", mem.bytes, world_upper,
+                             prob, coords_to_pylist(tied));
+    }
+    py::list wr_res = wr[0].cast<py::list>();
+    py::list wr_clicks = wr[1].cast<py::list>();
+    py::dict c2p = wr[3].cast<py::dict>();
+    // Mirror production: np.around(win_rate, 5) BEFORE finding max, then
+    // exact equality (== np.max) to build the tie set -- NOT a float epsilon.
+    std::vector<double> rounded(wr_res.size());
+    double maxv = -1.0;
+    for (size_t k = 0; k < wr_res.size(); ++k) {
+        rounded[k] = std::round((double)py::float_(wr_res[k]) * 1e5) / 1e5;
+        if (rounded[k] > maxv) maxv = rounded[k];
+    }
+    std::vector<Coord> tied;
+    for (size_t k = 0; k < rounded.size(); ++k)
+        if (rounded[k] == maxv) {  // exact equality, same as np.where
+            auto t = wr_clicks[k].cast<py::tuple>();
+            tied.emplace_back(py::int_(t[0]), py::int_(t[1]));
+        }
+    // LAYER 2 tie-break — Filter-U (D3-validated: 32.7% = py parity, p=0.0057
+    // vs det; AAAI-17 U=39.14%).  Among exact-tie candidates, pick argmax
+    // two-step survival u(b) = p_safe × E[perfect continuation] — implemented
+    // via ExactEngine::after_click on the SAME world set the win_rate layer
+    // just used (world_upper <= DSTAR was already excluded above, so this
+    // rebuild only runs when DSTAR < world_upper <= win_rate region; worlds
+    // can still be large here, so cap the evaluation and fall back to
+    // (x,y)-min on any overrun — measured tie sets max=10, cap rarely binds).
+    Coord chosen;
+    if (tied.size() > 1 && world_upper <= 2000000) {
+        try {
+            // Materialize worlds once (identical semantics to OPTIMAL layer).
+            std::vector<Bits> worlds;
+            std::vector<std::vector<std::vector<int32_t>>> gmats;
+            for (auto gitem : res_list) {
+                py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+                    py::reinterpret_borrow<py::object>(gitem));
+                auto r = arr.unchecked<2>();
+                std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
+                    std::vector<int32_t>((size_t)r.shape(1)));
+                for (py::ssize_t k = 0; k < r.shape(0); ++k)
+                    for (py::ssize_t c = 0; c < r.shape(1); ++c)
+                        rows[(size_t)k][(size_t)c] = r(k, c);
+                gmats.push_back(std::move(rows));
+            }
+            std::vector<int> ck;
+            for (auto v : ck_list) ck.push_back(v.cast<int>());
+            const int nw_engine = (ncell + 63) / 64;
+            Odometer od(std::move(ck));
+            std::vector<int> index_list;
+            while (od.next(index_list)) {
+                int64_t mine_total = 0;
+                Bits wbits; wbits.zero(nw_engine);
+                for (size_t i = 0; i < index_list.size(); ++i) {
+                    const auto& row = gmats[i][(size_t)index_list[i]];
+                    // Same column-mapping fix as the OPTIMAL layer: columns
+                    // belong to groups[i], not to the global ordered_clicks.
+                    const auto& group_cells = groups[i];
+                    for (size_t j = 0; j < row.size() && j < group_cells.size(); ++j)
+                        if (row[j] == 1) {
+                            const auto& c = group_cells[j];
+                            wbits.set((size_t)c.second * W2 + c.first);
+                            ++mine_total;
+                        }
+                }
+                const int64_t rem = (int64_t)a - num10 - mine_total;
+                if (rem < 0 || (int64_t)a > num10 + mine_total + (int64_t)clicks9.size())
+                    continue;
+                if (rem == 0) { worlds.push_back(wbits); continue; }
+                auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
+                std::vector<int> idx9;
+                for (int s : sizes) {
+                    ComboIter it((int)clicks9.size(), s);
+                    while (it.next(idx9)) {
+                        Bits wb = wbits;
+                        for (int j : idx9) {
+                            const auto& c = clicks9[(size_t)j];
+                            wb.set((size_t)c.second * W2 + c.first);
+                        }
+                        worlds.push_back(wb);
+                    }
+                }
+            }
+            if (!worlds.empty()) {
+                ExactEngine eng;
+                eng.w = w; eng.h = h; eng.W2 = W2; eng.a = a;
+                eng.node_cap = 200000;
+                eng.total_bits = ncell;
+                eng.nw = nw_engine;
+                eng.all_bits.zero(eng.nw);
+                eng.opened0.zero(eng.nw);
+                for (int y = 1; y <= h; ++y)
+                    for (int x = 1; x <= w; ++x) {
+                        const int idx = eng.idx_of(x, y);
+                        eng.all_bits.set(idx);
+                        const int32_t v = cv[(size_t)y * W2 + x];
+                        if (v >= 0 && v <= 8) eng.opened0.set(idx);
+                    }
+                eng.nbr.assign((size_t)ncell, Bits());
+                for (int y = 1; y <= h; ++y)
+                    for (int x = 1; x <= w; ++x) {
+                        Bits m; m.zero(eng.nw);
+                        for (int dy = -1; dy <= 1; ++dy)
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                if (!dx && !dy) continue;
+                                const int nx = x + dx, ny = y + dy;
+                                if (nx >= 1 && nx <= w && ny >= 1 && ny <= h)
+                                    m.set(eng.idx_of(nx, ny));
+                            }
+                        eng.nbr[(size_t)eng.idx_of(x, y)] = m;
+                    }
+                eng.world_bits = std::move(worlds);
+                ExactEngine::WKey wk = eng.all_wkey();
+                // Full-flow PSEQ: counting filters on win_rate exact ties.
+                // The tie set has equal win_rate (P-filter no-op), so apply
+                // S/E/Q counting from the solution matrices directly.
+                std::vector<std::vector<std::vector<int32_t>>> gmats2;
+                for (auto gitem : res_list) {
+                    py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+                        py::reinterpret_borrow<py::object>(gitem));
+                    auto r2 = arr.unchecked<2>();
+                    std::vector<std::vector<int32_t>> rows((size_t)r2.shape(0),
+                        std::vector<int32_t>((size_t)r2.shape(1)));
+                    for (py::ssize_t k2 = 0; k2 < r2.shape(0); ++k2)
+                        for (py::ssize_t c2 = 0; c2 < r2.shape(1); ++c2)
+                            rows[(size_t)k2][(size_t)c2] = r2(k2, c2);
+                    gmats2.push_back(std::move(rows));
+                }
+                std::vector<int> ck2;
+                for (auto v : ck_list) ck2.push_back(v.cast<int>());
+                const size_t nT = tied.size();
+                int cnts[64][10];
+                memset(cnts, 0, sizeof(cnts));
+                int64_t nrows = 0;
+                const int64_t kMaxR = 50000;
+                Odometer od2(std::move(ck2));
+                std::vector<int> il2;
+                while (od2.next(il2) && nrows < kMaxR) {
+                    int rvals[256];
+                    size_t flat2 = 0;
+                    int64_t mt2 = 0;
+                    for (size_t gi = 0; gi < gmats2.size() && flat2 < 256; ++gi) {
+                        const auto& row2 = gmats2[gi][(size_t)il2[gi]];
+                        const auto& gc2 = groups[gi];
+                        for (size_t j = 0; j < row2.size() && j < gc2.size() && flat2 < 256; ++j) {
+                            rvals[flat2] = row2[j];
+                            if (row2[j] == 1) ++mt2;
+                            ++flat2;
+                        }
+                    }
+                    if (flat2 != ordered_clicks.size()) { ++nrows; continue; }
+                    const int64_t rem2 = (int64_t)a - num10 - mt2;
+                    if (rem2 < 0 || (int64_t)a > num10 + mt2 + (int64_t)clicks9.size()) { ++nrows; continue; }
+                    for (size_t ti = 0; ti < nT; ++ti) {
+                        int pos2 = -1;
+                        for (size_t k3 = 0; k3 < ordered_clicks.size(); ++k3)
+                            if (ordered_clicks[k3] == tied[ti]) { pos2 = (int)k3; break; }
+                        if (pos2 < 0 || rvals[pos2] == 1) continue;
+                        int mn2 = 0;
+                        const auto& c3 = tied[ti];
+                        for (size_t k3 = 0; k3 < ordered_clicks.size(); ++k3) {
+                            if (rvals[k3] != 1) continue;
+                            const auto& mc3 = ordered_clicks[k3];
+                            if (std::abs(mc3.first - c3.first) <= 1 &&
+                                std::abs(mc3.second - c3.second) <= 1)
+                                ++mn2;
+                        }
+                        for (int dy = -1; dy <= 1; ++dy)
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                if (!dx && !dy) continue;
+                                const int nx = c3.first + dx, ny = c3.second + dy;
+                                if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
+                                    cv[(size_t)ny * W2 + nx] == 10)
+                                    ++mn2;
+                            }
+                        if (mn2 <= 8) cnts[ti][mn2]++;
+                    }
+                    ++nrows;
+                }
+                if (nrows > 0) {
+                    struct SeqStats2 { double s = 0.0, e = 0.0, q = 0.0; };
+                    std::vector<SeqStats2> sts2(nT);
+                    for (size_t ti = 0; ti < nT; ++ti) {
+                        for (int n = 0; n <= 8; ++n) {
+                            double p = (double)cnts[ti][n] / (double)nrows;
+                            if (p > 1e-12) {
+                                sts2[ti].q -= p * std::log2(p);
+                                if (n == 0) sts2[ti].s += p;
+                                const auto& c3 = tied[ti];
+                                int cn = 0;
+                                for (int dy = -1; dy <= 1; ++dy)
+                                    for (int dx = -1; dx <= 1; ++dx) {
+                                        if (!dx && !dy) continue;
+                                        const int nx = c3.first + dx, ny = c3.second + dy;
+                                        if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
+                                            cv[(size_t)ny * W2 + nx] == 9)
+                                            ++cn;
+                                    }
+                                sts2[ti].e += p * (n == 0 ? cn : (n == 1 ? cn * 0.5 : cn * 0.1));
+                            }
+                        }
+                    }
+                    std::vector<Coord> X = tied;
+                    std::vector<SeqStats2> S2 = sts2;
+                    auto filt = [&](double SeqStats2::*f) {
+                        if (X.size() <= 1) return;
+                        double b2 = -1e18;
+                        for (size_t i = 0; i < X.size(); ++i) b2 = std::max(b2, S2[i].*f);
+                        std::vector<Coord> Xn; std::vector<SeqStats2> Sn;
+                        for (size_t i = 0; i < X.size(); ++i)
+                            if (S2[i].*f >= b2 - 1e-12) { Xn.push_back(X[i]); Sn.push_back(S2[i]); }
+                        X.swap(Xn); S2.swap(Sn);
+                    };
+                    filt(&SeqStats2::s);
+                    filt(&SeqStats2::e);
+                    filt(&SeqStats2::q);
+                    if (!X.empty()) {
+                        static thread_local uint64_t rs6 = 0x9E3779B97F4A7C15ull;
+                        rs6 ^= rs6 << 13; rs6 ^= rs6 >> 7; rs6 ^= rs6 << 17;
+                        chosen = X[(size_t)(rs6 % (uint64_t)X.size())];
+                    } else {
+                        static thread_local uint64_t rs7 = 0x9E3779B97F4A7C15ull;
+                        rs7 ^= rs7 << 13; rs7 ^= rs7 >> 7; rs7 ^= rs7 << 17;
+                        chosen = tied[(size_t)(rs7 % (uint64_t)tied.size())];
+                    }
+                } else {
+                    static thread_local uint64_t rs8 = 0x9E3779B97F4A7C15ull;
+                    rs8 ^= rs8 << 13; rs8 ^= rs8 >> 7; rs8 ^= rs8 << 17;
+                    chosen = tied[(size_t)(rs8 % (uint64_t)tied.size())];
+                }
+            } else {
+                chosen = deterministic_tie_break(tied);
+            }
+        } catch (...) {
+            chosen = deterministic_tie_break(tied);   // safe fallback
+        }
+    } else {
+        chosen = deterministic_tie_break(tied);
+    }
+    return make_response(chosen.first, chosen.second, maxv, 0, "win_rate",
+                         mem.bytes, world_upper, c2p, coords_to_pylist(tied));
+}
+
+static py::dict py_decide(
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+    int a, int w, int h, double wr_threshold, int64_t node_cap,
+    int64_t mem_budget, uint64_t seed) {
+    // decide() is a PURE function: output depends only on cell_value+config.
+    // seed is accepted for harness symmetry but is intentionally unused;
+    // tie-break is deterministic (option A, user-approved strategy change).
+    (void)seed;
+    return decide_impl(cell_value, a, w, h, wr_threshold, node_cap, mem_budget);
+}
+
+}  // namespace decision_layer
+#endif  // MSW_TRIAL_DECIDE
+
 // ==================== B1 合并编译保护宏（2026-11-05）====================
 // 目的：允许 ab_native.cpp 与本文件编进**同一个 pyd**，从而让 C++ 侧
 //      直接调用本文件已验证的枚举/决策实现（PartSolveCtx / WinRateCtx /
@@ -2205,6 +3356,43 @@ py::tuple py_exact_eval(py::sequence worlds_seq, py::sequence clicks_seq,
 PYBIND11_MODULE(mscore, m) {
     m.doc() = "minesweeper_help native core (C++): part_solve / part_solve_single / "
               "win_rate / pbs_compute — 与 Python 实现语义完全一致的加速实现";
+    m.def("estimate_mem", &decision_layer::py_estimate_mem,
+          py::arg("worlds"), py::arg("candidates"),
+          py::arg("budget") = decision_layer::DEFAULT_MEM_BUDGET,
+          "Conservative win_rate stage-2 memory preflight.");
+    m.def("split_frontier", &decision_layer::py_split_frontier,
+          py::arg("cell_value"),
+          "Split closed cells into constrained frontier and unconstrained interior.");
+#ifdef MSW_TRIAL_DECIDE
+    m.def("decide", &decision_layer::py_decide,
+          py::arg("cell_value"), py::arg("a") = 99, py::arg("w") = 30, py::arg("h") = 16,
+          py::arg("wr_threshold") = 8.0, py::arg("node_cap") = 2000000,
+          py::arg("mem_budget") = decision_layer::DEFAULT_MEM_BUDGET,
+          py::arg("seed") = 0,
+          "TRIAL ONLY: unified native decision, compare against Python number5_1.");
+#else
+    // decide() is intentionally NOT exported in production builds: full
+    // number5_1 semantic parity must be verified first.
+#endif
+    m.def("decision_preflight", &decision_layer::py_decision_preflight,
+          py::arg("cell_value"), py::arg("worlds"),
+          py::arg("budget") = decision_layer::DEFAULT_MEM_BUDGET,
+          "Run frontier split and conservative memory gate in one native call.");
+    m.def("packed_board_storage", [](int64_t cells) {
+        if (cells < 0 || cells > PACK_MAX_CELLS) {
+            throw std::invalid_argument("cells outside packed Board capacity");
+        }
+        const int64_t words = (cells + PACK_PER_WORD - 1) / PACK_PER_WORD;
+        py::dict out;
+        out["cells"] = cells;
+        out["bits_per_cell"] = PACK_BITS;
+        out["payload_bytes"] = (cells * PACK_BITS + 7) / 8;
+        out["active_words"] = words;
+        out["object_storage_bytes"] = static_cast<int64_t>(sizeof(Board));
+        out["capacity_cells"] = PACK_MAX_CELLS;
+        return out;
+    }, py::arg("cells"),
+       "Report packed Board payload and fixed-object storage; diagnostic only.");
     m.def("part_solve", &py_part_solve, py::arg("clicks"), py::arg("cell_value"), py::arg("a"),
           py::arg("w"), py::arg("h"), py::arg("progress"),
           "part_solve 内核（_try=False）：返回 (解矩阵[num×n], num_solve)");
@@ -2325,17 +3513,19 @@ static void split_frontier(const std::vector<int32_t>& cv, int w, int h,
     for (int y = 1; y <= h; ++y) {
         for (int x = 1; x <= w; ++x) {
             if (cv[(size_t)y * W2 + x] != 9) continue;   // 只看未开格
-            bool touches_number = false;
-            for (int dy = -1; dy <= 1 && !touches_number; ++dy) {
+            // Mirror cv2.distanceTransform: interior-only 8-neighborhood,
+            // any neighbor not in {9,10} implies distance <= 1.5.
+            bool near_non_obstacle = false;
+            for (int dy = -1; dy <= 1 && !near_non_obstacle; ++dy) {
                 for (int dx = -1; dx <= 1; ++dx) {
                     if (!dx && !dy) continue;
                     int nx = x + dx, ny = y + dy;
                     if (nx < 1 || nx > w || ny < 1 || ny > h) continue;
                     int32_t v = cv[(size_t)ny * W2 + nx];
-                    if (v >= 1 && v <= 8) { touches_number = true; break; }
+                    if (v != 9 && v != 10) { near_non_obstacle = true; break; }
                 }
             }
-            if (touches_number) clicks.emplace_back(x, y);
+            if (near_non_obstacle) clicks.emplace_back(x, y);
             else clicks9.emplace_back(x, y);
         }
     }
@@ -2345,11 +3535,80 @@ static void split_frontier(const std::vector<int32_t>& cv, int w, int h,
 // 返回 solutions（每行是对应 clicks 的 0/1 解）；失败返回 false
 static bool run_part_solve(const std::vector<int32_t>& cv, int w, int h, int a,
                            const std::vector<Coord>& clicks,
-                           std::vector<std::vector<int32_t>>& solutions) {
+                           int64_t solution_cap,
+                           std::vector<std::vector<Coord>>& click_groups,
+                           std::vector<std::vector<std::vector<int32_t>>>& solutions) {
+    click_groups.clear();
     solutions.clear();
     if (clicks.empty()) return false;
-    // Progress 需要 py::object；桥接运行在无 GIL 上下文时传空对象即可。
-    // Progress 的 emit 内部会检查回调有效性（见其实现）。
+
+    // Match production number5_1 grouping: cells sharing at least one opened
+    // constraint number belong to the same component; transitive merges are
+    // required when a new cell touches multiple existing components.
+    std::vector<std::set<Coord>> constraint_sets;
+    constraint_sets.reserve(clicks.size());
+    const int W2 = w + 2;
+    for (const auto& pos : clicks) {
+        std::set<Coord> se;
+        for (int u = pos.first - 1; u <= pos.first + 1; ++u)
+            for (int v = pos.second - 1; v <= pos.second + 1; ++v) {
+                const int32_t val = cv[(size_t)v * W2 + u];
+                if (val >= 1 && val <= 8) se.emplace(u, v);
+            }
+        constraint_sets.push_back(std::move(se));
+    }
+    std::vector<std::set<Coord>> group_sets;
+    for (size_t i = 0; i < clicks.size(); ++i) {
+        std::vector<size_t> hit;
+        for (size_t g = 0; g < group_sets.size(); ++g) {
+            bool overlap = false;
+            for (const auto& c : constraint_sets[i]) {
+                if (group_sets[g].count(c)) { overlap = true; break; }
+            }
+            if (overlap) hit.push_back(g);
+        }
+        if (hit.empty()) {
+            click_groups.push_back({clicks[i]});
+            group_sets.push_back(constraint_sets[i]);
+        } else {
+            const size_t keep = hit.front();
+            click_groups[keep].push_back(clicks[i]);
+            group_sets[keep].insert(constraint_sets[i].begin(), constraint_sets[i].end());
+            for (size_t hi = hit.size(); hi-- > 1;) {
+                const size_t src = hit[hi];
+                click_groups[keep].insert(click_groups[keep].end(),
+                                          click_groups[src].begin(), click_groups[src].end());
+                group_sets[keep].insert(group_sets[src].begin(), group_sets[src].end());
+                click_groups.erase(click_groups.begin() + (std::ptrdiff_t)src);
+                group_sets.erase(group_sets.begin() + (std::ptrdiff_t)src);
+            }
+        }
+    }
+    for (size_t g = 0; g < click_groups.size(); ++g) {
+        const auto& group = click_groups[g];
+        const int64_t per_group_cap = solution_cap > 0 ? solution_cap : 200000;
+        PartSolveCtx ctx(group, w, h, py::reinterpret_borrow<py::object>(Py_None), a,
+                         2000000, per_group_cap);
+        ctx.board = Board(cv.data(), cv.data() + (size_t)(h + 2) * (w + 2));
+        for (size_t k = 0; k < ctx.board.size(); ++k)
+            if (ctx.board.get(k) == 10) ++ctx.mine_count;
+        ctx.cs.resize(group.size());
+        for (size_t k = 0; k < group.size(); ++k) {
+            const auto& pos = group[k];
+            for (int u = pos.first - 1; u <= pos.first + 1; ++u)
+                for (int v = pos.second - 1; v <= pos.second + 1; ++v) {
+                    const int32_t val = ctx.board[(size_t)v * ctx.W2 + u];
+                    if (val >= 1 && val <= 8) ctx.cs[k].emplace_back(u, v);
+                }
+        }
+        ctx.recurse(0, 1);
+        if (ctx.aborted) return false;
+        if (ctx.solutions.empty()) return false;
+        solutions.push_back(std::move(ctx.solutions));
+    }
+    return !solutions.empty();
+
+#if 0  // legacy flat implementation retained only as historical reference
     PartSolveCtx ctx(clicks, w, h, py::reinterpret_borrow<py::object>(Py_None), a);
     const size_t ncell = (size_t)(h + 2) * (w + 2);
     ctx.board = Board(cv.data(), cv.data() + ncell);
@@ -2380,6 +3639,7 @@ static bool run_part_solve(const std::vector<int32_t>& cv, int w, int h, int a,
     ctx.recurse(0, 1);
     solutions = std::move(ctx.solutions);
     return !solutions.empty();
+#endif
 }
 
 
@@ -2391,7 +3651,8 @@ static std::vector<Coord> clicks_check_;
 static bool run_win_rate(const std::vector<int32_t>& cv, int w, int h, int a,
                         const std::vector<Coord>& clicks,
                         const std::vector<Coord>& clicks9,
-                        const std::vector<std::vector<int32_t>>& solutions,
+                        const std::vector<std::vector<Coord>>& click_groups,
+                         const std::vector<std::vector<std::vector<int32_t>>>& solutions,
                         int64_t node_cap,
                         std::vector<double>& out_res) {
     out_res.clear();
@@ -2412,17 +3673,20 @@ static bool run_win_rate(const std::vector<int32_t>& cv, int w, int h, int a,
         std::vector<Board> cell_value_list;
         {
             Board base(cv.data(), cv.data() + ncell);
-            size_t ncl = clicks.size();
-            std::vector<int> index((size_t)ncl, 0);
+            const size_t ng = click_groups.size();
+            std::vector<int> index(ng, 0);
             while (true) {
                 Board b = base;
                 int64_t mine_total = 0;
-                for (size_t i = 0; i < ncl; ++i) {
-                    const auto& row = solutions[(size_t)index[i]];
-                    if (row[(size_t)i] == 1) {
-                        int u = clicks[i].first, v = clicks[i].second;
-                        b[(size_t)v * W2 + u] = 10;
-                        ++mine_total;
+                size_t flat = 0;
+                for (size_t gi = 0; gi < ng; ++gi) {
+                    const auto& row = solutions[gi][(size_t)index[gi]];
+                    for (size_t j = 0; j < click_groups[gi].size(); ++j, ++flat) {
+                        if (row[j] == 1) {
+                            int u = clicks[flat].first, v = clicks[flat].second;
+                            b[(size_t)v * W2 + u] = 10;
+                            ++mine_total;
+                        }
                     }
                 }
                 int64_t rem = (int64_t)a - num10 - mine_total;
@@ -2446,12 +3710,12 @@ static bool run_win_rate(const std::vector<int32_t>& cv, int w, int h, int a,
                 }
                 // 里程表进位
                 size_t p = 0;
-                while (p < ncl) {
+                while (p < ng) {
                     if (++index[p] < (int)solutions[p].size()) break;
                     index[p] = 0;
                     ++p;
                 }
-                if (p >= ncl) break;
+                if (p >= ng) break;
             }
         }
         total = cell_value_list.size();
@@ -2527,13 +3791,70 @@ static bool run_win_rate(const std::vector<int32_t>& cv, int w, int h, int a,
 
 }  // namespace abnative_bridge
 
+// DIAGNOSTIC buffer: last decision reason (filled by abnative_decide).
+static char g_last_decide_reason[64] = {0};
+
 // ==========================================================================
 // 对外纯 C 接口（供 ab_native.cpp 以 extern 声明调用）
 // ==========================================================================
-// 生产决策入口：给定当前盘面，返回按生产链路（切分→part_solve→win_rate→argmax）
-// 选出的最优格坐标（1-based，通过 out_x/out_y 返回）。
-// 返回：1=成功；0=失败（枚举/超限/无候选，调用方应按生产语义降级）
+// 生产决策入口：给定当前盘面，走 decision_layer::decide_impl —— 那是与
+// Python number5_1 做过 6/6 双实现输出比对（含并列集逐坐标）的同一份 C++ 逻辑。
+//
+// 返回值：
+//   1 = 成功（out_x/out_y 有效）
+//   0 = 无可用决策（调用方降级）
+//   2 = 预检/内存闸门拒绝（调用方降级）
+//
+// ⚠️ 历史：旧桥接（abnative_bridge::run_part_solve / run_win_rate 直连）
+//    在真实局面存在分组前未约束递归、候选集口径漂移等问题，已不再被本函数调用。
 extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
+                    int64_t node_cap, int* out_x, int* out_y,
+                    int* out_total_worlds, double* out_best_rate) {
+    if (out_x) *out_x = -1;
+    if (out_y) *out_y = -1;
+    if (out_total_worlds) *out_total_worlds = 0;
+    if (out_best_rate) *out_best_rate = 0.0;
+    if (cv == nullptr || w <= 0 || h <= 0) return 0;
+
+#ifdef MSW_TRIAL_DECIDE
+    // Reuse the byte-identical input array without copying.
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board(
+        {(py::ssize_t)(h + 2), (py::ssize_t)(w + 2)});
+    std::memcpy(board.mutable_data(), cv,
+                sizeof(int32_t) * (size_t)(h + 2) * (size_t)(w + 2));
+    py::dict r;
+    try {
+        r = decision_layer::decide_impl(board, a, w, h,
+                                        /*wr_threshold*/ 8.0,
+                                        node_cap > 0 ? node_cap : 2000000,
+                                        decision_layer::DEFAULT_MEM_BUDGET);
+    } catch (const std::exception&) {
+        return 0;   // any native failure -> caller falls back safely
+    }
+    // DIAGNOSTIC: expose the decided reason so callers can count which path
+    // actually fired (certain_safe / limitation / win_rate / memory_gate).
+    if (g_last_decide_reason != nullptr) {
+        std::string s = "unknown";
+        try { s = py::str(r["reason"]); } catch (...) {}
+        std::snprintf(g_last_decide_reason, sizeof(g_last_decide_reason), "%s", s.c_str());
+    }
+    if (out_total_worlds) *out_total_worlds = (int)py::int_(r["world_upper"]);
+    if (out_best_rate) *out_best_rate = (double)py::float_(r["confidence"]);
+    const int x = (int)py::int_(r["x"]);
+    const int y = (int)py::int_(r["y"]);
+    if (x < 1 || y < 1) return 0;
+    if (out_x) *out_x = x;
+    if (out_y) *out_y = y;
+    return 1;
+#else
+    // Without MSW_TRIAL_DECIDE the merged build has no decision logic
+    // available; fail closed so callers take their normal fallback.
+    return 0;
+#endif
+}
+
+#if 0  // legacy bridge kept only as historical reference (no longer called)
+extern "C" int abnative_decide_LEGACY(const int32_t* cv, int w, int h, int a,
                     int64_t node_cap, int* out_x, int* out_y,
                     int* out_total_worlds, double* out_best_rate) {
     if (out_x) *out_x = -1;
@@ -2545,12 +3866,51 @@ extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
     std::vector<Coord> clicks, clicks9;
     abnative_bridge::split_frontier(cel, w, h, clicks, clicks9);
     if (clicks.empty()) return 0;
+    std::vector<std::vector<Coord>> click_groups;
+    std::vector<std::vector<std::vector<int32_t>>> sols;
+    if (!abnative_bridge::run_part_solve(cel, w, h, a, clicks, node_cap,
+                                         click_groups, sols)) return 0;
+    // Python rewrites clicks by flattening click_list after component merges.
+    // Preserve that exact order so solution columns map to coordinates.
+    std::vector<Coord> ordered_clicks;
+    for (const auto& group : click_groups)
+        ordered_clicks.insert(ordered_clicks.end(), group.begin(), group.end());
+    if (ordered_clicks.empty()) return 0;
 
-    std::vector<std::vector<int32_t>> sols;
-    if (!abnative_bridge::run_part_solve(cel, w, h, a, clicks, sols)) return 0;
+    // The product of group solution counts is the world count consumed by
+    // run_win_rate.  Apply the same conservative stage-2 gate before that
+    // function allocates any complete-world boards.  Saturating multiplication
+    // is required: overflow must never turn an unsafe request into "allowed".
+    int64_t world_upper = 1;
+    for (const auto& group : sols) {
+        const int64_t n = static_cast<int64_t>(group.size());
+        if (n <= 0 || world_upper > INT64_MAX / n) {
+            world_upper = INT64_MAX;
+            break;
+        }
+        world_upper *= n;
+    }
+    const int64_t candidates = 1 + static_cast<int64_t>(ordered_clicks.size()) +
+                               static_cast<int64_t>(clicks9.size());
+    // Handoff world_cap is an enumeration cap, not only a wr_f node cap.
+    // Reject before materializing complete-world Boards when the grouped
+    // product already exceeds the experiment's declared bound.
+    if (node_cap > 0 && world_upper > node_cap) {
+        if (out_total_worlds) *out_total_worlds = -1;
+        return 2;
+    }
+    const auto preflight = decision_layer::estimate_mem_impl(
+        world_upper, candidates, 1536LL * 1024LL * 1024LL);
+    if (!preflight.allowed) {
+        // -1 is a diagnostic sentinel: caller still takes its normal safe
+        // fallback, but the result cannot be mistaken for a solver failure.
+        if (out_total_worlds) *out_total_worlds = -1;
+        return 2;
+    }
 
     std::vector<double> rates;
-    if (!abnative_bridge::run_win_rate(cel, w, h, a, clicks, clicks9, sols,
+    if (!abnative_bridge::run_win_rate(cel, w, h, a, ordered_clicks, clicks9,
+                                       click_groups, sols,
                                       node_cap, rates)) return 0;
     if (rates.empty()) return 0;
 
@@ -2563,5 +3923,60 @@ extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
     if (out_y) *out_y = order[best].second;
     if (out_best_rate) *out_best_rate = rates[best];
     return 1;
+}
+#endif  // legacy bridge (historical reference only)
+
+// DIAGNOSTIC accessor: reason string of the most recent abnative_decide call.
+extern "C" const char* abnative_last_reason() {
+#ifdef MSW_TRIAL_DECIDE
+    return g_last_decide_reason;
+#else
+    return "";
+#endif
+}
+
+// ==========================================================================
+// BATCH decision entry: production clicks ALL certain-safe cells in ONE
+// decision round (probability.py:1171-1189 appends every res>=0.99 cell to
+// `pos`).  Per-cell round-trips inflated decisions/game from 12 to 159
+// (13x) -> 48x slower and ~10pp lower win rate.
+//
+// Writes up to `cap` (x,y) 1-based pairs into out_xy (stride 2) and returns
+// the count; returns 0 when no batch is available (caller then uses the
+// single-cell abnative_decide path).
+// ==========================================================================
+extern "C" int abnative_decide_batch(const int32_t* cv, int w, int h, int a,
+                                     int64_t node_cap, int* out_xy, int cap) {
+#ifdef MSW_TRIAL_DECIDE
+    if (cv == nullptr || w <= 0 || h <= 0 || out_xy == nullptr || cap <= 0)
+        return 0;
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board(
+        {(py::ssize_t)(h + 2), (py::ssize_t)(w + 2)});
+    std::memcpy(board.mutable_data(), cv,
+                sizeof(int32_t) * (size_t)(h + 2) * (size_t)(w + 2));
+    py::dict r;
+    try {
+        r = decision_layer::decide_impl(board, a, w, h, /*wr_threshold*/ 8.0,
+                                        node_cap > 0 ? node_cap : 2000000,
+                                        decision_layer::DEFAULT_MEM_BUDGET);
+    } catch (const std::exception&) {
+        return 0;
+    }
+    const std::string reason = py::str(r["reason"]);
+    if (reason != "certain_safe") return 0;   // batch only for certain-safe
+    py::list tied = r["tied"].cast<py::list>();
+    int n = 0;
+    for (auto item : tied) {
+        if (n >= cap) break;
+        auto t = item.cast<py::tuple>();
+        out_xy[2 * n] = (int)py::int_(t[0]);
+        out_xy[2 * n + 1] = (int)py::int_(t[1]);
+        ++n;
+    }
+    return n;
+#else
+    (void)cv; (void)w; (void)h; (void)a; (void)node_cap; (void)out_xy; (void)cap;
+    return 0;
+#endif
 }
 #endif  // AB_NATIVE_MERGED (bridge)

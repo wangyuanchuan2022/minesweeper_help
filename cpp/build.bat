@@ -29,6 +29,7 @@ if errorlevel 1 (
 cd /d "%~dp0.."
 
 cl /nologo /O2 /utf-8 /std:c++17 /EHsc /MD /LD ^
+    /D MSW_TRIAL_DECIDE ^
     /I "%PYBIND11_INC%" ^
     /I "%PYHOME%\include" ^
     cpp\mscore.cpp ^

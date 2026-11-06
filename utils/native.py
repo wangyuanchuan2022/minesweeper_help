@@ -60,6 +60,52 @@ def report_load_error():
         logger.info("C++ 加速模块不可用，使用纯 Python 实现：%s", _load_error)
 
 
+def estimate_mem(worlds, candidates, budget=1536 * 1024 * 1024):
+    """调用 C++ 决策层的保守内存预检；不可用时返回 None。"""
+    if mscore is None or not hasattr(mscore, "estimate_mem"):
+        return None
+    return mscore.estimate_mem(int(worlds), int(candidates), int(budget))
+
+
+def split_frontier(cell_value):
+    """调用 C++ 决策层的前沿/内部格切分；不可用时返回 None。"""
+    if mscore is None or not hasattr(mscore, "split_frontier"):
+        return None
+    return mscore.split_frontier(np.ascontiguousarray(cell_value, dtype=np.int32))
+
+
+def decision_preflight(cell_value, worlds, budget=1536 * 1024 * 1024):
+    """原子执行前沿切分与内存闸门，避免调用方漏过预检。"""
+    if mscore is None or not hasattr(mscore, "decision_preflight"):
+        return None
+    return mscore.decision_preflight(
+        np.ascontiguousarray(cell_value, dtype=np.int32), int(worlds), int(budget)
+    )
+
+
+def packed_board_storage(cells):
+    """返回 C++ 4-bit Board 的 payload/对象容量诊断。"""
+    if mscore is None or not hasattr(mscore, "packed_board_storage"):
+        return None
+    return mscore.packed_board_storage(int(cells))
+
+
+def decide(cell_value, a, w, h):
+    """统一 C++ 三层决策（OPTIMAL 精确穷举 / 自适应前瞻 / pbs+PSEQ）。
+
+    返回 dict：x, y, confidence, path, reason, prob, tied, weighted。
+    仅 MSW_TRIAL_DECIDE 构建可用；生产旧 pyd 无此导出时返回 None。
+    """
+    if mscore is None or not hasattr(mscore, "decide"):
+        return None
+    return mscore.decide(cell_value, a=a, w=w, h=h)
+
+
+def has_decide():
+    """三层 decide() 是否可用（构建宏 MSW_TRIAL_DECIDE 才导出）。"""
+    return mscore is not None and hasattr(mscore, "decide")
+
+
 # ---------------------------------------------------------------------------
 # 决策阈值放宽（按实测校准，仅 C++ 可用时生效；纯 Python 自动恢复原阈值）
 #

@@ -110,7 +110,7 @@
 
 ```mermaid
 flowchart TD
-    Start([开始]) --> Init["点击中心开局<br/>cell_value 初始化为全未开 9"]
+    Start([开始]) --> Init["点击角落开局 (1,1)<br/>P2 双轮 2000 局验证 +4pp<br/>cell_value 初始化为全未开 9"]
     Init --> Detect{"检测胜利/失败/弹窗"}
     Detect -->|"胜/负"| Restart["处理并重开新局"]
     Restart --> Init

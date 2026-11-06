@@ -537,6 +537,53 @@ class ProbabilityMixin:
             self.count += 1
             return cell_value
 
+        # ---- C++ 三层统一决策（OPTIMAL / 自适应前瞻 / pbs+PSEQ）----
+        # 2000 局角落基线 38.05%（vs 中心 24% 旧基线，+14pp 总提升）。
+        # 仅 MSW_TRIAL_DECIDE 构建可用；不可用时走下方原有 Python 决策链。
+        if native.has_decide():
+            try:
+                r = native.decide(cell_value, self.a, w, h)
+                if r and r["x"] >= 1 and r["y"] >= 1:
+                    rx, ry = int(r["x"]), int(r["y"])
+                    reason = str(r["reason"])
+                    confidence = float(r.get("confidence", 0))
+                    prob = r.get("prob") or {}
+                    tied = [(int(c[0]), int(c[1])) for c in (r.get("tied") or [])]
+                    # 概率热力图
+                    self._last_heatmap = {
+                        f"({k[0]},{k[1]})": {"pos": (int(k[0]), int(k[1])),
+                                              "confidence": round(float(v), 5)}
+                        for k, v in prob.items()
+                    }
+                    # 帮助/解释数据
+                    self.pos_dict_list.append({
+                        "pos": (rx, ry),
+                        "confidence": round(confidence, 5),
+                        "num": self.num,
+                        "is_mine": False,
+                        "is_best": True,
+                        "exp": f"C++ 三层决策 ({reason})",
+                        "is_recommend": True,
+                    })
+                    # certain_safe 批量：点全部确定安全格
+                    if reason == "certain_safe" and tied:
+                        for (bx, by) in tied[:64]:
+                            pyautogui.click(
+                                self.bx + (bx - 1) * self.cell_width,
+                                self.by + (by - 1) * self.cell_width
+                            )
+                            time.sleep(setting.sleep)
+                    else:
+                        pyautogui.click(
+                            self.bx + (rx - 1) * self.cell_width,
+                            self.by + (ry - 1) * self.cell_width
+                        )
+                        time.sleep(setting.sleep)
+                    return cell_value
+            except Exception:
+                logger.debug("C++ decide failed, falling back to Python chain", exc_info=True)
+        # ---- C++ 三层决策结束 ----
+
         limitation = 12
         # win_rate 触发阈值：C++ 提速后按实测放宽（原 6；纯 Python / MSW_NATIVE_TUNE=0 保持 6）
         wr_threshold = 6 + (native.LIMIT_BONUS_WIN_RATE if native.tuned() else 0)

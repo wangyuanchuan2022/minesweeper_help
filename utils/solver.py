@@ -197,10 +197,12 @@ class Solver(BoardVisionMixin, DeductionMixin, ProbabilityMixin, AutoPlayThread)
             h = self.h
 
             # 开始时点击的坐标
-            start_i = int(w / 2)
-            start_j = int(h / 2)
-            # start_i = 1
-            # start_j = 1
+            # P2 角落开局（双轮 2000 局验证：角落 39.60% vs 中心 36.35%，p=0.015；
+            # 论文 AAAI-17 WS-17-15 Lemma 1 同结论）。角落首点在 Arbiter 延迟
+            # 布雷下开出线性边缘 front，中盘约束传播远比中心 blob 简单。
+            # 2000 局角落基线（C++ 三层 + 随机残余）：38.05%，vs 中心 +4.0pp。
+            start_i = 1  # 1-based cell index (1,1) = top-left corner
+            start_j = 1
 
             pyautogui.click(
                 self.bx + start_i * self.cell_width, self.by + start_j * self.cell_width
