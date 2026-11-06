@@ -24,4 +24,7 @@ state/
 # C++ 编译产物二进制（cpp/build.bat 生成，不入库；运行所需副本保留在工作区）
 utils/mscore*.pyd
 
-bench/data/
+bench/data/_paired_*.json
+bench/data/_baseline2000*.json
+bench/data/_corner2000.json
+bench/data/p2_repl.log
