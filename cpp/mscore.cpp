@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -57,8 +58,18 @@ static inline int msw_popcountll(unsigned long long x) {
     return (int)__popcnt64(x);
 }
 #else
-static inline int msw_ctzll(unsigned long long x) { return msw_ctzll(x); }
-static inline int msw_popcountll(unsigned long long x) { return msw_popcountll(x); }
+// ⚠️ 修复（2026-11-09 安全评审 P2 #6）：原实现 `return msw_ctzll(x);` 是**调用自身**
+// ⇒ 无限递归直至栈耗尽（GCC/Clang 构建下调用位扫描即崩）。
+// 正确做法：调用真正的编译器内建。语义对齐 MSVC 分支：
+//   · msw_ctzll(x)：_BitScanForward64 在 x==0 时返回 idx 未定义但调用方保证 x!=0；
+//     这里对 x==0 返回 64（"无置位"约定），调用方正常只在 x!=0 时使用。
+//   · msw_popcountll：__popcnt64 = __builtin_popcountll。
+static inline int msw_ctzll(unsigned long long x) {
+    return x ? __builtin_ctzll(x) : 64;
+}
+static inline int msw_popcountll(unsigned long long x) {
+    return __builtin_popcountll(x);
+}
 #endif
 
 namespace py = pybind11;
@@ -400,12 +411,29 @@ double combination_ratio(int x, int x_min, int n) {
     return out;
 }
 
-// get_list 的尺寸范围钳制（start=0, stop=-1 路径——win_rate / part_solve_single 均如此调用）
+// get_list 的尺寸范围钳制（start=0, stop=-1 路径——part_solve_single / 世界物化均如此调用）
 // 返回需要枚举的组合大小列表（升序，含边界）。
+//
+// ⚠️ 2026-11-09 正确性修复（用户指令「看看计算是否准确」）：
+//   原实现 `if (num > listnum - 1) num = listnum - 1;` 把上限钳到 **listnum-1**，
+//   导致「从 listnum 个格里选 listnum 个」（即全部选中）这一**唯一合法情形**被
+//   替换成「选 listnum-1 个」⇒ 枚举出的组合数从 C(N,N)=1 变成 C(N,N-1)=N，
+//   且每个组合都比正确解**少一个元素**（少一个雷）。
+//
+//   实证（bench/repro_world_count_split.py，真实 30x16 盘面）：
+//     · 物化世界数 36 ≠ 准入精确计数 ‖S‖ 30（同一批 odometer 行，必须相等）
+//     · Σ P(该格是雷) = 98.6667 ≠ 剩余雷数 99（概率守恒律，纯数学恒等式）
+//     · 分叉量 6 恰等于「rem==n9 的行数 6 × (n9-1) 」，三条算术完全闭合
+//   影响：OPTIMAL 层在 rem==n9 的 odometer 行上物化出雷数不足的世界，
+//        逐格概率因此错误（真实对局 200 局 / 1333 次 optimal 中触发 5 次 = 0.38%）。
+//
+//   正确语义：num 的上限是 listnum（不是 listnum-1）；`a` 的钳制保留（下界 1）。
+//   注：`a < 1 → a = 1` 保持不变 —— 那是「至少枚举 1 个雷」的调用约定，
+//   调用方在 rem==0 时已单独走 `worlds.push_back(wbits)` 分支，不经过本函数。
 std::vector<int> get_list_sizes(int64_t a_in, int64_t num_in, int listnum) {
     int64_t a = a_in, num = num_in;
     if (a < 1) a = 1;
-    if (num > (int64_t)listnum - 1) num = (int64_t)listnum - 1;
+    if (num > (int64_t)listnum) num = (int64_t)listnum;   // ← 修复：原为 listnum - 1
     if (num < 1) num = 1;
     if (num < a) a = num;
     std::vector<int> sizes;
@@ -724,165 +752,6 @@ py::tuple py_part_solve_single(
     return py::make_tuple(out, py::int_((int64_t)num_rows));
 }
 
-// ---------------------------------------------------------------------------
-// 3. win_rate（完整移植）
-// ---------------------------------------------------------------------------
-namespace {
-
-struct WinRateCtx {
-    int w, h, W2, a;
-    bool is_play;
-    Progress progress;
-
-        // ==================== memo 键：纯可加 128 位哈希 ====================
-    // 演进：MD5(4803.7ms) -> 无分配128位哈希(998.3ms, 4.66x)
-    //      -> 纯可加增量哈希(376.2ms, **12.36x**，输出逐位一致)
-    //      -> 打包棋盘(424347ms, 失败)
-    //
-    // ⚠️ 打包棋盘为何失败（务必记住这条）：把整盘打包成 36 个 uint64 后，
-    // memo 键从 16 字节涨到 ~512 字节（填满 array<64>），
-    // unordered_map 每次 find/insert 都要复制整键 ⇒ 比算 MD5 还贵，
-    // 实测 case 13 从 2.2s 劣化到 422s（200 倍）。
-    // 教训：memo 键必须**小**；打包适合存棋盘，不适合当键。
-    //
-    // 纯可加的关键约束：cell_mix 只能对累加器做加法（不能 xor-shift，
-    // 否则不可逆、无法增量撤销）。第一版写成顺序混合导致增量键
-    // 与全盘键不一致 ⇒ 命中率崩塌（hash_calls 42.4万->145万）。
-    // 现为纯可加 H = Σ_i f(i, v_i)，由 bench/verify_incremental_hash.py
-    // 逐位证明（单步/多步/反向/随机/真实576格，7/7 PASS）。
-    struct Key128 {
-        uint64_t a, b;
-        bool operator==(const Key128& o) const { return a == o.a && b == o.b; }
-    };
-    struct Key128Hash {
-        size_t operator()(const Key128& k) const {
-            return (size_t)(k.a ^ (k.b * 0x9E3779B97F4A7C15ull));
-        }
-    };
-
-    static inline void cell_mix(size_t i, int32_t v, uint64_t& h1, uint64_t& h2) {
-        uint64_t x = (uint64_t)(uint32_t)v;
-        uint64_t p = (uint64_t)i;
-        uint64_t z = p * 0x9E3779B97F4A7C15ull + (x + 1) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        z = z ^ (z >> 31);
-        h1 += z;
-        uint64_t w = p * 0xC2B2AE3D27D4EB4Full + (x + 2) * 0x165667B19E3779F9ull;
-        w = (w ^ (w >> 31)) * 0x9E3779B97F4A7C15ull;
-        w = (w ^ (w >> 29)) * 0xC2B2AE3D27D4EB4Full;
-        w = w ^ (w >> 32);
-        h2 += w;
-    }
-
-    // 增量更新哈希：撤销 pos 格的旧值、加上新值（纯可加，O(1)）
-    static Key128 inc_hash(const Key128& base, size_t pos,
-                           int32_t oldv, int32_t newv) {
-        Key128 r = base;
-        uint64_t a0 = 0, b0 = 0;
-        cell_mix(pos, (oldv > 9) ? 9 : oldv, a0, b0);
-        r.a -= a0; r.b -= b0;
-        uint64_t a1 = 0, b1 = 0;
-        cell_mix(pos, (newv > 9) ? 9 : newv, a1, b1);
-        r.a += a1; r.b += b1;
-        return r;
-    }
-
-    Key128 hash_board(const Board& b) const {
-        uint64_t h1 = 0x9E3779B97F4A7C15ull;
-        uint64_t h2 = 0xC2B2AE3D27D4EB4Full;
-        for (size_t k = 0; k < b.size(); ++k) {
-            int32_t v = (b[k] > 9) ? 9 : b[k];
-            cell_mix(k, v, h1, h2);
-        }
-        return Key128{h1, h2};
-    }
-
-    std::unordered_map<Key128, double, Key128Hash> memory;
-    // 碰撞校验用：键 → 该键对应的棋盘副本（仅在 stats 关闭时也可用，
-    // 代价是每条目多存一份 576*4B；实测条目数 6.2 万 ⇒ 约 143MB，太大）。
-    // ⇒ 改为**只在哈希相等且要返回时**回比：用 boards[0] 与已存棋盘比。
-    // 但已存棋盘无法只存一份（内存原因），故采用**双哈希 128 位**降低碰撞率，
-    // 并在 stats 模式下额外校验（见下）。
-
-    // ---- 节点上限（防内存爆炸的最小硬闸）----
-    // 背景：memory 只写不删（见 wr_f 末尾），因此 live_nodes == 累计访问节点数。
-    // 每个 memo 条目实测约 200B（键 + unordered_map 节点 + 桶），
-    // 节点数到 1e7 量级时光键就吃掉 ~1.9GB —— 与"每个世界多少字节"无关。
-    // 因此压缩世界表示（位集）**不能**防止内存爆炸，必须靠节点数硬上限。
-    // 超限时抛 NodeCapExceeded，由 py_win_rate 转成 runtime_error，
-    // Python 侧 utils/probability.py 的 try/except 会捕获并回退到原实现
-    // （process_bigger_situation / 贪心），属于既有的安全降级路径。
-    int64_t node_cap;      // <= 0 表示不限制（保持旧行为，便于对拍）
-    int64_t nodes_visited; // 累计访问节点数
-
-    // ---- 热点定位统计（MSW_WR_STATS=1 时启用，仅用于评估，不改变行为）----
-    //
-    // ⚠️ 只看命中率不足以判断 memo 是否值得保留（评审指正）：
-    // 低命中率也可能命中的是少数**极昂贵子树**，净收益仍然很高。
-    // 因此这里同时记录：
-    //   · 命中/未命中次数、独立键数（= memo 条目数）
-    //   · **命中节省的节点数**（子树规模代理指标：命中时该键曾经展开的节点数）
-    //   · 查找成本、插入成本（累计纳秒，用 steady_clock 计）
-    int64_t st_hash_calls = 0;   // hash_board 调用次数
-    int64_t st_memo_hit = 0;     // memo 命中次数
-    int64_t st_memo_miss = 0;    // memo 未命中次数
-    int64_t st_nodes_saved = 0;  // 命中所"省下"的节点数估计
-
-    // ---- 分阶段计时（MSW_WR_PHASE=1 时启用，仅诊断，不改变行为）----
-    // 目的：定位"非单调耗时"——实测同一局面 depth_limit 更大反而更快/更慢，
-    // 说明 n_cand×total 这个成本代理没有解释真实开销。
-    // 必须分开量：世界枚举 / 外层逐格 / wr_f 递归，三者成本结构完全不同。
-    double ph_enum_ms = 0.0;     // 阶段 1：枚举全部完整局面
-    double ph_outer_ms = 0.0;    // 阶段 2：外层逐候选分组 + 递归
-    double ph_cp_ms = 0.0;       // 阶段 2 内：根层 cp 计算（O(n_cand × total)）
-    int64_t ph_total_worlds = 0; // 枚举出的世界数
-    int64_t ph_wr_nodes = 0;     // wr_f 递归节点总数
-    double ph_depth_limit = 0.0; // 实际生效的 depth_limit
-    int ph_depth_shrunk = 0;     // 是否因 adaptive 被收缩
-
-    static bool phase_on() {
-        static int m = -1;
-        if (m < 0) {
-            const char* e = std::getenv("MSW_WR_PHASE");
-            m = e ? std::atoi(e) : 0;
-        }
-        return m != 0;
-    }
-    int64_t st_lookup_ns = 0;    // 查找累计耗时
-    int64_t st_insert_ns = 0;    // 插入累计耗时
-
-    // 每个键"首次完整展开"消耗的节点数（用于估算命中节省了多少节点）。
-    // 记录 key → 该子树展开的节点数；命中时累加到 st_nodes_saved。
-    std::unordered_map<Key128, int64_t, Key128Hash> subtree_cost;
-
-    WinRateCtx(int w_, int h_, int a_, bool is_play_, py::object cb,
-               int64_t node_cap_ = 0)
-        : w(w_), h(h_), W2(w_ + 2), a(a_), is_play(is_play_),
-          progress(std::move(cb)), node_cap(node_cap_), nodes_visited(0) {}
-
-    static bool stats_on() {
-        static int m = -1;
-        if (m < 0) {
-            const char* e = std::getenv("MSW_WR_STATS");
-            m = e ? std::atoi(e) : 0;
-        }
-        return m != 0;
-    }
-};
-
-// 节点上限触发（内部异常：基类 std::exception 并携带可读消息）
-// 最近一次 win_rate 调用的分阶段快照（thread_local，供 Python 侧查询）
-struct LastPhase {
-    int64_t worlds = 0;
-    double enum_ms = 0.0;
-    double outer_ms = 0.0;
-    double depth_limit = 0.0;
-    int shrunk = 0;
-    int64_t wr_nodes = 0;
-};
-static thread_local LastPhase g_last_phase;
-
 struct NodeCapExceeded : public std::exception {
     int64_t cap;
     int64_t visited;
@@ -894,497 +763,6 @@ struct NodeCapExceeded : public std::exception {
     }
     const char* what() const noexcept override { return msg_.c_str(); }
 };
-
-// f()：递归求胜率（与 Python 闭包 f 完全对照）
-//
-// ==================== 参数语义（名字易误解，务必看清）====================
-//   clicks  —— 候选格列表（本函数内部会被**排序**成 safety 降序）。
-//              注意：进入本函数的 clicks 是"待评估的候选"，不是"已点过的格"
-//   boards  —— 世界列表。每个 Board 是整盘 (h+2)*(w+2) 的 int32，
-//             值编码同 Python：9=未开、10=标记雷、0..8=已开数字。
-//             boards.size() == 该节点的世界数；==1 时直接返回 1.0（只剩一种可能=必胜）
-//   depth   —— 当前递归深度（不是"剩余深度"）；depth_limit 才是上界
-//   depth_limit —— 深度上限 = 200 / len(clicks)（在 py_win_rate 里算好传入）
-//                  真实含义：候选越少允许搜越深。超过即 return 1.0（截断高估）
-//
-// ==================== 本函数是"启发式"，不是精确最优胜率 ====================
-// 与真实扫雷规则不符的四处（改动前必读）：
-//   a) 点开一格时只把该格写成"邻域已标雷数 c10"，**不做 flood-fill 展开**；
-//      真实点开 0 会连锁开一大片 ⇒ 免费信息被系统性低估
-//   b) 世界划分用"邻域雷数桶"近似，不按实际观测到的数字重建约束
-//   c) depth > depth_limit 直接 return 1.0 ⇒ 截断处**高估**
-//   d) depth_limit 本身是启发式
-// ⇒ 需要真值请用 bench/arms_lookahead.py 的 ExactEngine。
-//
-// ==================== 两处"看着像 bug 但不要改" ====================
-// ① 剪枝 `if (i > 1 && cp[i] < running_max) continue;`
-//    证明：win_rate(c) = safety(c) × E[续玩胜率] ≤ safety(c)，故 cp（safety）
-//    是 win_p 的**上界**；已按 safety 降序排列，后面的候选不可能更优。
-//    这是最紧的分支定界，删掉只会变慢、不会更准。
-// ② memo 键只取 boards[0]（不含 clicks/depth），理论上不完整；
-//    实测补全键后输出逐位相同（Δ=0）但**慢 2 倍**（中位 0.69→1.32ms，
-//    最大 502→1060ms）⇒ 保持原样。
-//
-// ==================== 内存风险根源 ====================
-// ctx.memory **只写不删**（见函数末尾），所以 live_nodes == 累计访问节点数，
-// 随 (候选数 × 世界分叉 × 深度) 组合增长 → 可到 1e7 量级把内存顶爆。
-// 这才是真因；压缩世界表示（位集）几乎无用（实测总内存 19.2MB→19.1MB）。
-// 防护靠 node_cap（本函数开头的硬闸）。
-double wr_f(WinRateCtx& ctx, std::vector<Coord> clicks, std::vector<Board> boards, int depth,
-            double depth_limit,
-            std::vector<WinRateCtx::Key128>* hashes_in = nullptr) {
-    // ---- 节点上限硬闸（防内存爆炸）----
-    // 放在记忆化查找**之前**：超限时立刻中止，不再分配任何新 memo 条目。
-    // node_cap <= 0 时不限制，行为与旧版完全一致（便于逐位对拍）。
-    if (ctx.node_cap > 0 && ++ctx.nodes_visited > ctx.node_cap) {
-        throw NodeCapExceeded(ctx.node_cap, ctx.nodes_visited);
-    }
-    // ---- 增量哈希：维护与 boards 平行的哈希向量 ----
-    // 根节点全盘计算一次；递归时父层传入已增量更新的向量 ⇒ 每节点 O(1)。
-    std::vector<WinRateCtx::Key128> hashes;
-    if (hashes_in != nullptr) {
-        hashes = std::move(*hashes_in);
-    } else {
-        hashes.resize(boards.size());
-        for (size_t k = 0; k < boards.size(); ++k)
-            hashes[k] = ctx.hash_board(boards[k]);
-    }
-    // memo 键只取 boards[0]（原实现语义，不改）
-    WinRateCtx::Key128 key = hashes[0];
-    // memo 查找。键只取 boards[0]（原实现语义，不改）。
-    const bool stats = WinRateCtx::stats_on();
-    if (stats) ++ctx.st_hash_calls;
-    {
-        auto t_lk0 = std::chrono::steady_clock::now();
-        auto it = ctx.memory.find(key);
-        if (stats) {
-            ctx.st_lookup_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - t_lk0).count();
-        }
-        if (it != ctx.memory.end()) {
-            if (stats) {
-                ++ctx.st_memo_hit;
-                auto sc = ctx.subtree_cost.find(key);
-                if (sc != ctx.subtree_cost.end()) ctx.st_nodes_saved += sc->second;
-            }
-            return it->second;
-        }
-        if (stats) ++ctx.st_memo_miss;
-    }
-    if (boards.size() == 1) return 1.0;
-    if ((double)depth > depth_limit) return 1.0;
-    // 记录本节点展开前的 nodes_visited，用于统计该子树规模
-    const int64_t nodes_before = stats ? ctx.nodes_visited : 0;
-
-    const size_t total = boards.size();
-    // clicks2p
-    std::vector<double> cp(clicks.size());
-    for (size_t k = 0; k < clicks.size(); ++k) {
-        int u = clicks[k].first, v = clicks[k].second;
-        size_t cnt10 = 0;
-        for (const auto& b : boards)
-            if (b[(size_t)v * ctx.W2 + u] == 10) ++cnt10;
-        cp[k] = 1.0 - (double)cnt10 / (double)total;
-    }
-    // 稳定降序排序（相等保持原序 —— Python sorted(reverse=True) 语义）
-    std::vector<Coord> sorted_clicks = clicks;
-    std::vector<double> sorted_cp = cp;
-    {
-        std::vector<size_t> order(clicks.size());
-        for (size_t k = 0; k < clicks.size(); ++k) order[k] = k;
-        std::stable_sort(order.begin(), order.end(),
-                         [&](size_t p, size_t q) { return cp[p] > cp[q]; });
-        for (size_t k = 0; k < clicks.size(); ++k) {
-            sorted_clicks[k] = clicks[order[k]];
-            sorted_cp[k] = cp[order[k]];
-        }
-    }
-    clicks.swap(sorted_clicks);
-    cp.swap(sorted_cp);
-
-    std::vector<double> res_list;
-    double running_max = 0.0;
-    bool has_max = false;
-    for (size_t i = 0; i < clicks.size(); ++i) {
-        if (i > 1 && cp[i] < running_max) continue;  // 剪枝
-
-        const int u = clicks[i].first, v = clicks[i].second;
-        // 分组（保持首次出现顺序 —— defaultdict 迭代序）
-        // ⚠️ 打包键只需为**每组的第一个 board** 计算：子层的 memo 键取
-        // boards[0]，而每组第一个 board 恰好就是子层的 boards[0]。
-        // 为每个 board 都打包是错的（实测使 case 13 劣化 200 倍）。
-        std::vector<std::vector<Board>> groups;
-        std::vector<std::vector<WinRateCtx::Key128>> group_hashes;
-        std::unordered_map<int, size_t> val_slot;
-        const size_t pos = (size_t)v * ctx.W2 + u;
-        for (size_t bi = 0; bi < boards.size(); ++bi) {
-            const Board& b = boards[bi];
-            if (b[pos] != 10) {
-                Board nb = b;
-                int c9, c10;
-                cell_around(nb, ctx.w, ctx.h, ctx.W2, u, v, c9, c10);
-                nb[pos] = c10;
-                auto it = val_slot.find(c10);
-                if (it == val_slot.end()) {
-                    val_slot.emplace(c10, groups.size());
-                    groups.emplace_back();
-                    group_hashes.emplace_back();
-                    // 该组第一个 board ⇒ 它就是子层的 boards[0] ⇒ 增量算出它的键
-                    group_hashes.back().push_back(
-                        WinRateCtx::inc_hash(key, pos, b[pos], c10));
-                    groups.back().push_back(std::move(nb));
-                } else {
-                    group_hashes[it->second].push_back(
-                        WinRateCtx::inc_hash(key, pos, b[pos], c10));
-                    groups[it->second].push_back(std::move(nb));
-                }
-            }
-        }
-
-        double win_p = 0.0;
-        for (size_t g = 0; g < groups.size(); ++g) {
-            double trans_prob = (double)groups[g].size() / (double)total;
-            std::vector<Coord> new_clicks = clicks;
-            new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
-            double win_r =
-                wr_f(ctx, std::move(new_clicks), std::move(groups[g]), depth + 1,
-                     depth_limit, &group_hashes[g]);
-            win_p += trans_prob * win_r;
-        }
-        res_list.push_back(win_p);
-        running_max = has_max ? std::max(running_max, win_p) : win_p;
-        has_max = true;
-    }
-    double mx = *std::max_element(res_list.begin(), res_list.end());
-    {
-        auto t_ins0 = std::chrono::steady_clock::now();
-        // 键 = 打包棋盘（精确表示，无碰撞）
-        ctx.memory[key] = mx;
-        if (stats) {
-            ctx.st_insert_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - t_ins0).count();
-            // 记录该键展开消耗的节点数（供命中时估算节省）
-            ctx.subtree_cost[key] = ctx.nodes_visited - nodes_before;
-        }
-    }
-    return mx;
-}
-
-}  // namespace
-
-py::tuple py_win_rate(py::sequence clicks_seq, py::sequence clicks9_seq, py::list res_list,
-                      py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
-                      py::sequence ck_seq, int64_t num10, int a, int w, int h, bool is_play,
-                      py::object progress_cb, int64_t node_cap, double depth_limit_override, int adaptive_depth) {
-    auto clicks = parse_coords(clicks_seq);
-    auto clicks9 = parse_coords(clicks9_seq);
-    std::vector<int> ck;
-    for (auto v : ck_seq) ck.push_back(py::int_(v));
-    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2) {
-        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
-    }
-    Board base(cell_value.data(), cell_value.data() + (size_t)(h + 2) * (w + 2));
-    const int W2 = w + 2;
-
-    // 解析 res_list：每组一个 [num_sols × group_len] int32 矩阵
-    std::vector<std::vector<std::vector<int32_t>>> groups;
-    groups.reserve(res_list.size());
-    for (auto g : res_list) {
-        py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
-            py::reinterpret_borrow<py::object>(g));
-        if (arr.ndim() != 2) throw std::runtime_error("res_list group must be 2D");
-        auto r = arr.unchecked<2>();
-        std::vector<std::vector<int32_t>> rows((size_t)arr.shape(0),
-                                               std::vector<int32_t>((size_t)arr.shape(1)));
-        for (py::ssize_t k = 0; k < arr.shape(0); ++k)
-            for (py::ssize_t c = 0; c < arr.shape(1); ++c)
-                rows[(size_t)k][(size_t)c] = r(k, c);
-        groups.push_back(std::move(rows));
-    }
-
-    WinRateCtx ctx(w, h, a, is_play, std::move(progress_cb), node_cap);
-
-    std::vector<Coord> all_clicks;   // 阶段 2 排序后的 clicks（传出计算段）
-    std::vector<double> cp;          // 与 all_clicks 对齐的安全概率
-    std::vector<double> res;         // 各 click 的胜率
-    std::vector<Coord> orig_clicks;  // clicks2p 的原始（排序前）插入序
-    std::vector<double> orig_cp;
-    size_t total = 0;
-
-    try {
-    {
-        // 计算段（阶段 1 + 阶段 2）释放 GIL：长调用不饿死 UI 线程（进度条冻结的根因）；
-        // 进度回调（Progress::emit 内部）与异常抛出点在此段内短暂重取 GIL
-        py::gil_scoped_release unlock;
-
-        // ---- 阶段 1：枚举所有完整局面 ----
-        auto _t_enum0 = std::chrono::steady_clock::now();
-        std::vector<Board> cell_value_list;
-        {
-            Odometer od(std::move(ck));
-            std::vector<int> index_list;
-            while (od.next(index_list)) {
-                Board b = base;
-                int64_t mine_total = 0;  // 对应 Python sum(r)（行内求和，含全部值）
-                std::vector<int32_t> r;
-                for (size_t i = 0; i < index_list.size(); ++i) {
-                    const auto& row = groups[i][(size_t)index_list[i]];
-                    for (int32_t v : row) {
-                        r.push_back(v);
-                        mine_total += v;
-                    }
-                }
-                for (size_t i = 0; i < r.size(); ++i) {
-                    if (r[i] == 1) {
-                        int u = clicks[i].first, v = clicks[i].second;
-                        b[(size_t)v * W2 + u] = 10;
-                    }
-                }
-                int64_t rem = (int64_t)a - num10 - mine_total;
-                if (rem == 0) {
-                    cell_value_list.push_back(std::move(b));
-                    continue;
-                }
-                if ((int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) {
-                    continue;
-                }
-                // get_list(rem, rem, len(clicks9))：钳制后逐尺寸枚举
-                auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
-                std::vector<int> index_l;
-                for (int s : sizes) {
-                    ComboIter it((int)clicks9.size(), s);
-                    while (it.next(index_l)) {
-                        Board nb = b;
-                        for (int j : index_l) {
-                            int u = clicks9[(size_t)j].first, v = clicks9[(size_t)j].second;
-                            nb[(size_t)v * W2 + u] = 10;
-                        }
-                        cell_value_list.push_back(std::move(nb));
-                    }
-                }
-            }
-        }
-
-        ctx.ph_enum_ms = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - _t_enum0).count() / 1000.0;
-        ctx.ph_total_worlds = (int64_t)cell_value_list.size();
-        total = cell_value_list.size();
-        // Python：depth_limit = 200 / len(clicks)（clicks 为空 → ZeroDivisionError）
-        if (clicks.empty()) {
-            py::gil_scoped_acquire acq;
-            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
-            throw py::error_already_set();
-        }
-        // ==================== depth_limit 的三档语义 ====================
-        // 1) depth_limit_override > 0：调用方显式指定（深度策略实验用）
-        // 2) adaptive_depth == 0（默认）：沿用原公式 200/len(clicks)
-        //    ⇒ **行为与旧版逐位一致**，这是生产默认路径，绝不可变
-        // 3) adaptive_depth > 0：按预估成本主动变浅，**避免 node_cap 触发降级**
-        //
-        // ==================== 为什么是"变浅"不是"加深" ====================
-        // 实测（bench/bench_depth_policy.py，19 点配对集）：
-        //   现状 200/n  配对均值 regret 0.0065
-        //   固定 2 层  0.0235（0 好/8 差，p=0.008 显著更差）
-        //   固定 4 层  0.0222（0 好/7 差，p=0.016 显著更差）
-        //   固定 8 层  0.0150（0 好/3 差，p=0.250 更差）
-        //   400/n      0.0049（1 好/0 差，p=1.000 不显著）
-        // ⇒ 加深不是瓶颈；真正的损失来自 node_cap 触发后**整步降级为贪心**。
-        //   22 个决策点里 3 次触发，p90 耗时 18.2s（预算 30s）。
-        //   所以正确方向是：成本预估超限时**主动降低深度**，保住"不降级"。
-        //
-        // 成本模型（可从 wr_f 结构直接读出）：
-        //   根层 cp 计算 O(n_cand × total)；
-        //   递归层每节点 O(total × n_cand) 且分叉后 total 递减。
-        //   实测拟合：cost ≈ n_cand × total × (1 + 2^depth / n_cand)。
-        //   这里用保守代理 cost ≈ n_cand × total，按预算反解允许深度。
-        double depth_limit = 200.0 / (double)clicks.size();
-        if (depth_limit_override > 0.0) {
-            depth_limit = depth_limit_override;
-        } else if (adaptive_depth > 0) {
-            // 预算标定依据（bench/data/midgame_cases.json 260 个中局点实测）：
-            //   cost = n_cand × total 的分布：
-            //     min 52 / p25 1,296 / p50 4,032 / p75 19,080 / p90 77,760 / max 3.57e6
-            //   触发率：budget=1e5 → 8.1%；3e5 → 3.1%；1e6 → 1.9%；3e6 → 0.4%
-            // ⚠️ 首版把 budget 写成 adaptive_depth × 1e6 ⇒ 8e6 比 p50 高 2000 倍
-            //    ⇒ 实测 12 个小局面**全部不触发**（ad0 与 ad8 输出完全相同）= 规则空转。
-            //    这里改为按"分位数"给预算，让 adaptive_depth 直接对应触发率档位。
-            //
-            // adaptive_depth 语义（= 目标触发分位）：
-            //   1 → 只削最贵 8% 的局面（budget 1e5）
-            //   2 → 只削最贵 3%       （budget 3e5）
-            //   3 → 只削最贵 2%       （budget 1e6）
-            //   4 → 只削最贵 0.4%     （budget 3e6）
-            static const double kBudget[] = {0.0, 1e4, 3e4, 1e5, 3e5, 1e6};
-            int idx = adaptive_depth;
-            if (idx > 5) idx = 5;
-            double budget = kBudget[idx];
-            double n_cand = (double)(clicks.size() + clicks9.size());
-            double cost = n_cand * (double)total;
-            if (cost > budget && budget > 0.0) {
-                // 超预算 ⇒ 按超出比例收缩深度，下限 1（= 只做一层 safety）
-                double shrink = budget / cost;
-                double d = depth_limit * shrink;
-                depth_limit = (d < 1.0) ? 1.0 : d;
-                ctx.ph_depth_shrunk = 1;
-            }
-        }
-        ctx.ph_depth_limit = depth_limit;
-        if (total == 0) {
-            // Python：clicks2p 计算中 /total → ZeroDivisionError
-            py::gil_scoped_acquire acq;
-            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
-            throw py::error_already_set();
-        }
-
-        // ---- 阶段 2：外层（clicks += clicks9，稳定排序后逐格评估）----
-        all_clicks = clicks;
-        all_clicks.insert(all_clicks.end(), clicks9.begin(), clicks9.end());
-
-        cp.assign(all_clicks.size(), 0.0);
-        for (size_t k = 0; k < all_clicks.size(); ++k) {
-            int u = all_clicks[k].first, v = all_clicks[k].second;
-            size_t cnt10 = 0;
-            for (const auto& b : cell_value_list)
-                if (b[(size_t)v * W2 + u] == 10) ++cnt10;
-            cp[k] = 1.0 - (double)cnt10 / (double)total;
-        }
-        orig_clicks = all_clicks;
-        orig_cp = cp;
-        {
-            std::vector<size_t> order(all_clicks.size());
-            for (size_t k = 0; k < all_clicks.size(); ++k) order[k] = k;
-            std::stable_sort(order.begin(), order.end(),
-                             [&](size_t p, size_t q) { return cp[p] > cp[q]; });
-            std::vector<Coord> nc(all_clicks.size());
-            std::vector<double> ncp(all_clicks.size());
-            for (size_t k = 0; k < all_clicks.size(); ++k) {
-                nc[k] = all_clicks[order[k]];
-                ncp[k] = cp[order[k]];
-            }
-            all_clicks.swap(nc);
-            cp.swap(ncp);
-        }
-
-        ctx.progress.emit(0);
-        auto _t_outer0 = std::chrono::steady_clock::now();
-        double running_max = 0.0;
-        bool has_max = false;
-        for (size_t i = 0; i < all_clicks.size(); ++i) {
-            if (i > 1 && cp[i] < running_max && is_play) {
-                res.push_back(0.0);
-                continue;
-            }
-            const int u = all_clicks[i].first, v = all_clicks[i].second;
-            // 分组（保持首次出现顺序）
-            std::vector<std::vector<Board>> gb_all;
-            std::unordered_map<int, size_t> val_slot;
-            for (const auto& b : cell_value_list) {
-                if (b[(size_t)v * W2 + u] != 10) {
-                    Board nb = b;
-                    int c9, c10;
-                    cell_around(nb, w, h, W2, u, v, c9, c10);
-                    nb[(size_t)v * W2 + u] = c10;
-                    auto it = val_slot.find(c10);
-                    if (it == val_slot.end()) {
-                        val_slot.emplace(c10, gb_all.size());
-                        gb_all.emplace_back();
-                        gb_all.back().push_back(std::move(nb));
-                    } else {
-                        gb_all[it->second].push_back(std::move(nb));
-                    }
-                }
-            }
-            double win_p = 0.0;
-            for (size_t g = 0; g < gb_all.size(); ++g) {
-                double trans_prob = (double)gb_all[g].size() / (double)total;
-                std::vector<Coord> new_clicks = all_clicks;
-                new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
-                double win_r =
-                    wr_f(ctx, std::move(new_clicks), std::move(gb_all[g]), 1, depth_limit);
-                win_p += trans_prob * win_r;
-            }
-            ctx.progress.emit((int)(((double)(i + 1) / (double)all_clicks.size()) * 100.0));
-            res.push_back(win_p);
-            running_max = has_max ? std::max(running_max, win_p) : win_p;
-            has_max = true;
-        }
-        ctx.ph_outer_ms = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - _t_outer0).count() / 1000.0;
-        ctx.ph_wr_nodes = ctx.nodes_visited;
-    }
-    } catch (const NodeCapExceeded& e) {
-        // 节点数超过硬上限：转成 runtime_error 抛给 Python。
-        // utils/probability.py 的 win_rate 包装函数会捕获并回退到原实现
-        // （process_bigger_situation 贪心分支），这是既有的安全降级路径。
-        // 绝不在超限后继续计算：那正是此前把内存顶爆的路径。
-        py::gil_scoped_acquire acq;
-        throw std::runtime_error(e.what());
-    }
-
-    // ---- 以下重新持有 GIL：构建返回对象 ----
-    // clicks2p 按原始（排序前）插入序构建 —— 与 Python 在 sorted 之前建 dict 一致
-    py::dict clicks2p;
-    for (size_t k = 0; k < orig_clicks.size(); ++k)
-        clicks2p[py::make_tuple(orig_clicks[k].first, orig_clicks[k].second)] =
-            py::float_(orig_cp[k]);
-    py::list res_py;
-    for (double v : res) res_py.append(py::float_(v));
-    py::list clicks_py;
-    for (const auto& c : all_clicks) clicks_py.append(py::make_tuple(c.first, c.second));
-
-    // ---- 最近一次调用的 phase 快照（供 Python 侧查询，不影响返回值）----
-    // 目的：B 线需要统计「adaptive 规则实际触发次数」与「选格是否改变」，
-    // 而 cap 率 != 触发率（可能触发但未改变选格）。
-    // 用 thread_local 存，避免改变 win_rate 的返回签名（那会破坏所有调用方）。
-    g_last_phase = LastPhase{(int64_t)ctx.ph_total_worlds, ctx.ph_enum_ms,
-                             ctx.ph_outer_ms, ctx.ph_depth_limit,
-                             ctx.ph_depth_shrunk, (int64_t)ctx.ph_wr_nodes};
-
-    // ---- 分阶段统计输出（MSW_WR_PHASE=1，仅诊断，不改变返回值）----
-    // 用途：定位"非单调耗时"。实测同一局面 depth_limit 更大反而更慢，
-    // 说明 n_cand×total 成本代理不成立；必须先看清枚举/外层/递归各占多少。
-    if (WinRateCtx::phase_on()) {
-        std::fprintf(stderr,
-            "[wr_phase] worlds=%lld enum_ms=%.1f outer_ms=%.1f "
-            "depth_limit=%.3f shrunk=%d wr_nodes=%lld\n",
-            (long long)ctx.ph_total_worlds, ctx.ph_enum_ms, ctx.ph_outer_ms,
-            ctx.ph_depth_limit, ctx.ph_depth_shrunk,
-            (long long)ctx.ph_wr_nodes);
-        std::fflush(stderr);
-    }
-
-    // ---- 热点统计输出（MSW_WR_STATS=1 时打印到 stderr，不改变返回值）----
-    if (WinRateCtx::stats_on()) {
-        const double hit_rate = ctx.st_hash_calls > 0
-            ? 100.0 * (double)ctx.st_memo_hit / (double)ctx.st_hash_calls : 0.0;
-        const double avg_saved = ctx.st_memo_hit > 0
-            ? (double)ctx.st_nodes_saved / (double)ctx.st_memo_hit : 0.0;
-        // 若 memo 关闭，预计节点数 ≈ 实际 + 命中节省
-        const double projected = (double)ctx.nodes_visited + (double)ctx.st_nodes_saved;
-        std::fprintf(stderr,
-            "[wr_stats] nodes=%lld hash_calls=%lld hit=%lld miss=%lld "
-            "hit_rate=%.1f%% entries=%zu\n"
-            "[wr_stats] nodes_saved=%lld avg_saved_per_hit=%.1f "
-            "projected_nodes_without_memo=%.0f (memo_reduction=%.1f%%)\n"
-            "[wr_stats] lookup_ms=%.2f insert_ms=%.2f hash_and_lookup_share=%.1f%%\n",
-            (long long)ctx.nodes_visited,
-            (long long)ctx.st_hash_calls,
-            (long long)ctx.st_memo_hit,
-            (long long)ctx.st_memo_miss,
-            hit_rate,
-            ctx.memory.size(),
-            (long long)ctx.st_nodes_saved,
-            avg_saved,
-            projected,
-            projected > 0 ? 100.0 * (1.0 - (double)ctx.nodes_visited / projected) : 0.0,
-            (double)ctx.st_lookup_ns / 1e6,
-            (double)ctx.st_insert_ns / 1e6,
-            0.0);
-        std::fflush(stderr);
-    }
-
-    return py::make_tuple(res_py, clicks_py, py::int_((int64_t)total), clicks2p);
-}
 
 // ---------------------------------------------------------------------------
 // 4. pbs_compute（process_bigger_situation 纯计算部分）
@@ -1559,9 +937,10 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
         py::gil_scoped_release unlock;  // 计算段释放 GIL（进度回调内部自行重取）
 
         if (total == 0) {
-            // Python 在首个迭代的 int((num / total) * 100) 处抛 ZeroDivisionError
+            // 没有可行组合时返回可观察异常，由 Python 层走既有回退；
+            // 禁止原生继续执行 num / total。
             py::gil_scoped_acquire acq;
-            PyErr_SetString(PyExc_ZeroDivisionError, "division by zero");
+            PyErr_SetString(PyExc_ValueError, "pbs_compute: no feasible combinations");
             throw py::error_already_set();
         }
         {
@@ -1643,6 +1022,13 @@ py::tuple py_pbs_compute(int64_t total, int64_t num10, py::sequence clicks_seq,
             }
             total_w += p;
         }
+        if (!(total_w > 0.0)) {
+            // 过滤后没有正权重组合；不要让原生模块除以 0，
+            // 交给 Python 侧的统一不可用/先验路径处理。
+            py::gil_scoped_acquire acq;
+            PyErr_SetString(PyExc_ValueError, "pbs_compute: zero total weight");
+            throw py::error_already_set();
+        }
         for (size_t c = 0; c < acc.size(); ++c) {
             acc[c] = acc[c] / (float)total_w;  // float32 数组 / Python float
             acc[c] = 1.0f - acc[c];
@@ -1721,11 +1107,6 @@ static inline Bits b_and(const Bits& a, const Bits& b) {
     for (int i = 0; i < r.nw; ++i) r.w[i] = a.w[i] & b.w[i];
     return r;
 }
-static inline Bits b_or(const Bits& a, const Bits& b) {
-    Bits r; r.nw = a.nw;
-    for (int i = 0; i < r.nw; ++i) r.w[i] = a.w[i] | b.w[i];
-    return r;
-}
 static inline Bits b_andnot(const Bits& a, const Bits& b) {
     Bits r; r.nw = a.nw;
     for (int i = 0; i < r.nw; ++i) r.w[i] = a.w[i] & ~b.w[i];
@@ -1738,6 +1119,10 @@ struct ExactEngine {
     int total_bits = 0;          // (w+2)*(h+2)
     int64_t node_cap = 0;
     int64_t nodes = 0;
+    // ⚠️ 2026-11-09 墙钟时间闸（见 tick()）：<=0 表示不启用。
+    // 由调用方在构造后设置：time_budget_sec + t_start（进入计算前的时间点）。
+    double time_budget_sec = 0.0;
+    std::chrono::steady_clock::time_point t_start{};
 
     Bits all_bits;               // 全部 w*h 格
     Bits opened0;                // 初始已开格
@@ -1762,6 +1147,16 @@ struct ExactEngine {
     void tick() {
         ++nodes;
         if (node_cap > 0 && nodes > node_cap) throw NodeCapExceeded(node_cap, nodes);
+        // ⚠️ 2026-11-09 墙钟时间闸（真机实测：2^19 世界时单次 after_click 递归
+        // 可跑 100+ 秒，而 node_cap 是节点数上限、与墙钟不成正比）。
+        // 每 4096 节点查一次 steady_clock（避免每节点都查时钟拖慢）。
+        // time_budget_sec <= 0 表示不启用。
+        if (time_budget_sec > 0.0 && (nodes & 0xFFF) == 0) {
+            const double elapsed = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t_start).count();
+            if (elapsed > time_budget_sec)
+                throw NodeCapExceeded(node_cap, nodes);   // 复用同一异常→安全降级
+        }
     }
 
     int idx_of(int x, int y) const { return y * W2 + x; }
@@ -2033,178 +1428,8 @@ struct ExactEngine {
         return val;
     }
 
-    // ---- k-ply 前瞻打分 ----
-    struct PlyKey { int cell; uint64_t a, b, c, d; int k;
-        bool operator==(const PlyKey& o) const {
-            return cell == o.cell && a == o.a && b == o.b && c == o.c
-                   && d == o.d && k == o.k; } };
-    struct PlyHash { size_t operator()(const PlyKey& x) const {
-        uint64_t h = x.a * 0x9E3779B97F4A7C15ull;
-        h ^= x.b * 0xC2B2AE3D27D4EB4Full;
-        h ^= x.c * 0x165667B19E3779F9ull;
-        h ^= x.d * 0xBF58476D1CE4E5B9ull;
-        h ^= ((uint64_t)x.cell << 32) ^ (uint64_t)x.k;
-        h ^= h >> 31;
-        return (size_t)h; } };
-    std::unordered_map<PlyKey, double, PlyHash> ply_memo;
-
-    double ply_score(int cell, const WKey& wk, const Bits& opened, int k) {
-        if (k <= 1) return safety(cell, wk);
-        Key kk = key_of(wk, opened);
-        PlyKey pk{cell, kk.a, kk.b, kk.c, kk.d, k};
-        auto it = ply_memo.find(pk);
-        if (it != ply_memo.end()) return it->second;
-        tick();
-        std::vector<Outcome> outs;
-        double p_safe = click_outcomes(cell, wk, opened, outs);
-        if (p_safe <= 0.0) { ply_memo[pk] = 0.0; return 0.0; }
-        double exp_v = 0.0;
-        for (auto& o : outs) {
-            if (won(o.opened)) exp_v += o.weight;
-            else exp_v += o.weight * best_ply(o.wk, o.opened, k - 1);
-        }
-        double r = p_safe * exp_v;
-        ply_memo[pk] = r;
-        return r;
-    }
-
-    struct BestKey { uint64_t a, b, c, d; int k;
-        bool operator==(const BestKey& o) const {
-            return a == o.a && b == o.b && c == o.c && d == o.d && k == o.k; } };
-    struct BestHash { size_t operator()(const BestKey& x) const {
-        uint64_t h = x.a * 0x9E3779B97F4A7C15ull;
-        h ^= x.b * 0xC2B2AE3D27D4EB4Full;
-        h ^= x.c * 0x165667B19E3779F9ull;
-        h ^= x.d * 0xBF58476D1CE4E5B9ull;
-        h ^= (uint64_t)x.k * 0x94D049BB133111EBull;
-        h ^= h >> 31;
-        return (size_t)h; } };
-    std::unordered_map<BestKey, double, BestHash> best_memo;
-
-    double best_ply(const WKey& wk, const Bits& opened, int k) {
-        Key kk = key_of(wk, opened);
-        BestKey bk{kk.a, kk.b, kk.c, kk.d, k};
-        auto it = best_memo.find(bk);
-        if (it != best_memo.end()) return it->second;
-        auto terms = saturate(wk, opened);
-        double val = 0.0;
-        for (auto& t : terms) {
-            if (won(t.opened)) { val += t.weight; continue; }
-            auto cands = candidates(t.wk, t.opened);
-            if (cands.empty()) continue;
-            double best = 0.0; bool first = true;
-            for (int c : cands) {
-                double v = ply_score(c, t.wk, t.opened, k);
-                if (first || v > best) { best = v; first = false; }
-            }
-            val += t.weight * best;
-        }
-        best_memo[bk] = val;
-        return val;
-    }
 };
 
-// ---- Python 绑定层 ----
-// 世界用十六进制字符串传入（Python int 无法直接 cast 成 C++ 位集）。
-py::tuple py_exact_eval(py::sequence worlds_seq, py::sequence clicks_seq,
-                        py::sequence clicks9_seq,
-                        py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
-                        int a, int w, int h, int64_t node_cap, int ply) {
-    ExactEngine eng;
-    eng.w = w;
-    eng.h = h;
-    eng.W2 = w + 2;
-    eng.a = a;
-    eng.node_cap = node_cap;
-    eng.total_bits = (w + 2) * (h + 2);
-    eng.nw = (eng.total_bits + 63) / 64;
-    if (eng.nw > MAX_WORDS)
-        throw std::runtime_error("board too large for MAX_WORDS");
-
-    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2
-        || cell_value.shape(1) != w + 2) {
-        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
-    }
-
-    eng.all_bits.zero(eng.nw);
-    eng.opened0.zero(eng.nw);
-    for (int y = 1; y <= h; ++y) {
-        for (int x = 1; x <= w; ++x) {
-            int idx = eng.idx_of(x, y);
-            eng.all_bits.set(idx);
-            int32_t v = cell_value.at(y, x);
-            if (v >= 0 && v <= 8) eng.opened0.set(idx);
-        }
-    }
-
-    eng.nbr.assign((size_t)(h + 2) * (size_t)(w + 2), Bits());
-    for (int y = 1; y <= h; ++y) {
-        for (int x = 1; x <= w; ++x) {
-            Bits m;
-            m.zero(eng.nw);
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    if (dx == 0 && dy == 0) continue;
-                    int nx = x + dx, ny = y + dy;
-                    if (nx >= 1 && nx <= w && ny >= 1 && ny <= h)
-                        m.set(eng.idx_of(nx, ny));
-                }
-            }
-            eng.nbr[(size_t)eng.idx_of(x, y)] = m;
-        }
-    }
-
-    // 世界：hex 字符串，从低位向高位每 16 字符切一个 64 位字
-    for (auto item : worlds_seq) {
-        std::string s = py::cast<std::string>(item);
-        if (s.empty()) throw std::runtime_error("empty world hex");
-        Bits b;
-        b.zero(eng.nw);
-        size_t end = s.size();
-        int wi = 0;
-        while (end > 0) {
-            size_t begin = (end >= 16) ? (end - 16) : 0;
-            uint64_t word = 0;
-            for (size_t k = begin; k < end; ++k) {
-                char ch = s[k];
-                int d;
-                if (ch >= '0' && ch <= '9') d = ch - '0';
-                else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
-                else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
-                else throw std::runtime_error("bad hex digit in world");
-                word = (word << 4) | (uint64_t)d;
-            }
-            if (wi >= eng.nw) throw std::runtime_error("world hex too long");
-            b.w[wi++] = word;
-            end = begin;
-        }
-        eng.world_bits.push_back(b);
-    }
-    if (eng.world_bits.empty()) throw std::runtime_error("worlds empty");
-
-    ExactEngine::WKey wk = eng.all_wkey();
-    auto cands = eng.candidates(wk, eng.opened0);
-
-    std::vector<double> q;
-    std::vector<std::pair<int, int>> coords;
-    double v_opt = 0.0;
-    {
-        py::gil_scoped_release unlock;
-        for (int c : cands) {
-            double v = (ply > 0) ? eng.ply_score(c, wk, eng.opened0, ply)
-                                 : eng.after_click(c, wk, eng.opened0);
-            q.push_back(v);
-            coords.push_back({eng.coord_x(c), eng.coord_y(c)});
-            if (v > v_opt) v_opt = v;
-        }
-    }
-
-    py::list q_py;
-    for (double v : q) q_py.append(py::float_(v));
-    py::list c_py;
-    for (auto& p : coords) c_py.append(py::make_tuple(p.first, p.second));
-    return py::make_tuple(q_py, c_py, py::int_(eng.nodes), py::float_(v_opt));
-}
 
 }  // namespace
 
@@ -2229,6 +1454,222 @@ struct MemEstimate {
     int64_t candidates;
     bool allowed;
 };
+
+// ---------------------------------------------------------------------------
+// 前瞻/OPTIMAL 准入用的**解析组合数上界**
+//
+// ⚠️ 2026-11-09 方向性错误修复（真机实测：300 局 8525 决策，LAYER 2 进入 1531 次
+//   ，其中 1529 次(99.9%)是 45ms 空烧后降级 pbs，只有 2 次成功）。
+//
+// ==================== 旧逻辑错在哪 ====================
+// 旧代码把「组解乘积 × C(n9, rem_max)」当规模上界，其中
+//     rem_max = max over 行 of (a - num10 - mine_total)
+// 但 C(N, r) 是**单峰函数**（峰值在 r ≈ N/2），因此
+//     max_r C(N, r) ≠ C(N, rem_max)
+// 当 rem_max 靠近 N 时（残局常见：剩余雷几乎都能塞进内部格），
+//     C(N, rem_max) = C(N,N) = 1，
+// 而真正的峰值是 C(N, N/2)，两者相差可达**指数级**。
+// 实测最坏样本：N=29、rem_max=29 ⇒ 旧值 1、真实峰值 C(29,14)=77,558,760
+//   ⇒ 低估 7.76e7 倍；300 局扫描中最大低估达 log2 95.35（≈5e28 倍）。
+//
+// 后果：准入闸把「根本算不动的盘面」判为「规模很小」⇒ 放行进 LAYER 2 ⇒
+//   物化时撞 HARD_CAP ⇒ 抛异常 → 降级 pbs（白烧时间，收益为零）。
+//   这不是性能问题、也不是内存/节点/时间闸问题（把 node_cap 提到 500 万后
+//   仍然 45ms 失败，failure reason 是 `lookahead_skip: hard cap`）。
+//
+// ==================== 正确上界 ====================
+// 物化时对每个 odometer 行的 rem 走 get_list_sizes，其取值为
+//     s ∈ [max(1, min(rem, N)), min(rem, N)]     （见 :436 钳制，2026-11-09 修复后）
+// ⇒ 任一行的展开数 ≤ max_{s ∈ [0, min(R, N)]} C(N, s)，其中 R = a - num10。
+// 而 C(N, s) 在 s ≤ floor(N/2) 上单调增 ⇒ 该上界 = C(N, min(R, N, floor(N/2))).
+// 这是**sound** 上界（不漏任何合法行），且 O(1) 计算、无需枚举 odometer 行
+//（旧 PRE-GUARD 曾用 4096 行截断采样，既有误差又慢）。
+//
+// ⚠️ 2026-11-09 修复 off-by-one：原上界用 N-1（复刻旧的错误钳制），
+//    修复后 s 可达 N（即「内部格全是雷」，C(N,N)=1）。因为 C(N,N)=1 ≤ 任何
+//    C(N,s)，把 s_hi 从 N-1 放到 N **不会放大**该上界（只多考虑一个值为 1 的
+//    端点），所以这个修正是保守的、不会误杀。
+//
+// 实测误杀风险 = 0（300 局里「修正上界 > cap」但真实 win_rate 成功的次数为 0），
+// 因此直接用解析上界作准入是安全的最小修法。
+// ---------------------------------------------------------------------------
+static double choose_log2_upper(int64_t n, int64_t r) {
+    // 返回 log2 C(n, r)；非法/越界返回 -inf（调用方按 0 处理）。
+    if (n <= 0 || r < 0 || r > n) return -std::numeric_limits<double>::infinity();
+    // lgamma 路径，n 可达 480+，直接乘会溢出
+    const double v = (std::lgamma((double)n + 1.0)
+                      - std::lgamma((double)r + 1.0)
+                      - std::lgamma((double)(n - r) + 1.0)) / std::log(2.0);
+    return v < 0.0 ? 0.0 : v;
+}
+
+// 内部无约束格 clicks9（大小 N）在最坏情况下的展开数上界（log2）。
+// rem_cap = a - num10（剩余雷数上限）。
+static double inner_expand_log2_upper(int64_t N, int64_t rem_cap) {
+    if (N <= 0) return 0.0;
+    // get_list_sizes 的钳制：num = min(rem, N)，且 a>=1；故有效 s 上限 N
+    // （2026-11-09 修复：原为 N-1，与旧错误钳制同步；C(N,N)=1 不放大上界）
+    int64_t s_hi = rem_cap;
+    if (s_hi > N) s_hi = N;
+    if (s_hi < 0) s_hi = 0;
+    // C(N, s) 在 s ∈ [0, floor(N/2)] 单调增
+    int64_t s_star = s_hi;
+    if (s_star > N / 2) s_star = N / 2;
+    const double lb = choose_log2_upper(N, s_star);
+    if (!std::isfinite(lb)) return 0.0;
+    return lb < 0.0 ? 0.0 : lb;
+}
+
+// ===========================================================================
+// 论文 ‖S‖ 的**精确**计数（2026-11-09，用户指令「对齐论文」）
+//
+// ==================== 论文原文（AAAI-17 WS-17-15, Algorithm 1/3）============
+//   Algorithm 1 line 5-7:
+//       S ← { s | s ∈ P(C), ‖s‖ = m }            // 未开格 C 的幂集，取恰好 m 雷
+//       for all b ∈ B:  S ← { s ∈ S | ‖s ∩ U(b)‖ = f(b) }   // 逐数字过滤
+//   Algorithm 3 line 2:
+//       if ‖S‖ ≤ criterion then return OPTIMAL(...)
+//
+// ⇒ **‖S‖ = 与当前全部观测一致的、完整的雷布局总数**（all consistent worlds）。
+//   它是**精确值**，不是上界、不是近似。论文用它当准入判据，因为 OPTIMAL 的
+//   递归成本在结构上正比于 ‖S‖（要遍历每个世界）⇒ 判据与成本天然正相关。
+//
+// ==================== 本项目的旧实现错在哪 ====================
+// 旧判据用 `world_upper`，它只是**前沿各组解数的乘积**：
+//       world_upper = ∏ ck[i]                    （漏掉内部格组合！）
+// 而真实的 ‖S‖ 是：
+//       ‖S‖ = Σ_{组解组合} C(n9, rem)  ，rem = a - num10 - 该行的雷数
+// 二者关系：‖S‖ ≥ world_upper（当 n9=0 或 rem 恒为 0/1 时才相等）。
+//
+// 实测后果（300 局）：world_upper 与 OPTIMAL 真实耗时的 Spearman 仅 **0.738**；
+// 而含 C(n9,rem) 的 cost_log2 是 **0.888**。差的那 0.15 就是被漏掉的项。
+// 更糟的是极端局面：n9=29、rem 逐行落在 0..29，世界数可差 7.7e7 倍——
+// 当年 LAYER 2 的 45ms 空烧与 20GB OOM 都是这个漏项的后果。
+//
+// ==================== 本实现 ====================
+// 复刻 Python 参考实现 bench/compare_2ply_vs_winrate.py::count_worlds_exact：
+//   total = Σ_{odometer 行} [ rem==0 ? 1 : (0<rem<=n9 ? C(n9,rem) : 0) ]
+// 饱和到 INT64_MAX（绝不溢出成"允许"）。
+// 成本：odometer 行走 O(world_upper) 行，每行查表 C(n9,·) 为 O(1)（预计算）。
+// ⇒ 在 DSTAR 量级（≤ 数千）下行走成本可忽略（实测 per-decision < 0.1ms）。
+//
+// ⚠️ 与 get_list_sizes 的钳制保持一致（2026-11-09 修复后：s ∈ [1, min(rem, n9)]），
+//    计数口径按"可行世界数"算（rem==0 → 1 个；0<rem≤n9 → C(n9,rem)；
+//    rem>n9 → 0）。修复前钳制为 n9-1，导致 rem==n9 的行计数成 C(n9,n9-1)=n9
+//    （正确应为 C(n9,n9)=1）⇒ 准入计数与物化数分叉。现两者口径一致。
+// ---------------------------------------------------------------------------
+// 预计算 C(n9, k) 表（k=0..min(n9, rem 上限)），用 double 存以免溢出；
+// 超出 INT64_MAX 时置 saturate 标记。
+static std::vector<double> make_choose_table(int64_t n9, int64_t k_max,
+                                             bool* saturates) {
+    std::vector<double> tbl;
+    *saturates = false;
+    if (n9 <= 0) return tbl;
+    if (k_max > n9) k_max = n9;
+    if (k_max < 0) k_max = 0;
+    tbl.assign((size_t)k_max + 1, 1.0);
+    double acc = 1.0;
+    for (int64_t k = 1; k <= k_max; ++k) {
+        acc = acc * (double)(n9 - k + 1) / (double)k;   // C(n9,k) 递推
+        if (!(acc > 0.0) || acc > 9.0e18) {              // 溢出/失稳 → 饱和
+            *saturates = true;
+            acc = 9.0e18;
+        }
+        tbl[(size_t)k] = acc;
+    }
+    return tbl;
+}
+
+static int64_t count_situations_exact(
+    const std::vector<std::vector<std::vector<int32_t>>>& gmats,
+    const std::vector<int>& ck, int64_t a, int64_t num10, int64_t n9,
+    int64_t cap, int64_t* rows_walked) {
+    // Σ_{odometer 行} 该行的可行世界展开数；一旦 > cap 立即返回 cap+1（哨兵）。
+    //
+    // ⚠️ 2026-11-09 性能修复（对齐论文首版实测 3.8 倍退化）：
+    //   首版的早退阈值是 `total > 9e18`（只防 int64 溢出），而调用方只关心
+    //   「是否 ≤ DSTAR(256)」。二者差 16 个数量级 ⇒ 55.4% 的计数是
+    //   **走完全程才发现超限**的白烧（实测 4097-16384 桶平均 30ms/决策，
+    //   2000 局总耗时从 129s 涨到 490s）。
+    //   ⇒ 现按调用方的 cap 早退：超 cap 立刻返回，不再走剩余 odometer 行。
+    int64_t total = 0;
+    bool sat = false;
+    const int64_t k_cap = std::min<int64_t>(n9, std::max<int64_t>(0, a - num10));
+    std::vector<double> ctab = make_choose_table(n9, k_cap, &sat);
+
+    // 预计算每行雷数（避免每行重扫矩阵）
+    std::vector<std::vector<int64_t>> row_mines(gmats.size());
+    for (size_t gi = 0; gi < gmats.size(); ++gi) {
+        row_mines[gi].resize(gmats[gi].size(), 0);
+        for (size_t ri = 0; ri < gmats[gi].size(); ++ri) {
+            int64_t mt = 0;
+            for (int32_t v : gmats[gi][ri]) if (v == 1) ++mt;
+            row_mines[gi][ri] = mt;
+        }
+    }
+
+    // ---- O(1) 严格下界预判（2026-11-09 性能优化，实测可省 56% 的白烧计数）----
+    // 原理：任一行对 ‖S‖ 的贡献是 C(n9, rem_row)（rem_row>0）或 1（rem_row==0）。
+    //   而 C(n9, k) 对 1 ≤ k ≤ n9 的最小非平凡值是 C(n9,1)=n9（k=1）与 C(n9,n9-1)=n9；
+    //   中间的 k 只会更大（C 在 k≤n9/2 单调增）。
+    // ⇒ **若存在任意一行使 rem_row ≥ 1，则 ‖S‖ ≥ n9**。
+    //   （若所有行 rem_row==0，则 ‖S‖ = 行数，可能远小于 n9，此下界不适用。）
+    // ⇒ 当 n9 > cap 且存在 rem≥1 的行时，可直接判定 ‖S‖ > cap，
+    //    无需走 odometer。实测 1469 决策中 501 次（34.1%）可这样提前拒绝。
+    //
+    // ⚠️ 这不是"上界"而是"下界"，方向安全：下界已超 cap ⇒ 真实值必超 ⇒ 拒绝正确。
+    if (n9 > cap) {
+        bool any_rem_ge1 = false;
+        for (size_t gi = 0; gi < row_mines.size() && !any_rem_ge1; ++gi)
+            for (size_t ri = 0; ri < row_mines[gi].size(); ++ri) {
+                if (a - num10 - row_mines[gi][ri] >= 1) { any_rem_ge1 = true; break; }
+            }
+        if (any_rem_ge1) {
+            if (rows_walked) *rows_walked = 0;   // 未走 odometer
+            return cap + 1;
+        }
+    }
+
+    const int64_t cap_sentinel = cap + 1;
+    Odometer od(ck);
+    std::vector<int> il;
+    int64_t walked = 0;
+    while (od.next(il)) {
+        ++walked;
+        int64_t mt = 0;
+        for (size_t i = 0; i < il.size() && i < row_mines.size(); ++i)
+            mt += row_mines[i][(size_t)il[i]];
+        const int64_t rem = a - num10 - mt;
+        int64_t add = 0;
+        if (rem == 0) {
+            add = 1;
+        } else if (rem > 0 && rem <= n9) {
+            if (sat) {
+                // 组合数已饱和 ⇒ 结果必然 > cap ⇒ 提前返回
+                if (rows_walked) *rows_walked = walked;
+                return cap_sentinel;
+            }
+            const double c = ctab[(size_t)rem];
+            if (c >= 9.0e18) {
+                if (rows_walked) *rows_walked = walked;
+                return cap_sentinel;
+            }
+            add = (int64_t)c;
+        }   // rem > n9 或 rem < 0 ⇒ 该行不产生可行世界（0）
+        if (total > INT64_MAX - add) {
+            if (rows_walked) *rows_walked = walked;
+            return cap_sentinel;
+        }
+        total += add;
+        // 早退：已超调用方的 cap ⇒ 不必走完剩余行
+        if (total > cap) {
+            if (rows_walked) *rows_walked = walked;
+            return cap_sentinel;
+        }
+    }
+    if (rows_walked) *rows_walked = walked;
+    return total;
+}
 
 static MemEstimate estimate_mem_impl(int64_t worlds, int64_t candidates,
                                      int64_t budget) {
@@ -2339,17 +1780,33 @@ static py::dict py_decision_preflight(
 // ---------------------------------------------------------------------------
 namespace decision_layer {
 
+// 前向声明：定义在文件后部（帮助前瞻小节），OPTIMAL 分支在更早的位置调用。
+static py::list transition_branch_board(const ExactEngine& eng,
+                                        const std::vector<int32_t>& cv,
+                                        const ExactEngine::WKey& wk,
+                                        const Bits& opened,
+                                        int cx, int cy);
+
 static py::list coords_to_pylist(const std::vector<Coord>& v) {
     py::list out;
     for (const auto& c : v) out.append(py::make_tuple(c.first, c.second));
     return out;
 }
 
+// ---- 诊断：最近一次 decide 的论文 ‖S‖ 与生效 DSTAR（2026-11-09 对齐论文）----
+// thread_local：帮助线程与 GUI 线程会并发调 decide，全局变量会数据竞争
+// （本项目 2026-11-08 已因同类问题触发过 0xC0000005）。
+static thread_local int64_t g_last_situations = -1;   // 精确 ‖S‖；-1=未计数
+static thread_local int64_t g_last_dstar = -1;        // 本次生效 DSTAR
+
 static py::dict make_response(int x, int y, double confidence, int path,
                               const char* reason, int64_t estimated_bytes,
                               int64_t world_upper, py::object prob = py::dict(),
                               py::object tied = py::list(),
-                              py::object weighted = py::list()) {
+                              py::object weighted = py::list(),
+                              py::object unused = py::none(),
+                              py::object transitions = py::none(),
+                              py::object transition_meta = py::none()) {
     py::dict d;
     d["x"] = x;
     d["y"] = y;
@@ -2361,11 +1818,15 @@ static py::dict make_response(int x, int y, double confidence, int path,
     d["prob"] = prob;
     d["tied"] = tied;          // diagnostic: exact tie-set coordinates
     d["weighted"] = weighted;  // diagnostic: open_num5x5 max group
+    // 真实状态转移（仅 OPTIMAL 层提供；缺省 None ⇒ UI 明确显示"暂无"）。
+    // transitions[i] = {probability(条件概率: 给定该格安全), new_cells, label}
+    // transition_meta = {p_click_safe, basis, world_count}
+    d["transitions"] = transitions;
+    d["transition_meta"] = transition_meta;
     return d;
 }
 
-// Deterministic tie-break (user-approved strategy change, option A):
-// among all candidates sharing the maximum value, pick the smallest
+// Deterministic tie-break (user-approved strategy change, option A):// among all candidates sharing the maximum value, pick the smallest
 // coordinate (x, then y).  decide() is a PURE function of cell_value+config;
 // no Python RNG, no hidden state.  Python parity harness must apply the SAME
 // rule on its side (replacing np.random.choice) before comparing outputs.
@@ -2382,12 +1843,16 @@ static Coord deterministic_tie_break(const std::vector<Coord>& tied) {
 }
 
 // DIAGNOSTIC: pbs branch candidate count / max safety (whole-game debugging).
-static std::string g_last_pbs_diag;
+// ⚠️ 必须 thread_local（2026-11-08 崩溃修复）：自动线程与帮助线程会**同时**
+// 调用 decide（日志实测两线程交错）。全局 std::string 被两线程并发赋值会
+// 触发堆重分配竞争 → 内存损坏 → 进程级 0xC0000005（"该内存不能为 read"）。
+// 本模块其余诊断状态（g_last_phase 等）同样用 thread_local，此处对齐。
+static thread_local std::string g_last_pbs_diag;
 
 static py::dict decide_impl(
     py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
-    int a, int w, int h, double wr_threshold, int64_t node_cap,
-    int64_t mem_budget) {
+    int a, int w, int h, int64_t node_cap,
+    int64_t mem_budget, bool is_play) {
     if (cell_value.ndim() != 2 ||
         cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2)
         throw std::invalid_argument("cell_value shape mismatch (expect (h+2, w+2))");
@@ -2426,15 +1891,20 @@ static py::dict decide_impl(
     std::vector<std::vector<Coord>> groups;
     std::vector<std::set<Coord>> group_sets;
     std::vector<std::set<Coord>> cell_sets(clicks.size());
-    // PRODUCTION PARITY (advisor): grouping uses get_set_1's 0<v<8 => 1..7.
-    // Do NOT unify with part_solve's _cs which uses 1<=v<=8 => 1..8.
-    // The two ranges are intentionally different in number5_1.
+    // 分组依据：邻域已开数字必须与 part_solve 建约束的口径一致（1..8，含 8）。
+    // ⚠️ 修复（2026-11-08，根因见 output/_minrepro_8_consistent.py）：
+    // 原实现沿用 get_set_1 的 0<v<8（排除 8），而 run_part_solve 建约束用
+    // 1<=v<=8（含 8）。数字 8 是「8 邻格全是雷」的最强约束，排除它会让贴着 8
+    // 的 frontier 格各自独立成组，组内 cs 却仍含 8——recurse 的 check_leaf /
+    // check_bound 恒不满足 ⇒ part_solve 解集为空 ⇒ decide 返回
+    // reason=empty_group / x=y=-1，即真机日志里的「决策不可用」。
+    // 中局不显形（frontier 格通常还贴着 1..7 可合组）；残局只剩零星格时必炸。
     for (size_t k = 0; k < clicks.size(); ++k) {
         const auto& p = clicks[k];
         for (int u = p.first - 1; u <= p.first + 1; ++u)
             for (int v = p.second - 1; v <= p.second + 1; ++v) {
                 const int32_t val = cv[(size_t)v * W2 + u];
-                if (val > 0 && val < 8) cell_sets[k].emplace(u, v);
+                if (val >= 1 && val <= 8) cell_sets[k].emplace(u, v);
             }
     }
     for (size_t k = 0; k < clicks.size(); ++k) {
@@ -2485,8 +1955,63 @@ static py::dict decide_impl(
     }
 
     const int64_t candidates = 1 + (int64_t)ordered_clicks.size() + (int64_t)clicks9.size();
-    const auto mem = estimate_mem_impl(world_upper, candidates, mem_budget);
-    const double limitation = (double)clicks9.size() * 0.8 + std::log2((double)world_upper);
+
+    // =========================================================================
+    // 前瞻层规模估算（诊断字段 cost_log2 的来源）。
+    //
+    // 历史（保留供追溯，勿据此新增逻辑）：
+    //   · 旧准入阈值 limitation = 0.8*n9 + log2(world_upper) 与真实成本**方向相反**
+    //     （实测 Spearman = -0.575），且与 OPTIMAL 层形成空集互斥
+    //     ⇒ 旧 reason=win_rate 实测 0 次触发。该阈值已废弃。
+    //   · 旧规模估算 log2_total = log2(world_upper) + log2 C(n9, rem_max) 有
+    //     **方向性错误**：C(N,r) 单峰，rem_max 靠近 N 时严重低估（最坏 5e28 倍）。
+    //   · 该错误导致 LAYER 2 放行「根本算不动的盘面」，45ms 白烧后降级 pbs
+    //     （300 局实测 1529/1531 全中）。LAYER 2 已于 2026-11-09 按用户裁决移除。
+    //
+    // 现实现（正确、sound、O(1)）：
+    //   log2_total_est = log2(world_upper) + max_s log2 C(N, s)
+    //   s = min(R, N, N/2)，R = a - num10
+    //   ⇒ 任一 odometer 行的展开数都被它界住（见 inner_expand_log2_upper）。
+    //
+    // 两种 rem 口径（历史坑，勿混用）：
+    //   · 实际物化用逐行 rem = a - num10 - mine_total（逐行不同）；
+    //   · 估算器只能用全局上界 R = a - num10（枚举行太贵）。
+    // =========================================================================
+    int64_t rem_cap_wr = (int64_t)a - num10;
+    if (rem_cap_wr < 0) rem_cap_wr = 0;
+    double log2_total_est = std::log2((double)std::max<int64_t>(1, world_upper));
+    log2_total_est += inner_expand_log2_upper((int64_t)clicks9.size(), rem_cap_wr);
+
+    // ⚠️ 2026-11-09 修正（评审 D2 + 真机 OOM 根因，见 :2545 注释）：
+    // 用**与 COST_CAP 同口径**的真实世界数重算 mem：
+    //   真实世界数 = world_upper × C(n9, rem_max)（饱和）
+    //   每世界字节 = sizeof(Bits) ≈ 88 B（ExactEngine 的表示）
+    // ⇒ 这样 mem.allowed 与 log2_total_est <= COST_CAP 是两个**同集合**的检查：
+    //   log2_total_est 按「世界个数」限规模，mem 按「世界个数 × 88B」限内存，
+    //   二者一致且都以 1.5GB 硬上限为界（88B 时 1.5GB 可容 ~1,807 万世界，
+    //   远大于 COST_CAP=699k ⇒ 实际由 COST_CAP 主导，mem 是冗余双保险）。
+    const auto mem = [&]() -> MemEstimate {
+        const double bits_bytes = 88.0;      // sizeof(Bits)
+        // log2_worlds → 世界数（饱和到 INT64_MAX，绝不溢出成"允许"）
+        const int64_t worlds_true =
+            log2_total_est >= 63.0
+                ? INT64_MAX
+                : (int64_t)std::llround(std::pow(2.0, log2_total_est));
+        const long double raw = (long double)worlds_true * (long double)bits_bytes;
+        const int64_t bytes = raw >= (long double)INT64_MAX
+                                  ? INT64_MAX : (int64_t)raw;
+        MemEstimate e;
+        e.bytes = bytes;
+        // P1/P0-4 修复（review2 code-reviewer P1-1）：1.5GB 是用户铁律的
+        // 硬上限，不允许被公开 decide 的 mem_budget 形参穿透。决策层一律
+        // 使用 DEFAULT_MEM_BUDGET；诊断用的 estimate_mem 仍可调（它不参与
+        // 决策准入）。形参保留仅为兼容既有 pybind 签名，不再消费其数值。
+        e.budget = DEFAULT_MEM_BUDGET;
+        e.worlds = worlds_true;
+        e.candidates = candidates;
+        e.allowed = bytes <= e.budget;
+        return e;
+    }();
 
     // =========================================================================
     // LAYER 1 — OPTIMAL (user directive 2026-11-05: "实现论文里的最优策略，
@@ -2502,137 +2027,133 @@ static py::dict decide_impl(
     // constraint) on raw per-call data.  Overflow-safe: world_upper saturates
     // at INT64_MAX, so a huge world never accidentally enters this branch.
     //
-    // Implementation reuses the existing exact-V* kernel (ExactEngine, line
-    // ~1735) — zero new kernel code.  Worlds are materialized exactly like
+    // Implementation reuses the existing exact-V* kernel (ExactEngine) —
+    // zero new kernel code.  Worlds are materialized exactly like
     // py_win_rate stage-1 (Odometer over groups + clicks9 combinations), then
     // converted to bit-packed worlds for the engine.
     //
-    // Priority vs other layers (advisor nit): OPTIMAL > win_rate > pbs.  A
-    // board with world_upper<=400 but limitation>threshold still enters
-    // OPTIMAL — intentional: exact enumeration is strictly stronger than
-    // both heuristics, and the <1s budget gate bounds its cost.
+    // 层级关系（2026-11-09 现状）：OPTIMAL 是唯一的前瞻型决策层；
+    // 其余情况走 pbs + PSEQ。论文 D* 的另一半「启发式 PSEQ」即此。
     // =========================================================================
-    // DSTAR is runtime-configurable (user nit: acceptance-phase trigger-rate
-    // tuning should not require recompiles).  Default 400 (user-approved).
-    // Thread-safe via magic statics; env var only read once per process.
-    static const int64_t DSTAR = [] {
+    // 【对齐论文 2026-11-09】DSTAR 判据改用论文的 ‖S‖（完整一致世界数）
+    //
+    // 论文 Algorithm 3 原文：`if ‖S‖ ≤ criterion then return OPTIMAL(...)`
+    // 其中 ‖S‖ = { s | s ∈ P(C), ‖s‖ = m, ∀b: ‖s∩U(b)‖=f(b) } 的总数，
+    // 即**与全部观测一致的完整雷布局数**（精确值，非上界）。
+    //
+    // 旧实现用 world_upper（前沿各组解数乘积）漏掉了内部格组合 C(n9,rem)，
+    // 导致判据与实际成本相关性只有 0.738（含 C(n9,rem) 的 cost_log2 是 0.888），
+    // 且极端局面低估达 7.7e7 倍（LAYER 2 空烧与 OOM 的同一病根）。
+    //
+    // 新准入（两级）：
+    //   级 1（廉价粗筛）：world_upper ≤ DSTAR*K —— 因 ‖S‖ ≥ world_upper，
+    //        world_upper 本身超限就已确定进不去，免走 odometer。
+    //        取 K=64 是经验上限（C(n9,rem) 对 n9≤480 极少超过 2^64；
+    //        超了会在级 2 精确算出后拒绝，不影响正确性只影响一点速度）。
+    //   级 2（精确判据）：count_situations_exact(...) ≤ DSTAR —— 论文语义。
+    // 成本：级 2 走 O(world_upper) 行 odometer，实测 DSTAR 量级下 < 0.1ms。
+    //
+    // DSTAR 默认值：论文选用 PSEQ-D256（criterion=256 世界）。
+    //   本项目历史默认 400，现在对齐论文改 256（可用 MSW_DSTAR 覆盖）。
+    //   帮助模式仍 ×3（1200）——帮助推理可接受更大穷举。
+    // =========================================================================
+    const bool help_mode_dstar = !is_play;
+    static const int64_t DSTAR_AUTO = [] {
         const char* e = std::getenv("MSW_DSTAR");
         if (e) {
             long long v = std::atoll(e);
             if (v >= 0) return (int64_t)v;
         }
-        return (int64_t)400;
+        return (int64_t)256;   // 论文 PSEQ-D256 的 criterion
     }();
-    if (world_upper <= DSTAR && mem.allowed) {
+    const int64_t DSTAR = help_mode_dstar ? DSTAR_AUTO * 3 : DSTAR_AUTO;
+
+    // ---- 级 1：world_upper 廉价粗筛（必要条件）----
+    // K=4：若 world_upper > 4*DSTAR，则 ‖S‖ ≥ world_upper 必然超限。
+    // ⚠️ 2026-11-09 性能修复：首版取 K=64（=16384），实测该桶
+    //    （world_upper 4097-16384）平均 30ms/决策，是所有桶里最贵的白烧区
+    //    —— 因为计数要走完 4096~16384 行的 odometer 才发现超限。
+    //    收紧到 K=4 后，最多只走 4*DSTAR(≈1024) 行，且配合 cap 早退，
+    //    单次计数的上界成本降到微秒级。
+    //    正确性不受影响：‖S‖ ≥ world_upper，故 world_upper > cap 时必然超限。
+    const int64_t coarse_cap = DSTAR * 4;
+    bool situations_ok = false;
+    int64_t situations = 0;     // 精确 ‖S‖（超 cap 时为 cap+1 哨兵）
+    g_last_situations = -1;     // 诊断：本次精确 ‖S‖（-1 = 未计数）
+    g_last_dstar = DSTAR;       // 诊断：本次生效的 DSTAR
+
+    // ---- gmats 只解析一次，两级判据与物化共用 ----
+    // ⚠️ 2026-11-09 性能修复：首版在级 2 里解析一份 gmats_pre、物化时又解析一份
+    //    gmats，而这是 res_list → vector<vector<vector<int32_t>>> 的**全量拷贝**
+    //    （每决策点多组 × 多解 × 组宽），实测是性能退化的次要但确定的来源。
+    //    现解析一次，按需传递；只有真正进入物化才需要它，故用 unique_ptr 惰性化
+    //    不划算（判定本身也要它），直接提前解析。
+    std::vector<std::vector<std::vector<int32_t>>> gmats_shared;
+    std::vector<int> ck_shared;
+    bool gmats_ok = false;
+    if (world_upper <= coarse_cap) {
+        try {
+            gmats_shared.reserve(res_list.size());
+            for (auto gitem : res_list) {
+                py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+                    py::reinterpret_borrow<py::object>(gitem));
+                auto rr = arr.unchecked<2>();
+                std::vector<std::vector<int32_t>> rows((size_t)rr.shape(0),
+                    std::vector<int32_t>((size_t)rr.shape(1)));
+                for (py::ssize_t k = 0; k < rr.shape(0); ++k)
+                    for (py::ssize_t c = 0; c < rr.shape(1); ++c)
+                        rows[(size_t)k][(size_t)c] = rr(k, c);
+                gmats_shared.push_back(std::move(rows));
+            }
+            for (auto v : ck_list) ck_shared.push_back(v.cast<int>());
+            gmats_ok = true;
+        } catch (const std::exception&) {
+            gmats_ok = false;
+        }
+    }
+
+    if (gmats_ok) {
+        // ---- 级 2：精确计数（论文 ‖S‖）----
+        try {
+            int64_t walked = 0;
+            situations = count_situations_exact(
+                gmats_shared, ck_shared, (int64_t)a, (int64_t)num10,
+                (int64_t)clicks9.size(), DSTAR, &walked);
+            situations_ok = (situations <= DSTAR);
+            g_last_situations = situations;   // 诊断导出（py_decide 读取）
+        } catch (const std::exception&) {
+            // 计数失败 ⇒ 保守拒绝（不因异常放行昂贵层）
+            situations_ok = false;
+        }
+    }
+
+    // 进 OPTIMAL 的最终条件（论文 Algorithm 3 line 2 语义）：
+    //   ‖S‖ ≤ criterion  —— situations_ok 即此判定
+    // 内存保险 mem.allowed 仍保留（用户铁律：1.5GB 硬上限不可调），
+    // 但它在 ‖S‖≤DSTAR 时必然为真（DSTAR×88B ≪ 1.5GB），故不再先行短路。
+    if (situations_ok && mem.allowed) {
         // Materialize the world set (mine layouts over the full board), same
         // semantics as py_win_rate stage-1: enumerate group solution rows and
         // clicks9 combinations subject to remaining-mine feasibility.
         std::vector<Bits> worlds;
         bool optimal_ok = true;
         try {
-            // Parse res_list matrices (same as py_win_rate:1089-1103).
-            std::vector<std::vector<std::vector<int32_t>>> gmats;
-            gmats.reserve(res_list.size());
-            for (auto gitem : res_list) {
-                py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
-                    py::reinterpret_borrow<py::object>(gitem));
-                auto r = arr.unchecked<2>();
-                std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
-                    std::vector<int32_t>((size_t)r.shape(1)));
-                for (py::ssize_t k = 0; k < r.shape(0); ++k)
-                    for (py::ssize_t c = 0; c < r.shape(1); ++c)
-                        rows[(size_t)k][(size_t)c] = r(k, c);
-                gmats.push_back(std::move(rows));
-            }
-            std::vector<int> ck;
-            for (auto v : ck_list) ck.push_back(v.cast<int>());
+            // gmats/ck 已在准入前解析（gmats_shared/ck_shared），直接复用引用，
+            // 避免第二次全量拷贝（2026-11-09 性能修复）。
+            const auto& gmats = gmats_shared;
+            const auto& ck = ck_shared;
 
             const int nw_engine = (ncell + 63) / 64;
-            // PRE-GUARD (memory-blast root cause, 2 incidents): world_upper
-            // counts ONLY the frontier-group solution product; the clicks9
-            // combinatorial expansion C(n9, rem) is NOT in it.  A board with
-            // world_upper<=400 but a wide clicks9 can materialize an
-            // astronomically larger full-world set.  The paper's |S| is the
-            // FULL world count, so estimate the true total first and refuse
-            // the layer if it cannot be <= DSTAR.
-            {
-                int64_t n9 = (int64_t)clicks9.size();
-                // Group-product rows each carry some mine count; the largest
-                // possible clicks9 expansion per row is C(n9, rem_max).  A
-                // cheap sound upper bound: max over rows of C(n9, rem_row)
-                // <= C(n9, n9/2) ~ 2^n9.  Sound and simple: full_worlds <=
-                // world_upper * 2^n9 is useless for big n9, so instead bound
-                // rem per row: rem <= min(a - num10, n9).  Use the exact
-                // max-rem across odometer rows cheaply:
-                int64_t rem_max = 0;
-                bool rem_walk_truncated = false;
-                {
-                    Odometer od_est(ck);
-                    std::vector<int> il;
-                    int64_t guard = 0;
-                    while (od_est.next(il)) {
-                        // 4096 cap (slow-call fix): on huge group products a
-                        // full walk costs seconds (measured 12.6s at
-                        // world_upper=11.4M); 4096 rows suffice to find
-                        // rem_max in practice, and on overflow we assume
-                        // rem_max=n9 which makes the C(n9,rem) estimate
-                        // huge -> layer skipped anyway. Same safe outcome.
-                        if (++guard > 4096) { rem_max = n9; rem_walk_truncated = true; break; }
-                        int64_t mt = 0;
-                        for (size_t i = 0; i < il.size(); ++i) {
-                            const auto& row = gmats[i][(size_t)il[i]];
-                            for (int32_t v : row) if (v == 1) ++mt;
-                        }
-                        int64_t rem = (int64_t)a - num10 - mt;
-                        if (rem > rem_max) rem_max = rem;
-                        if (rem_max >= n9) break;   // cannot grow further
-                    }
-                }
-                // P1-3 fix (architect audit): when the 4096-row sample truncated,
-                // the worst-case assumption rem_max=n9 can wrongly skip OPTIMAL
-                // for boards whose true rem_max is small.  Re-walk WITHOUT the
-                // row-work (skip the per-row mine counting) to find the exact
-                // rem_max cheaply — the odometer walk itself is O(rows), the
-                // expensive part was counting mines per row.
-                if (rem_walk_truncated) {
-                    int64_t rem_exact = 0;
-                    Odometer od2(ck);
-                    std::vector<int> il2;
-                    // Precompute per-group row mine counts once (O(total rows)).
-                    std::vector<std::vector<int64_t>> row_mines(gmats.size());
-                    for (size_t gi = 0; gi < gmats.size(); ++gi) {
-                        row_mines[gi].resize(gmats[gi].size());
-                        for (size_t ri = 0; ri < gmats[gi].size(); ++ri) {
-                            int64_t mt = 0;
-                            for (int32_t v : gmats[gi][ri]) if (v == 1) ++mt;
-                            row_mines[gi][ri] = mt;
-                        }
-                    }
-                    while (od2.next(il2)) {
-                        int64_t mt = 0;
-                        for (size_t i = 0; i < il2.size(); ++i)
-                            mt += row_mines[i][(size_t)il2[i]];
-                        int64_t rem = (int64_t)a - num10 - mt;
-                        if (rem > rem_exact) rem_exact = rem;
-                        if (rem_exact >= n9) break;
-                    }
-                    rem_max = rem_exact;
-                }
-                // C(n9, rem_max) upper bound for one row's expansion; times
-                // world_upper (group-product rows) = full-world upper bound.
-                auto choose = [](int64_t n, int64_t k) -> double {
-                    if (k < 0 || k > n || n <= 0) return 0.0;
-                    k = std::min(k, n - k);
-                    double r = 1.0;
-                    for (int64_t i = 1; i <= k; ++i)
-                        r = r * (double)(n - k + i) / (double)i;
-                    return r;
-                };
-                double expand = choose(n9, rem_max);
-                double full_est = (double)std::min<int64_t>(world_upper, DSTAR + 1) * expand;
-                if (full_est > (double)DSTAR)
-                    throw std::runtime_error("optimal_skip: full-world estimate exceeds DSTAR");
-            }
+            // （旧 PRE-GUARD 已删除，2026-11-09 对齐论文时）
+            // 它曾用 choose(n9, rem_max) 的**松上界**估算完整世界数，作为
+            // world_upper 粗筛的补充。现在准入阶段已用 count_situations_exact()
+            // 算出**精确 ‖S‖** 并与 DSTAR 比较（论文 Algorithm 3 语义），
+            // 能进到这里的局面 ‖S‖ 已确认 ≤ DSTAR ⇒ 旧的松上界只会**误杀**
+            // 本可精确穷举的最强层，故删除。
+            //
+            // 运行时内存保险仍在下方物化循环的 MID-LOOP GUARD：
+            //   worlds.size() > DSTAR ⇒ throw（最多物化 DSTAR+1 个世界）。
+            // 它比任何估算都精确，且代价 O(DSTAR)。
             Odometer od(std::move(ck));
             std::vector<int> index_list;
             while (od.next(index_list)) {
@@ -2736,8 +2257,76 @@ static py::dict decide_impl(
                 }
                 if (best_cell >= 0) {
                     const double p_safe = eng.safety(best_cell, wk);
+                    // 🔴 关键：OPTIMAL 层此前**不返回 prob**，UI 收到的 payload
+                    // 里 prob 为空 ⇒ 末局进入精确穷举层后整盘热力图回落成
+                    // “无数据”灰底（用户实测「最后几步热力图变全灰」）。
+                    // 用同一个世界集合给所有未开格算逐格安全概率，与 win_rate /
+                    // pbs 分支的 prob 语义一致（“该格不是雷”的概率）。
+                    py::dict prob;
+                    for (int c : cands) {
+                        const int cx = eng.coord_x(c), cy = eng.coord_y(c);
+                        prob[py::make_tuple(cx, cy)] =
+                            py::float_(eng.safety(c, wk));
+                    }
+                    // 🟢 真实状态转移（用户需求 2026-11-08：帮助页要看前瞻）
+                    // 此刻 OPTIMAL 层已经把**全部世界**物化在 eng.world_bits，
+                    // 枚举成本已付过，直接复用不额外开销：
+                    //   click_outcomes(cell) 按「点击该格后的可观测结果」把
+                    //   一致世界分组，每组 weight = 组内世界数 / 安全世界数
+                    //   —— 即「给定该格安全，出现这一观测的条件概率」。
+                    // 这是真值，不是估的：世界集来自本轮精确穷举，
+                    // 观测签名 Obs = (完整已开位集, 本步新开格及数字)。
+                    py::list transitions;
+                    std::vector<ExactEngine::Outcome> outs;
+                    const double p_clicksafe =
+                        eng.click_outcomes(best_cell, wk, eng.opened0, outs);
+                    for (auto& o : outs) {
+                        // 本分支新开的格子及其数字（Obs 已算好，但 Outcome
+                        // 只带 opened 位集；数字从掘开的棋盘反推即可）
+                        py::list cells_py;
+                        Bits delta = b_andnot(o.opened, eng.opened0);
+                        std::vector<std::pair<int, int>> new_cells;
+                        for (int i = 0; i < delta.nw; ++i) {
+                            uint64_t x = delta.w[i];
+                            while (x) {
+                                int bit = msw_ctzll(x);
+                                x &= x - 1;
+                                int c = (i << 6) + bit;
+                                new_cells.push_back({eng.coord_x(c),
+                                                     eng.coord_y(c)});
+                            }
+                        }
+                        for (auto& p : new_cells)
+                            cells_py.append(py::make_tuple(p.first, p.second));
+                        py::dict branch;
+                        branch["probability"] = py::float_(o.weight);
+                        branch["new_cells"] = cells_py;
+                        branch["label"] = py::str(
+                            std::to_string(new_cells.size()) + " 格展开");
+                        branch["board"] = transition_branch_board(
+                            eng, cv, o.wk, o.opened,
+                            eng.coord_x(best_cell), eng.coord_y(best_cell));
+                        transitions.append(branch);
+                    }
+                    if (p_clicksafe > 0.0 && !transitions.empty()) {
+                        py::dict cond;
+                        cond["p_click_safe"] = py::float_(p_clicksafe);
+                        cond["basis"] = py::str("exact_worlds");
+                        cond["world_count"] = py::int_((int64_t)eng.world_bits.size());
+                        // transitions 语义：条件概率（以「该格安全」为前提），
+                        // 与点击前的安全概率相乘才是无条件联合概率。
+                        return make_response(
+                            eng.coord_x(best_cell), eng.coord_y(best_cell),
+                            v_opt, 0, "optimal", mem.bytes, world_upper, prob,
+                            py::list(),    // tied
+                            py::list(),    // weighted
+                            py::none(),    // unused（保留位，勿删）
+                            transitions,
+                            cond);
+                    }
                     return make_response(eng.coord_x(best_cell), eng.coord_y(best_cell),
-                                         v_opt, 0, "optimal", mem.bytes, world_upper);
+                                         v_opt, 0, "optimal", mem.bytes, world_upper,
+                                         prob);
                 }
             } catch (const NodeCapExceeded&) {
                 // exact enumeration exceeded node budget -> fall through to
@@ -2751,587 +2340,841 @@ static py::dict decide_impl(
         // -> fall through to win_rate/pbs below.
     }
 
-    const bool use_win_rate = limitation <= wr_threshold && mem.allowed;
-    if (!use_win_rate) {
-        // pbs fallback: validated C++ kernel returns per-candidate safety.
-        py::list oc = coords_to_pylist(ordered_clicks);
-        py::list c9 = coords_to_pylist(clicks9);
-        py::tuple pbs = py_pbs_compute(world_upper, num10, oc, c9, res_list,
-                                       ck_list, a, no_progress, py::none());
-        py::array_t<float, py::array::c_style | py::array::forcecast> res(pbs[0]);
-        auto rr = res.unchecked<1>();
-        py::dict prob;
+    // 前瞻层准入（2026-11-08 用户裁决：换约束方法，保留前瞻）：
+    //   log2_total_est ≤ COST_CAP（真实枚举规模可承受）
+    //   && mem.allowed（1.5GB 硬上限，用户铁律不可调）
+    //   && world_upper > DSTAR（**必须**：OPTIMAL 够不到才算新增覆盖）
+    // 旧条件 limitation <= wr_threshold 已废弃 —— 它与 OPTIMAL 层形成空集互斥
+    // （实测 reason=win_rate 0 次触发），且与真实成本方向相反。
+    // wr_threshold 参数保留仅为方便外部实验覆盖：设置极大值也不会强行放过
+    // 代价不可承受的局面（COST_CAP 仍是硬门）。
+    //
+    // ⚠️ 性能回归修复（2026-11-09，实测总耗时 126ms → 22485ms / 178x）：
+    // 首版只按 cost_log2 判定，导致 5×5 等小盘上「world_upper 很小、cost_log2
+    // 也很小」的局面全部涌进 win_rate，而它们在旧版走廉价的 pbs。
+    // 根因：漏掉「OPTIMAL 已覆盖则不必前瞻」这一互斥条件 —— 与旧版
+    // limitation<=8 被 OPTIMAL 遮蔽是同一个坑的反面。
+    // 加上 world_upper > DSTAR 后，前景层只处理 OPTIMAL 够不到的局面。
+    // =================================================================
+    // LAYER 2（精确前瞻）已于 2026-11-09 按用户裁决移除。
+    //
+    // 移除依据（实测，纯 C++ decide 循环口径）：
+    //   · 真实可覆盖区间（world_upper > DSTAR 且 cost_log2 <= COST_CAP）
+    //     仅占全部决策的 1.2%；
+    //   · 该区间 100% 是 node_cap_fallback —— ExactEngine::after_click 是
+    //     精确 V*，数千世界时单次 3~8 秒，60 万节点不足；
+    //   · node_cap 提到 500 万：win_rate 成功 0→2 次/40 局，单次 3.7 秒，
+    //     胜率仍 40.00%（与不提高完全相同）⇒ 无可测量收益。
+    // ⇒ 当前算力下 LAYER 2 只吃延迟、不产收益，故全部决策统一走
+    //   pbs + PSEQ（LAYER 3）。OPTIMAL 层（world_upper <= DSTAR 的精确
+    //   穷举）**不受影响**，仍然是最强的一层。
+    //
+    // 保留 COST_CAP_LOG2 / log2_total_est / mem / inner_expand_log2_upper：
+    //   cost_log2 仍是 decide() 的诊断字段（且估算器的方向性错误已修正），
+    //   将来提高算力恢复前瞻时，只需把本开关改回原条件即可。
+    // =================================================================
+    // 决策出口：pbs（逐候选安全概率）+ PSEQ 破平局（论文 L3）。
+    py::list oc = coords_to_pylist(ordered_clicks);
+    py::list c9 = coords_to_pylist(clicks9);
+    py::tuple pbs = py_pbs_compute(world_upper, num10, oc, c9, res_list,
+                                   ck_list, a, no_progress, py::none());
+    py::array_t<float, py::array::c_style | py::array::forcecast> res(pbs[0]);
+    auto rr = res.unchecked<1>();
+    // pbs 无可行候选时返回空数组；禁止继续读取 max/做分母计算。
+    // 旧路径会把空数组带入后续决策，最终可能在原生侧触发除零。
+    if (rr.shape(0) == 0)
+        return make_response(-1, -1, 0.0, 1, "pbs_no_feasible_worlds",
+                             mem.bytes, world_upper);
+    py::dict prob;
+    for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+        if (k < ordered_clicks.size())
+            prob[py::make_tuple(ordered_clicks[k].first, ordered_clicks[k].second)] =
+                py::float_((double)rr(k));
+    // ---- PRODUCTION SEMANTICS: certain-safe cells FIRST ----
+    // probability.py:1171-1189: the certain-safe branch requires
+    // `if 1 in res:` -- an EXACT 1.0 in the array -- before ANY
+    // res>=0.99 cells are appended.  A 0.991 float32 value does NOT
+    // enter this branch (measured: production took the argmax path for
+    // a board whose max safety was 0.99103, while a draft using
+    // ">=0.99" alone picked certain_safe -> semantic drift).
+    bool has_exact_one = false;
+    for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+        if ((double)rr(k) == 1.0) { has_exact_one = true; break; }
+    std::vector<Coord> certain;
+    if (has_exact_one) {
         for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            if (k < ordered_clicks.size())
-                prob[py::make_tuple(ordered_clicks[k].first, ordered_clicks[k].second)] =
-                    py::float_((double)rr(k));
-        // ---- PRODUCTION SEMANTICS: certain-safe cells FIRST ----
-        // probability.py:1171-1189: the certain-safe branch requires
-        // `if 1 in res:` -- an EXACT 1.0 in the array -- before ANY
-        // res>=0.99 cells are appended.  A 0.991 float32 value does NOT
-        // enter this branch (measured: production took the argmax path for
-        // a board whose max safety was 0.99103, while a draft using
-        // ">=0.99" alone picked certain_safe -> semantic drift).
-        bool has_exact_one = false;
+            if ((double)rr(k) >= 0.99 && k < ordered_clicks.size())
+                certain.push_back(ordered_clicks[k]);
+    }
+    if (!certain.empty()) {
+        // Return the WHOLE batch (production `pos` list).  Returning only
+        // ONE cell forced per-cell decisions: measured 159 decisions/game
+        // vs production 12 -> 13x more rounds, 48x slower, ~10pp lower win
+        // rate.  Caller clicks every coordinate in `tied` before the next
+        // decision round.
+        return make_response(certain[0].first, certain[0].second, 1.0, 1,
+                             "certain_safe", mem.bytes, world_upper, prob,
+                             coords_to_pylist(certain));
+    }
+    // DIAGNOSTIC: encode candidate count and max safety into the reason so
+    // the whole-game driver can tell "no certain-safe candidate existed"
+    // from "certain-safe branch never ran".
+    {
+        double mx = -1.0;
         for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            if ((double)rr(k) == 1.0) { has_exact_one = true; break; }
-        std::vector<Coord> certain;
-        if (has_exact_one) {
-            for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-                if ((double)rr(k) >= 0.99 && k < ordered_clicks.size())
-                    certain.push_back(ordered_clicks[k]);
-        }
-        if (!certain.empty()) {
-            // Return the WHOLE batch (production `pos` list).  Returning only
-            // ONE cell forced per-cell decisions: measured 159 decisions/game
-            // vs production 12 -> 13x more rounds, 48x slower, ~10pp lower win
-            // rate.  Caller clicks every coordinate in `tied` before the next
-            // decision round.
-            return make_response(certain[0].first, certain[0].second, 1.0, 1,
-                                 "certain_safe", mem.bytes, world_upper, prob,
-                                 coords_to_pylist(certain));
-        }
-        // DIAGNOSTIC: encode candidate count and max safety into the reason so
-        // the whole-game driver can tell "no certain-safe candidate existed"
-        // from "certain-safe branch never ran".
-        {
-            double mx = -1.0;
-            for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-                if ((double)rr(k) > mx) mx = (double)rr(k);
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "pbs_n%d_max%.4f",
-                          (int)rr.shape(0), mx);
-            g_last_pbs_diag = buf;
-        }
-        double bestv = -1.0;
-        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            if ((double)rr(k) > bestv) bestv = (double)rr(k);
-        // PRODUCTION: confidence = round(max_val, 5) -- the frontier value is
-        // rounded to 5 decimals BEFORE the clicks9 comparison.
-        const double bestv_r5 = std::round(bestv * 1e5) / 1e5;
+            if ((double)rr(k) > mx) mx = (double)rr(k);
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "pbs_n%d_max%.4f",
+                      (int)rr.shape(0), mx);
+        g_last_pbs_diag = buf;
+    }
+    double bestv = -1.0;
+    for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+        if ((double)rr(k) > bestv) bestv = (double)rr(k);
+    // PRODUCTION: confidence = round(max_val, 5) -- the frontier value is
+    // rounded to 5 decimals BEFORE the clicks9 comparison.
+    const double bestv_r5 = std::round(bestv * 1e5) / 1e5;
 
-        // ---- PRODUCTION SEMANTICS: clicks9 fallback comparison ----
-        // probability.py:1219-1236: production compares
-        //   confidence      = round(max_val, 5)
-        //   _confidence     = round(1 - mine9/len(clicks9), 5)
-        //   if _confidence > confidence: switch to interior cells
-        // Both sides are rounded to 5 decimals first; the comparison is
-        // STRICTLY greater.  Omitting the rounding made C++ take the
-        // fallback on values that production treats as equal.
-        {
-            const double mine_num = (double)py::float_(pbs[1]);
-            if (!clicks9.empty()) {
-                const double mine9 = (double)a - mine_num - (double)num10;
-                const double interior_safety_r5 =
-                    std::round((1.0 - mine9 / (double)clicks9.size()) * 1e5) / 1e5;
-                if (interior_safety_r5 > bestv_r5) {
-                    // Pick the interior cell with the largest 5x5 opened
-                    // count (production open_num5x5 weighting); tie-break
-                    // deterministically on (x, y).
-                    int best_opens = -1;
-                    std::vector<Coord> interior_tied;
-                    for (const auto& c : clicks9) {
-                        int opens = 0;
-                        for (int dy = -2; dy <= 2; ++dy)
-                            for (int dx = -2; dx <= 2; ++dx) {
-                                const int nx = c.first + dx;
-                                const int ny = c.second + dy;
-                                if (nx < 1 || nx > w || ny < 1 || ny > h) {
-                                    ++opens;   // out-of-board counts as opened
-                                    continue;
-                                }
-                                const int32_t v = cv[(size_t)ny * W2 + nx];
-                                if (v >= 0 && v <= 8) ++opens;
+    // ---- PRODUCTION SEMANTICS: clicks9 fallback comparison ----
+    // probability.py:1219-1236: production compares
+    //   confidence      = round(max_val, 5)
+    //   _confidence     = round(1 - mine9/len(clicks9), 5)
+    //   if _confidence > confidence: switch to interior cells
+    // Both sides are rounded to 5 decimals first; the comparison is
+    // STRICTLY greater.  Omitting the rounding made C++ take the
+    // fallback on values that production treats as equal.
+    {
+        const double mine_num = (double)py::float_(pbs[1]);
+        if (!clicks9.empty()) {
+            const double mine9 = (double)a - mine_num - (double)num10;
+            const double interior_safety_r5 =
+                std::round((1.0 - mine9 / (double)clicks9.size()) * 1e5) / 1e5;
+            if (interior_safety_r5 > bestv_r5) {
+                // Pick the interior cell with the largest 5x5 opened
+                // count (production open_num5x5 weighting); tie-break
+                // deterministically on (x, y).
+                int best_opens = -1;
+                std::vector<Coord> interior_tied;
+                for (const auto& c : clicks9) {
+                    int opens = 0;
+                    for (int dy = -2; dy <= 2; ++dy)
+                        for (int dx = -2; dx <= 2; ++dx) {
+                            const int nx = c.first + dx;
+                            const int ny = c.second + dy;
+                            if (nx < 1 || nx > w || ny < 1 || ny > h) {
+                                ++opens;   // out-of-board counts as opened
+                                continue;
                             }
-                        if (opens > best_opens) {
-                            best_opens = opens;
-                            interior_tied.clear();
-                            interior_tied.push_back(c);
-                        } else if (opens == best_opens) {
-                            interior_tied.push_back(c);
+                            const int32_t v = cv[(size_t)ny * W2 + nx];
+                            if (v >= 0 && v <= 8) ++opens;
                         }
+                    if (opens > best_opens) {
+                        best_opens = opens;
+                        interior_tied.clear();
+                        interior_tied.push_back(c);
+                    } else if (opens == best_opens) {
+                        interior_tied.push_back(c);
                     }
-                    if (!interior_tied.empty()) {
-                        Coord ch = deterministic_tie_break(interior_tied);
-                        // The fallback's tie group is the open_num5x5 max
-                        // group of the interior cells -- same stage-2
-                        // semantics the Python det_choice records.
-                        return make_response(ch.first, ch.second,
-                                             interior_safety_r5, 1,
-                                             "clicks9_fallback", mem.bytes,
-                                             world_upper, prob,
-                                             coords_to_pylist(interior_tied),
-                                             coords_to_pylist(interior_tied));
-                    }
+                }
+                if (!interior_tied.empty()) {
+                    Coord ch = deterministic_tie_break(interior_tied);
+                    // The fallback's tie group is the open_num5x5 max
+                    // group of the interior cells -- same stage-2
+                    // semantics the Python det_choice records.
+                    return make_response(ch.first, ch.second,
+                                         interior_safety_r5, 1,
+                                         "clicks9_fallback", mem.bytes,
+                                         world_upper, prob,
+                                         coords_to_pylist(interior_tied),
+                                         coords_to_pylist(interior_tied));
                 }
             }
         }
-        std::vector<Coord> tied;
-        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            // P1-2 fix: production subtracts in float32 (numpy float32 array).
-            // (float)bestv - rr(k) in double precision could add spurious tie
-            // members; do the whole comparison in float32.
-            if (float((float)bestv - rr(k)) <= 0.0005f && k < ordered_clicks.size())
-                tied.push_back(ordered_clicks[k]);
-        // ---- LAYER 3 tie-break: PSEQ v3 (recursive decide + saturate-inclusive
-        // ---- LAYER 3 tie-break: PSEQ v5 — paper-faithful counting filters.
-        // All four filters are O(|S|) counting operations over the existing
-        // solution set (paper Table 4: 2.153ms/decision), NOT recursive
-        // decides. For each tied candidate b (frontier cell):
-        //   p(b,n) = fraction of solutions where b is safe with number n
-        //   q(b)   = entropy of the number distribution
-        //   s(b)   = p(b,0) — revealing a 0 guarantees a cascade
-        //   e(b)   = E[# of b's closed neighbors that become determined]
-        // Pick via P -> S -> E -> Q sequence; residual -> random.
-        Coord chosen;
-        py::list weighted_py;
-        std::vector<std::vector<std::vector<int32_t>>> gmats;
-        for (auto gitem : res_list) {
-            py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
-                py::reinterpret_borrow<py::object>(gitem));
-            auto r = arr.unchecked<2>();
-            std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
-                std::vector<int32_t>((size_t)r.shape(1)));
-            for (py::ssize_t kk = 0; kk < r.shape(0); ++kk)
-                for (py::ssize_t cc = 0; cc < r.shape(1); ++cc)
-                    rows[(size_t)kk][(size_t)cc] = r(kk, cc);
-            gmats.push_back(std::move(rows));
-        }
-        std::vector<int> ck;
-        for (auto v : ck_list) ck.push_back(v.cast<int>());
-        {
-            // Tally per-candidate number-distribution counts.
-            const size_t nTied = tied.size();
-            // counts[i][n] = #solutions where tied[i] is safe with number n
-            int counts[64][10];  // n up to 8, plus index 9 = mine (skip)
-            memset(counts, 0, sizeof(counts));
-            int64_t total_rows = 0;
-            const int64_t kMaxRows = 200000;  // sound sampling cap
-            Odometer od(std::move(ck));
-            std::vector<int> index_list;
-            while (od.next(index_list) && total_rows < kMaxRows) {
-                // Build the full frontier assignment for this row.
-                int row_vals[256];  // ordered_clicks values (0 or 1)
-                size_t flat = 0;
-                int64_t mine_total = 0;
-                bool valid = true;
-                for (size_t gi = 0; gi < gmats.size() && valid; ++gi) {
-                    const auto& row = gmats[gi][(size_t)index_list[gi]];
-                    const auto& gc = groups[gi];
-                    for (size_t j = 0; j < row.size() && j < gc.size() && flat < 256; ++j) {
-                        row_vals[flat] = row[j];
-                        if (row[j] == 1) ++mine_total;
-                        ++flat;
-                    }
-                }
-                if (!valid || flat != ordered_clicks.size()) { ++total_rows; continue; }
-                const int64_t rem = (int64_t)a - num10 - mine_total;
-                if (rem < 0 || (int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) { ++total_rows; continue; }
-                // For each tied candidate: check safety & count number.
-                for (size_t ti = 0; ti < nTied; ++ti) {
-                    // find tied[ti]'s position in ordered_clicks
-                    int pos = -1;
-                    for (size_t k = 0; k < ordered_clicks.size(); ++k)
-                        if (ordered_clicks[k] == tied[ti]) { pos = (int)k; break; }
-                    if (pos < 0) continue;
-                    if (row_vals[pos] == 1) continue;  // mine in this solution
-                    // count mines among tied[ti]'s closed neighbors
-                    int mn = 0;
-                    const auto& c = tied[ti];
-                    for (size_t k = 0; k < ordered_clicks.size(); ++k) {
-                        if (row_vals[k] != 1) continue;
-                        const auto& mc = ordered_clicks[k];
-                        if (std::abs(mc.first - c.first) <= 1 &&
-                            std::abs(mc.second - c.second) <= 1)
-                            ++mn;
-                    }
-                    // Also count flagged mines (num10) adjacency
-                    for (int dy = -1; dy <= 1; ++dy)
-                        for (int dx = -1; dx <= 1; ++dx) {
-                            if (!dx && !dy) continue;
-                            const int nx = c.first + dx, ny = c.second + dy;
-                            if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
-                                cv[(size_t)ny * W2 + nx] == 10)
-                                ++mn;
-                        }
-                    if (mn <= 8) { counts[ti][mn]++; }
-                }
-                ++total_rows;
-            }
-            if (total_rows > 0) {
-                // Compute s/e/q per candidate from the counts.
-                struct SeqStats { double s = 0.0, e = 0.0, q = 0.0; };
-                std::vector<SeqStats> sts(nTied);
-                for (size_t ti = 0; ti < nTied; ++ti) {
-                    double ent = 0.0, e_sum = 0.0;
-                    for (int n = 0; n <= 8; ++n) {
-                        double p = (double)counts[ti][n] / (double)total_rows;
-                        if (p > 1e-12) {
-                            ent -= p * std::log2(p);
-                            if (n == 0) sts[ti].s += p;  // cascade guarantee
-                            // e: expected newly-determined closed neighbors
-                            const auto& c = tied[ti];
-                            int closed_nbrs = 0;
-                            for (int dy = -1; dy <= 1; ++dy)
-                                for (int dx = -1; dx <= 1; ++dx) {
-                                    if (!dx && !dy) continue;
-                                    const int nx = c.first + dx, ny = c.second + dy;
-                                    if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
-                                        cv[(size_t)ny * W2 + nx] == 9)
-                                        ++closed_nbrs;
-                                }
-                            e_sum += p * (n == 0 ? closed_nbrs : closed_nbrs * (n == 1 ? 0.5 : 0.1));
-                        }
-                    }
-                    sts[ti].e = e_sum;
-                    sts[ti].q = ent;
-                }
-                // P -> S -> E -> Q sequential filters (P already applied:
-                // tied = max-safety set). Then S, E, Q; residual random.
-                std::vector<Coord> X = tied;
-                std::vector<SeqStats> S = sts;
-                auto filter_by = [&](double SeqStats::*field) {
-                    if (X.size() <= 1) return;
-                    double best = -1e18;
-                    for (size_t i = 0; i < X.size(); ++i)
-                        best = std::max(best, S[i].*field);
-                    std::vector<Coord> X2; std::vector<SeqStats> S2;
-                    for (size_t i = 0; i < X.size(); ++i)
-                        if (S[i].*field >= best - 1e-12) { X2.push_back(X[i]); S2.push_back(S[i]); }
-                    X.swap(X2); S.swap(S2);
-                };
-                filter_by(&SeqStats::s);
-                filter_by(&SeqStats::e);
-                filter_by(&SeqStats::q);
-                if (!X.empty()) {
-                    static thread_local uint64_t rs3 = 0x9E3779B97F4A7C15ull;
-                    rs3 ^= rs3 << 13; rs3 ^= rs3 >> 7; rs3 ^= rs3 << 17;
-                    chosen = X[(size_t)(rs3 % (uint64_t)X.size())];
-                    weighted_py = coords_to_pylist(X);
-                } else {
-                    static thread_local uint64_t rs4 = 0x9E3779B97F4A7C15ull;
-                    rs4 ^= rs4 << 13; rs4 ^= rs4 >> 7; rs4 ^= rs4 << 17;
-                    chosen = tied[(size_t)(rs4 % (uint64_t)tied.size())];
-                    weighted_py = coords_to_pylist(tied);
-                }
-            } else {
-                static thread_local uint64_t rs5 = 0x9E3779B97F4A7C15ull;
-                rs5 ^= rs5 << 13; rs5 ^= rs5 >> 7; rs5 ^= rs5 << 17;
-                chosen = tied[(size_t)(rs5 % (uint64_t)tied.size())];
-                weighted_py = coords_to_pylist(tied);
-            }
-        }
-        return make_response(chosen.first, chosen.second,
-                             bestv, 1, mem.allowed ? "limitation" : "memory_gate",
-                             mem.bytes, world_upper, prob,
-                             coords_to_pylist(tied), weighted_py);
-    }
-
-    // win_rate lookahead: validated C++ kernel, returns (res, sorted_clicks, total, c2p).
-    // Production catches node-cap exceeded and falls back to pbs; do the same
-    // instead of propagating RuntimeError (previous draft defect).
-    py::tuple wr;
-    bool wr_ok = true;
-    try {
-        // LAYER 2 depth-adaptive wiring (user directive: "前瞻的步数取决于
-        // 当前的复杂度").  adaptive_depth here = cost-quantile shrink档位
-        // (cpp/mscore.cpp:1212-1229 semantics: 1→trim top 8% most expensive,
-        // 3→top 2%, 4→top 0.4%).  Mapping by limitation (production's own
-        // difficulty proxy):
-        //   limitation <= 10            -> 0 (no shrink; simple boards keep
-        //                                  full 200/n depth)
-        //   10 < limitation <= 14       -> 2 (trim top 3%)
-        //   limitation > 14             -> 3 (trim top 2%)
-        // These are initial values from the measured cost distribution
-        // (midgame 260 points: p50 4,032 / p90 77,760); the acceptance gate
-        // re-verifies via trigger-rate + per-decision timing.
-        int adaptive = 0;
-        if (limitation > 14.0) adaptive = 3;
-        else if (limitation > 10.0) adaptive = 2;
-        wr = py_win_rate(coords_to_pylist(ordered_clicks), coords_to_pylist(clicks9),
-                         res_list, cell_value, ck_list, num10, a, w, h,
-                         false, no_progress, node_cap, -1.0, adaptive);
-    } catch (const std::runtime_error& e) {
-        const std::string msg(e.what());
-        if (msg.find("node cap exceeded") == std::string::npos) throw;
-        wr_ok = false;
-    }
-    if (!wr_ok) {
-        py::list oc = coords_to_pylist(ordered_clicks);
-        py::list c9 = coords_to_pylist(clicks9);
-        py::tuple pbs = py_pbs_compute(world_upper, num10, oc, c9, res_list,
-                                       ck_list, a, no_progress, py::none());
-        py::array_t<float, py::array::c_style | py::array::forcecast> res(pbs[0]);
-        auto rr = res.unchecked<1>();
-        double bestv = -1.0;
-        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            if ((double)rr(k) > bestv) bestv = (double)rr(k);
-        std::vector<Coord> tied;
-        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            // P1-2 fix: production subtracts in float32 (numpy float32 array).
-            // (float)bestv - rr(k) in double precision could add spurious tie
-            // members; do the whole comparison in float32.
-            if (float((float)bestv - rr(k)) <= 0.0005f && k < ordered_clicks.size())
-                tied.push_back(ordered_clicks[k]);
-        Coord chosen = tied.empty() ? ordered_clicks[0] : deterministic_tie_break(tied);
-        py::dict prob;
-        for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
-            if (k < ordered_clicks.size())
-                prob[py::make_tuple(ordered_clicks[k].first, ordered_clicks[k].second)] =
-                    py::float_((double)rr(k));
-        return make_response(chosen.first, chosen.second,
-                             bestv, 1, "node_cap_fallback", mem.bytes, world_upper,
-                             prob, coords_to_pylist(tied));
-    }
-    py::list wr_res = wr[0].cast<py::list>();
-    py::list wr_clicks = wr[1].cast<py::list>();
-    py::dict c2p = wr[3].cast<py::dict>();
-    // Mirror production: np.around(win_rate, 5) BEFORE finding max, then
-    // exact equality (== np.max) to build the tie set -- NOT a float epsilon.
-    std::vector<double> rounded(wr_res.size());
-    double maxv = -1.0;
-    for (size_t k = 0; k < wr_res.size(); ++k) {
-        rounded[k] = std::round((double)py::float_(wr_res[k]) * 1e5) / 1e5;
-        if (rounded[k] > maxv) maxv = rounded[k];
     }
     std::vector<Coord> tied;
-    for (size_t k = 0; k < rounded.size(); ++k)
-        if (rounded[k] == maxv) {  // exact equality, same as np.where
-            auto t = wr_clicks[k].cast<py::tuple>();
-            tied.emplace_back(py::int_(t[0]), py::int_(t[1]));
-        }
-    // LAYER 2 tie-break — Filter-U (D3-validated: 32.7% = py parity, p=0.0057
-    // vs det; AAAI-17 U=39.14%).  Among exact-tie candidates, pick argmax
-    // two-step survival u(b) = p_safe × E[perfect continuation] — implemented
-    // via ExactEngine::after_click on the SAME world set the win_rate layer
-    // just used (world_upper <= DSTAR was already excluded above, so this
-    // rebuild only runs when DSTAR < world_upper <= win_rate region; worlds
-    // can still be large here, so cap the evaluation and fall back to
-    // (x,y)-min on any overrun — measured tie sets max=10, cap rarely binds).
+    for (size_t k = 0; k < (size_t)rr.shape(0); ++k)
+        // P1-2 fix: production subtracts in float32 (numpy float32 array).
+        // (float)bestv - rr(k) in double precision could add spurious tie
+        // members; do the whole comparison in float32.
+        if (float((float)bestv - rr(k)) <= 0.0005f && k < ordered_clicks.size())
+            tied.push_back(ordered_clicks[k]);
+    // ---- LAYER 3 tie-break: PSEQ v3 (recursive decide + saturate-inclusive
+    // ---- LAYER 3 tie-break: PSEQ v5 — paper-faithful counting filters.
+    // All four filters are O(|S|) counting operations over the existing
+    // solution set (paper Table 4: 2.153ms/decision), NOT recursive
+    // decides. For each tied candidate b (frontier cell):
+    //   p(b,n) = fraction of solutions where b is safe with number n
+    //   q(b)   = entropy of the number distribution
+    //   s(b)   = p(b,0) — revealing a 0 guarantees a cascade
+    //   e(b)   = E[# of b's closed neighbors that become determined]
+    // Pick via P -> S -> E -> Q sequence; residual -> random.
     Coord chosen;
-    if (tied.size() > 1 && world_upper <= 2000000) {
-        try {
-            // Materialize worlds once (identical semantics to OPTIMAL layer).
-            std::vector<Bits> worlds;
-            std::vector<std::vector<std::vector<int32_t>>> gmats;
-            for (auto gitem : res_list) {
-                py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
-                    py::reinterpret_borrow<py::object>(gitem));
-                auto r = arr.unchecked<2>();
-                std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
-                    std::vector<int32_t>((size_t)r.shape(1)));
-                for (py::ssize_t k = 0; k < r.shape(0); ++k)
-                    for (py::ssize_t c = 0; c < r.shape(1); ++c)
-                        rows[(size_t)k][(size_t)c] = r(k, c);
-                gmats.push_back(std::move(rows));
-            }
-            std::vector<int> ck;
-            for (auto v : ck_list) ck.push_back(v.cast<int>());
-            const int nw_engine = (ncell + 63) / 64;
-            Odometer od(std::move(ck));
-            std::vector<int> index_list;
-            while (od.next(index_list)) {
-                int64_t mine_total = 0;
-                Bits wbits; wbits.zero(nw_engine);
-                for (size_t i = 0; i < index_list.size(); ++i) {
-                    const auto& row = gmats[i][(size_t)index_list[i]];
-                    // Same column-mapping fix as the OPTIMAL layer: columns
-                    // belong to groups[i], not to the global ordered_clicks.
-                    const auto& group_cells = groups[i];
-                    for (size_t j = 0; j < row.size() && j < group_cells.size(); ++j)
-                        if (row[j] == 1) {
-                            const auto& c = group_cells[j];
-                            wbits.set((size_t)c.second * W2 + c.first);
-                            ++mine_total;
-                        }
-                }
-                const int64_t rem = (int64_t)a - num10 - mine_total;
-                if (rem < 0 || (int64_t)a > num10 + mine_total + (int64_t)clicks9.size())
-                    continue;
-                if (rem == 0) { worlds.push_back(wbits); continue; }
-                auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
-                std::vector<int> idx9;
-                for (int s : sizes) {
-                    ComboIter it((int)clicks9.size(), s);
-                    while (it.next(idx9)) {
-                        Bits wb = wbits;
-                        for (int j : idx9) {
-                            const auto& c = clicks9[(size_t)j];
-                            wb.set((size_t)c.second * W2 + c.first);
-                        }
-                        worlds.push_back(wb);
-                    }
-                }
-            }
-            if (!worlds.empty()) {
-                ExactEngine eng;
-                eng.w = w; eng.h = h; eng.W2 = W2; eng.a = a;
-                eng.node_cap = 200000;
-                eng.total_bits = ncell;
-                eng.nw = nw_engine;
-                eng.all_bits.zero(eng.nw);
-                eng.opened0.zero(eng.nw);
-                for (int y = 1; y <= h; ++y)
-                    for (int x = 1; x <= w; ++x) {
-                        const int idx = eng.idx_of(x, y);
-                        eng.all_bits.set(idx);
-                        const int32_t v = cv[(size_t)y * W2 + x];
-                        if (v >= 0 && v <= 8) eng.opened0.set(idx);
-                    }
-                eng.nbr.assign((size_t)ncell, Bits());
-                for (int y = 1; y <= h; ++y)
-                    for (int x = 1; x <= w; ++x) {
-                        Bits m; m.zero(eng.nw);
-                        for (int dy = -1; dy <= 1; ++dy)
-                            for (int dx = -1; dx <= 1; ++dx) {
-                                if (!dx && !dy) continue;
-                                const int nx = x + dx, ny = y + dy;
-                                if (nx >= 1 && nx <= w && ny >= 1 && ny <= h)
-                                    m.set(eng.idx_of(nx, ny));
-                            }
-                        eng.nbr[(size_t)eng.idx_of(x, y)] = m;
-                    }
-                eng.world_bits = std::move(worlds);
-                ExactEngine::WKey wk = eng.all_wkey();
-                // Full-flow PSEQ: counting filters on win_rate exact ties.
-                // The tie set has equal win_rate (P-filter no-op), so apply
-                // S/E/Q counting from the solution matrices directly.
-                std::vector<std::vector<std::vector<int32_t>>> gmats2;
-                for (auto gitem : res_list) {
-                    py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
-                        py::reinterpret_borrow<py::object>(gitem));
-                    auto r2 = arr.unchecked<2>();
-                    std::vector<std::vector<int32_t>> rows((size_t)r2.shape(0),
-                        std::vector<int32_t>((size_t)r2.shape(1)));
-                    for (py::ssize_t k2 = 0; k2 < r2.shape(0); ++k2)
-                        for (py::ssize_t c2 = 0; c2 < r2.shape(1); ++c2)
-                            rows[(size_t)k2][(size_t)c2] = r2(k2, c2);
-                    gmats2.push_back(std::move(rows));
-                }
-                std::vector<int> ck2;
-                for (auto v : ck_list) ck2.push_back(v.cast<int>());
-                const size_t nT = tied.size();
-                int cnts[64][10];
-                memset(cnts, 0, sizeof(cnts));
-                int64_t nrows = 0;
-                const int64_t kMaxR = 50000;
-                Odometer od2(std::move(ck2));
-                std::vector<int> il2;
-                while (od2.next(il2) && nrows < kMaxR) {
-                    int rvals[256];
-                    size_t flat2 = 0;
-                    int64_t mt2 = 0;
-                    for (size_t gi = 0; gi < gmats2.size() && flat2 < 256; ++gi) {
-                        const auto& row2 = gmats2[gi][(size_t)il2[gi]];
-                        const auto& gc2 = groups[gi];
-                        for (size_t j = 0; j < row2.size() && j < gc2.size() && flat2 < 256; ++j) {
-                            rvals[flat2] = row2[j];
-                            if (row2[j] == 1) ++mt2;
-                            ++flat2;
-                        }
-                    }
-                    if (flat2 != ordered_clicks.size()) { ++nrows; continue; }
-                    const int64_t rem2 = (int64_t)a - num10 - mt2;
-                    if (rem2 < 0 || (int64_t)a > num10 + mt2 + (int64_t)clicks9.size()) { ++nrows; continue; }
-                    for (size_t ti = 0; ti < nT; ++ti) {
-                        int pos2 = -1;
-                        for (size_t k3 = 0; k3 < ordered_clicks.size(); ++k3)
-                            if (ordered_clicks[k3] == tied[ti]) { pos2 = (int)k3; break; }
-                        if (pos2 < 0 || rvals[pos2] == 1) continue;
-                        int mn2 = 0;
-                        const auto& c3 = tied[ti];
-                        for (size_t k3 = 0; k3 < ordered_clicks.size(); ++k3) {
-                            if (rvals[k3] != 1) continue;
-                            const auto& mc3 = ordered_clicks[k3];
-                            if (std::abs(mc3.first - c3.first) <= 1 &&
-                                std::abs(mc3.second - c3.second) <= 1)
-                                ++mn2;
-                        }
-                        for (int dy = -1; dy <= 1; ++dy)
-                            for (int dx = -1; dx <= 1; ++dx) {
-                                if (!dx && !dy) continue;
-                                const int nx = c3.first + dx, ny = c3.second + dy;
-                                if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
-                                    cv[(size_t)ny * W2 + nx] == 10)
-                                    ++mn2;
-                            }
-                        if (mn2 <= 8) cnts[ti][mn2]++;
-                    }
-                    ++nrows;
-                }
-                if (nrows > 0) {
-                    struct SeqStats2 { double s = 0.0, e = 0.0, q = 0.0; };
-                    std::vector<SeqStats2> sts2(nT);
-                    for (size_t ti = 0; ti < nT; ++ti) {
-                        for (int n = 0; n <= 8; ++n) {
-                            double p = (double)cnts[ti][n] / (double)nrows;
-                            if (p > 1e-12) {
-                                sts2[ti].q -= p * std::log2(p);
-                                if (n == 0) sts2[ti].s += p;
-                                const auto& c3 = tied[ti];
-                                int cn = 0;
-                                for (int dy = -1; dy <= 1; ++dy)
-                                    for (int dx = -1; dx <= 1; ++dx) {
-                                        if (!dx && !dy) continue;
-                                        const int nx = c3.first + dx, ny = c3.second + dy;
-                                        if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
-                                            cv[(size_t)ny * W2 + nx] == 9)
-                                            ++cn;
-                                    }
-                                sts2[ti].e += p * (n == 0 ? cn : (n == 1 ? cn * 0.5 : cn * 0.1));
-                            }
-                        }
-                    }
-                    std::vector<Coord> X = tied;
-                    std::vector<SeqStats2> S2 = sts2;
-                    auto filt = [&](double SeqStats2::*f) {
-                        if (X.size() <= 1) return;
-                        double b2 = -1e18;
-                        for (size_t i = 0; i < X.size(); ++i) b2 = std::max(b2, S2[i].*f);
-                        std::vector<Coord> Xn; std::vector<SeqStats2> Sn;
-                        for (size_t i = 0; i < X.size(); ++i)
-                            if (S2[i].*f >= b2 - 1e-12) { Xn.push_back(X[i]); Sn.push_back(S2[i]); }
-                        X.swap(Xn); S2.swap(Sn);
-                    };
-                    filt(&SeqStats2::s);
-                    filt(&SeqStats2::e);
-                    filt(&SeqStats2::q);
-                    if (!X.empty()) {
-                        static thread_local uint64_t rs6 = 0x9E3779B97F4A7C15ull;
-                        rs6 ^= rs6 << 13; rs6 ^= rs6 >> 7; rs6 ^= rs6 << 17;
-                        chosen = X[(size_t)(rs6 % (uint64_t)X.size())];
-                    } else {
-                        static thread_local uint64_t rs7 = 0x9E3779B97F4A7C15ull;
-                        rs7 ^= rs7 << 13; rs7 ^= rs7 >> 7; rs7 ^= rs7 << 17;
-                        chosen = tied[(size_t)(rs7 % (uint64_t)tied.size())];
-                    }
-                } else {
-                    static thread_local uint64_t rs8 = 0x9E3779B97F4A7C15ull;
-                    rs8 ^= rs8 << 13; rs8 ^= rs8 >> 7; rs8 ^= rs8 << 17;
-                    chosen = tied[(size_t)(rs8 % (uint64_t)tied.size())];
-                }
-            } else {
-                chosen = deterministic_tie_break(tied);
-            }
-        } catch (...) {
-            chosen = deterministic_tie_break(tied);   // safe fallback
-        }
-    } else {
-        chosen = deterministic_tie_break(tied);
+    py::list weighted_py;
+    std::vector<std::vector<std::vector<int32_t>>> gmats;
+    for (auto gitem : res_list) {
+        py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+            py::reinterpret_borrow<py::object>(gitem));
+        auto r = arr.unchecked<2>();
+        std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
+            std::vector<int32_t>((size_t)r.shape(1)));
+        for (py::ssize_t kk = 0; kk < r.shape(0); ++kk)
+            for (py::ssize_t cc = 0; cc < r.shape(1); ++cc)
+                rows[(size_t)kk][(size_t)cc] = r(kk, cc);
+        gmats.push_back(std::move(rows));
     }
-    return make_response(chosen.first, chosen.second, maxv, 0, "win_rate",
-                         mem.bytes, world_upper, c2p, coords_to_pylist(tied));
+    std::vector<int> ck;
+    for (auto v : ck_list) ck.push_back(v.cast<int>());
+    {
+        // Tally per-candidate number-distribution counts.
+        const size_t nTied = tied.size();
+        // counts[i][n] = #solutions where tied[i] is safe with number n
+        // P0-2 修复（review2 两席独立同报）：原 `int counts[64][10]` 是固定
+        // 栈数组，而 nTied = tied.size() 没有 64 上限；超过 64 个同分候选时
+        // `counts[ti][mn]++` 会写穿栈帧（原生内存损坏）。改为按 nTied 动态
+        // 分配，语义逐位不变，且不截断 tied（不改变算法候选集合）。
+        std::vector<std::array<int, 10>> counts(
+            nTied, std::array<int, 10>{0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+        int64_t total_rows = 0;
+        const int64_t kMaxRows = 200000;  // sound sampling cap
+        Odometer od(std::move(ck));
+        std::vector<int> index_list;
+        while (od.next(index_list) && total_rows < kMaxRows) {
+            // Build the full frontier assignment for this row.
+            int row_vals[256];  // ordered_clicks values (0 or 1)
+            size_t flat = 0;
+            int64_t mine_total = 0;
+            bool valid = true;
+            for (size_t gi = 0; gi < gmats.size() && valid; ++gi) {
+                const auto& row = gmats[gi][(size_t)index_list[gi]];
+                const auto& gc = groups[gi];
+                for (size_t j = 0; j < row.size() && j < gc.size() && flat < 256; ++j) {
+                    row_vals[flat] = row[j];
+                    if (row[j] == 1) ++mine_total;
+                    ++flat;
+                }
+            }
+            if (!valid || flat != ordered_clicks.size()) { ++total_rows; continue; }
+            const int64_t rem = (int64_t)a - num10 - mine_total;
+            if (rem < 0 || (int64_t)a > num10 + mine_total + (int64_t)clicks9.size()) { ++total_rows; continue; }
+            // For each tied candidate: check safety & count number.
+            for (size_t ti = 0; ti < nTied; ++ti) {
+                // find tied[ti]'s position in ordered_clicks
+                int pos = -1;
+                for (size_t k = 0; k < ordered_clicks.size(); ++k)
+                    if (ordered_clicks[k] == tied[ti]) { pos = (int)k; break; }
+                if (pos < 0) continue;
+                if (row_vals[pos] == 1) continue;  // mine in this solution
+                // count mines among tied[ti]'s closed neighbors
+                int mn = 0;
+                const auto& c = tied[ti];
+                for (size_t k = 0; k < ordered_clicks.size(); ++k) {
+                    if (row_vals[k] != 1) continue;
+                    const auto& mc = ordered_clicks[k];
+                    if (std::abs(mc.first - c.first) <= 1 &&
+                        std::abs(mc.second - c.second) <= 1)
+                        ++mn;
+                }
+                // Also count flagged mines (num10) adjacency
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (!dx && !dy) continue;
+                        const int nx = c.first + dx, ny = c.second + dy;
+                        if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
+                            cv[(size_t)ny * W2 + nx] == 10)
+                            ++mn;
+                    }
+                if (mn <= 8) { counts[ti][mn]++; }
+            }
+            ++total_rows;
+        }
+        if (total_rows > 0) {
+            // Compute s/e/q per candidate from the counts.
+            struct SeqStats { double s = 0.0, e = 0.0, q = 0.0; };
+            std::vector<SeqStats> sts(nTied);
+            for (size_t ti = 0; ti < nTied; ++ti) {
+                double ent = 0.0, e_sum = 0.0;
+                for (int n = 0; n <= 8; ++n) {
+                    double p = (double)counts[ti][n] / (double)total_rows;
+                    if (p > 1e-12) {
+                        ent -= p * std::log2(p);
+                        if (n == 0) sts[ti].s += p;  // cascade guarantee
+                        // e: expected newly-determined closed neighbors
+                        const auto& c = tied[ti];
+                        int closed_nbrs = 0;
+                        for (int dy = -1; dy <= 1; ++dy)
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                if (!dx && !dy) continue;
+                                const int nx = c.first + dx, ny = c.second + dy;
+                                if (nx >= 1 && nx <= w && ny >= 1 && ny <= h &&
+                                    cv[(size_t)ny * W2 + nx] == 9)
+                                    ++closed_nbrs;
+                            }
+                        e_sum += p * (n == 0 ? closed_nbrs : closed_nbrs * (n == 1 ? 0.5 : 0.1));
+                    }
+                }
+                sts[ti].e = e_sum;
+                sts[ti].q = ent;
+            }
+            // P -> S -> E -> Q sequential filters (P already applied:
+            // tied = max-safety set). Then S, E, Q; residual random.
+            std::vector<Coord> X = tied;
+            std::vector<SeqStats> S = sts;
+            auto filter_by = [&](double SeqStats::*field) {
+                if (X.size() <= 1) return;
+                double best = -1e18;
+                for (size_t i = 0; i < X.size(); ++i)
+                    best = std::max(best, S[i].*field);
+                std::vector<Coord> X2; std::vector<SeqStats> S2;
+                for (size_t i = 0; i < X.size(); ++i)
+                    if (S[i].*field >= best - 1e-12) { X2.push_back(X[i]); S2.push_back(S[i]); }
+                X.swap(X2); S.swap(S2);
+            };
+            filter_by(&SeqStats::s);
+            filter_by(&SeqStats::e);
+            filter_by(&SeqStats::q);
+            if (!X.empty()) {
+                static thread_local uint64_t rs3 = 0x9E3779B97F4A7C15ull;
+                rs3 ^= rs3 << 13; rs3 ^= rs3 >> 7; rs3 ^= rs3 << 17;
+                chosen = X[(size_t)(rs3 % (uint64_t)X.size())];
+                weighted_py = coords_to_pylist(X);
+            } else {
+                static thread_local uint64_t rs4 = 0x9E3779B97F4A7C15ull;
+                rs4 ^= rs4 << 13; rs4 ^= rs4 >> 7; rs4 ^= rs4 << 17;
+                chosen = tied[(size_t)(rs4 % (uint64_t)tied.size())];
+                weighted_py = coords_to_pylist(tied);
+            }
+        } else {
+            static thread_local uint64_t rs5 = 0x9E3779B97F4A7C15ull;
+            rs5 ^= rs5 << 13; rs5 ^= rs5 >> 7; rs5 ^= rs5 << 17;
+            chosen = tied[(size_t)(rs5 % (uint64_t)tied.size())];
+            weighted_py = coords_to_pylist(tied);
+        }
+    }
+    return make_response(chosen.first, chosen.second,
+                         bestv, 1, mem.allowed ? "limitation" : "memory_gate",
+                         mem.bytes, world_upper, prob,
+                         coords_to_pylist(tied), weighted_py);
+
+    // ---- 决策出口（论文三层实装的收敛点）----
+    // 现在所有决策都在上方 `!use_win_rate` 块内返回：
+    //   · OPTIMAL（论文 §6 popt 精确穷举，world_upper <= DSTAR）
+    //   · pbs + PSEQ（论文 pbs + 破平局计数过滤）
+    // LAYER 2（前瞻）已于 2026-11-09 按用户裁决移除，见上方依据注释。
+}
+
+// ===========================================================================
+// 帮助模式精确状态转移（2026-11-08）
+//
+// 背景（端到端实测）：OPTIMAL 层已在决策内产出真实转移，但 expert 盘
+// 30x16/99 的绝大多数决策走 certain_safe / win_rate / pbs / limitation 分支，
+// 这些分支此前完全不产转移 ⇒ 帮助页浮层永远显示「暂无真实状态转移分布」。
+// 用户实测指出「进入 win_rate 阶段之后肯定能看到状态转移」——win_rate 阶段
+// 本身就枚举完整世界集，完全有能力算真实前瞻。
+//
+// 实现：在 py_decide 包装层（决策结果已定、decide_impl 的 12 个出口一行不改）
+// 对帮助模式补一次精确世界枚举 + ExactEngine::click_outcomes。概率是真值：
+//   weight = 该可观测分支的一致性世界数 / 点击该格安全的一致性世界数
+// 即「给定点击该格不踩雷」的条件概率，绝不合成/估算。
+//
+// 硬上限：世界数超限时明确返回 reason，UI 显示准确原因（不再误导为「暂未
+// 产出」）。自动模式（is_play=true）完全不进入本函数。
+// ===========================================================================
+static constexpr int64_t HELP_TRANSITION_WORLD_CAP = 200000;
+
+// ===========================================================================
+// 世界集缓存：一次 decide 构造一次，悬停任意格复用（用户裁决 2026-11-08）。
+// 指纹 = 棋盘全部格值 + (a,w,h)；盘面一变立即失效，绝不复用过期世界集。
+// thread_local：帮助线程与 GUI 线程各自独立，无数据竞争。
+// ===========================================================================
+struct TransitionEngineCache {
+    uint64_t fp = 0;
+    int a = 0, w = 0, h = 0;
+    ExactEngine eng;
+    // 渲染 7×7 局面时必须用真实盘面（已开数字/标记雷），不能靠一致世界重算。
+    std::vector<int32_t> cv;
+    bool valid = false;
+    std::string reason;      // 构造失败原因（空=成功）
+};
+static thread_local TransitionEngineCache g_tr_cache;
+
+static uint64_t board_fingerprint(const std::vector<int32_t>& cv) {
+    uint64_t h = 0x9E3779B97F4A7C15ull;
+    for (int32_t v : cv) {
+        h ^= (uint64_t)(uint32_t)v + 0x165667B19E3779F9ull
+             + (h << 6) + (h >> 2);
+    }
+    return h;
+}
+
+// 为一个「可观测分支」渲染以目标格为中心的 7×7 局部局面。
+// 编码与 utils/vision.py + ui/preview_popup.py 契约一致：
+//   0-8 已开数字 / 9 未开 / 10 确定雷 / 11 确定安全 / -1 棋盘外。
+//
+// 🔴 2026-11-08 修复（用户实测「状态转移跟实际状态不符、边上数字不显示」）：
+//   ① **已开格必须直接沿用真实 cv 的数字**，不能用一致世界重算。
+//      旧实现用 `eng.number(idx, first_world)` —— 一致世界只是「与已知数字相容」
+//      的假设雷布局，不是真实雷位，算出来的数字必然与盘面冲突（实测整行被算成 0）。
+//   ② 真实 cv 里的 10（右键标记雷）/11（推理安全）此前不算 opened，会被画成
+//      未开 9 甚至被 inter 覆盖，导致「覆盖不全 / 边上数字消失」。
+//   ③ 分支内「所有一致世界共有的雷」才标 10；真实已标记的 10 也保留为 10。
+static py::list transition_branch_board(const ExactEngine& eng,
+                                        const std::vector<int32_t>& cv,
+                                        const ExactEngine::WKey& wk,
+                                        const Bits& opened,
+                                        int cx, int cy) {
+    py::list board;
+    const int span = 7, half = span / 2;
+    // 该分支内的一致世界集合：所有世界共有的雷位 = 确定雷
+    Bits u, inter;
+    eng.union_inter(wk, u, inter);
+    for (int dj = -half; dj <= half; ++dj) {
+        py::list row;
+        for (int di = -half; di <= half; ++di) {
+            const int x = cx + di, y = cy + dj;
+            if (x < 1 || x > eng.w || y < 1 || y > eng.h) {
+                row.append(py::int_(-1));
+                continue;
+            }
+            const int idx = eng.idx_of(x, y);
+            const int32_t real_v = cv[(size_t)y * eng.W2 + x];
+            if (real_v >= 0 && real_v <= 8) {
+                // 已开数字：以真实盘面为准（事实层，不得重算）
+                row.append(py::int_(real_v));
+            } else if (real_v == 10) {
+                // 用户已标记的雷：保留标记语义
+                row.append(py::int_(10));
+            } else if (real_v == 11) {
+                // 推理确定安全：保留
+                row.append(py::int_(11));
+            } else if (opened.test(idx)) {
+                // 该分支点击后新掘开的格：用该分支的世界子集算数字
+                int first_world = -1;
+                eng.for_each_world(wk, [&](int i) {
+                    if (first_world < 0) first_world = i;
+                });
+                const Bits& mine = first_world >= 0
+                    ? eng.world_bits[(size_t)first_world] : u;
+                row.append(py::int_(eng.number(idx, mine)));
+            } else if (inter.test(idx)) {
+                row.append(py::int_(10));   // 分支内确定雷
+            } else {
+                row.append(py::int_(9));    // 未开
+            }
+        }
+        board.append(row);
+    }
+    return board;
+}
+
+// ===========================================================================
+// 帮助模式精确状态转移（用户裁决 2026-11-08：中局不计算状态转移）
+//
+// 只在能精确穷举一致世界时产出真实转移；world_upper 超过
+// HELP_TRANSITION_WORLD_CAP 时直接返回明确原因，UI 显示「世界过多」，
+// **不做任何采样或近似**（用户明确要求「中局不要计算状态转移」）。
+// ===========================================================================
+
+// 对已构造好的世界集，按「任意指定格 (x,y)」算真实状态转移。
+// 两处复用：decide 出口（best_cell）与悬停接口（任意格）。
+static py::dict compute_transitions_for_cell(ExactEngine& eng,
+                                             const std::vector<int32_t>& cv,
+                                             int cx, int cy) {
+    py::dict out;
+    out["transitions"] = py::none();
+    out["transition_meta"] = py::none();
+    out["reason"] = py::none();
+    auto fail = [&](const char* why) {
+        out["reason"] = py::str(why);
+        py::dict meta;
+        meta["basis"] = py::str("unavailable");
+        meta["reason"] = py::str(why);
+        out["transition_meta"] = meta;
+        return out;
+    };
+    const int cell = cy * eng.W2 + cx;
+    if (cx < 1 || cy < 1 || cell < 0 || cell >= eng.total_bits ||
+        eng.opened0.test(cell))
+        return fail("cell_not_closed");
+    try {
+        ExactEngine::WKey wk = eng.all_wkey();
+        std::vector<ExactEngine::Outcome> outs;
+        const double p_clicksafe =
+            eng.click_outcomes(cell, wk, eng.opened0, outs);
+        py::list transitions;
+        for (auto& o : outs) {
+            py::list cells_py;
+            Bits delta = b_andnot(o.opened, eng.opened0);
+            std::vector<std::pair<int, int>> new_cells;
+            for (int i = 0; i < delta.nw; ++i) {
+                uint64_t x = delta.w[i];
+                while (x) {
+                    int bit = msw_ctzll(x);
+                    x &= x - 1;
+                    int c = (i << 6) + bit;
+                    new_cells.push_back({eng.coord_x(c), eng.coord_y(c)});
+                }
+            }
+            for (auto& q : new_cells)
+                cells_py.append(py::make_tuple(q.first, q.second));
+            py::dict branch;
+            branch["probability"] = py::float_(o.weight);
+            branch["new_cells"] = cells_py;
+            branch["label"] = py::str(
+                std::to_string(new_cells.size()) + " 格展开");
+            branch["board"] = transition_branch_board(
+                eng, cv, o.wk, o.opened, cx, cy);
+            transitions.append(branch);
+        }
+        if (p_clicksafe <= 0.0 || transitions.empty())
+            return fail("no_safe_worlds");
+        py::dict cond;
+        cond["p_click_safe"] = py::float_(p_clicksafe);
+        cond["basis"] = py::str("exact_worlds");
+        cond["world_count"] = py::int_((int64_t)eng.world_bits.size());
+        cond["cell"] = py::make_tuple(cx, cy);
+        out["transitions"] = transitions;
+        out["transition_meta"] = cond;
+        return out;
+    } catch (const std::exception&) {
+        return fail("engine_error");
+    }
+}
+
+static py::dict help_exact_transitions(
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+    int a, int w, int h, int best_x, int best_y) {
+    py::dict out;
+    out["transitions"] = py::none();
+    out["transition_meta"] = py::none();
+    out["reason"] = py::none();
+    auto fail = [&](const char* why) {
+        out["reason"] = py::str(why);
+        py::dict meta;
+        meta["basis"] = py::str("unavailable");
+        meta["reason"] = py::str(why);
+        out["transition_meta"] = meta;
+        return out;
+    };
+    if (best_x < 1 || best_y < 1) return fail("no_best_cell");
+    const int W2 = w + 2;
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+    const int32_t* raw = static_cast<const int32_t*>(cell_value.request().ptr);
+    std::vector<int32_t> cv(raw, raw + ncell);
+
+    int num10 = 0;
+    for (int y = 1; y <= h; ++y)
+        for (int x = 1; x <= w; ++x)
+            if (cv[(size_t)y * W2 + x] == 10) ++num10;
+
+    py::tuple split = py_split_frontier(cell_value);
+    py::list f_py = split[0].cast<py::list>();
+    py::list i_py = split[1].cast<py::list>();
+    std::vector<Coord> clicks, clicks9;
+    for (auto item : f_py) {
+        auto t = item.cast<py::tuple>();
+        clicks.emplace_back(py::int_(t[0]), py::int_(t[1]));
+    }
+    for (auto item : i_py) {
+        auto t = item.cast<py::tuple>();
+        clicks9.emplace_back(py::int_(t[0]), py::int_(t[1]));
+    }
+    if (clicks.empty()) return fail("no_frontier");
+
+    // 分组：与 decide_impl 完全同构（邻接约束数字 1..8，含 8）。
+    // ⚠️ 修复（2026-11-08）：原判据为 0<v<8（排除 8），与 run_part_solve 的
+    // 1<=v<=8 不一致，导致残局贴着数字 8 的 frontier 格独立成组且无解
+    // （empty_group / 决策不可用）。详见 decide_impl 处同一修复的注释。
+    std::vector<std::vector<Coord>> groups;
+    std::vector<std::set<Coord>> group_sets;
+    std::vector<std::set<Coord>> cell_sets(clicks.size());
+    for (size_t k = 0; k < clicks.size(); ++k) {
+        const auto& p = clicks[k];
+        for (int u = p.first - 1; u <= p.first + 1; ++u)
+            for (int v = p.second - 1; v <= p.second + 1; ++v) {
+                int32_t val = cv[(size_t)v * W2 + u];
+                if (val >= 1 && val <= 8) cell_sets[k].emplace(u, v);
+            }
+    }
+    for (size_t k = 0; k < clicks.size(); ++k) {
+        std::vector<size_t> hit;
+        for (size_t g = 0; g < groups.size(); ++g)
+            for (const auto& c : cell_sets[k])
+                if (group_sets[g].count(c)) { hit.push_back(g); break; }
+        if (hit.empty()) {
+            groups.push_back({clicks[k]});
+            group_sets.push_back(cell_sets[k]);
+        } else {
+            const size_t keep = hit.front();
+            groups[keep].push_back(clicks[k]);
+            group_sets[keep].insert(cell_sets[k].begin(), cell_sets[k].end());
+            for (size_t hi = hit.size(); hi-- > 1;) {
+                const size_t src = hit[hi];
+                groups[keep].insert(groups[keep].end(),
+                                    groups[src].begin(), groups[src].end());
+                group_sets[keep].insert(group_sets[src].begin(),
+                                        group_sets[src].end());
+                groups.erase(groups.begin() + (std::ptrdiff_t)src);
+                group_sets.erase(group_sets.begin() + (std::ptrdiff_t)src);
+            }
+        }
+    }
+
+    py::list res_list, ck_list;
+    int64_t world_upper = 1;
+    py::object no_progress = py::none();
+    try {
+        for (const auto& g : groups) {
+            py::tuple rr = py_part_solve(coords_to_pylist(g), cell_value,
+                                         a, w, h, no_progress);
+            py::array_t<int32_t, py::array::c_style | py::array::forcecast> sol(rr[0]);
+            const int64_t n = py::int_(rr[1]);
+            if (n <= 0) return fail("empty_group");
+            res_list.append(sol);
+            ck_list.append(py::int_(n));
+            if (world_upper > HELP_TRANSITION_WORLD_CAP / n) {
+                out["world_upper"] = py::int_(HELP_TRANSITION_WORLD_CAP + 1);
+                return fail("world_count_exceeded");
+            }
+            world_upper *= n;
+        }
+    } catch (const std::exception&) {
+        return fail("part_solve_error");
+    }
+    if (world_upper > HELP_TRANSITION_WORLD_CAP) {
+        out["world_upper"] = py::int_(world_upper);
+        return fail("world_count_exceeded");
+    }
+
+    const int nw_engine = (ncell + 63) / 64;
+    std::vector<std::vector<std::vector<int32_t>>> gmats;
+    gmats.reserve(res_list.size());
+    for (auto gitem : res_list) {
+        py::array_t<int32_t, py::array::c_style | py::array::forcecast> arr(
+            py::reinterpret_borrow<py::object>(gitem));
+        auto r = arr.unchecked<2>();
+        std::vector<std::vector<int32_t>> rows((size_t)r.shape(0),
+            std::vector<int32_t>((size_t)r.shape(1)));
+        for (py::ssize_t k = 0; k < r.shape(0); ++k)
+            for (py::ssize_t c = 0; c < r.shape(1); ++c)
+                rows[(size_t)k][(size_t)c] = r(k, c);
+        gmats.push_back(std::move(rows));
+    }
+    std::vector<int> ck;
+    for (auto v : ck_list) ck.push_back(v.cast<int>());
+
+    std::vector<Bits> worlds;
+    bool too_many = false;
+    try {
+        Odometer od(std::move(ck));
+        std::vector<int> index_list;
+        while (od.next(index_list)) {
+            int64_t mine_total = 0;
+            Bits wbits; wbits.zero(nw_engine);
+            for (size_t i = 0; i < index_list.size(); ++i) {
+                const auto& row = gmats[i][(size_t)index_list[i]];
+                const auto& group_cells = groups[i];
+                for (size_t j = 0; j < row.size() && j < group_cells.size(); ++j)
+                    if (row[j] == 1) {
+                        const auto& c = group_cells[j];
+                        wbits.set((size_t)c.second * W2 + c.first);
+                        ++mine_total;
+                    }
+            }
+            const int64_t rem = (int64_t)a - num10 - mine_total;
+            if (rem < 0 ||
+                (int64_t)a > num10 + mine_total + (int64_t)clicks9.size())
+                continue;
+            if (rem == 0) {
+                worlds.push_back(wbits);
+                if ((int64_t)worlds.size() > HELP_TRANSITION_WORLD_CAP) {
+                    too_many = true; break;
+                }
+                continue;
+            }
+            auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
+            std::vector<int> idx9;
+            for (int s : sizes) {
+                ComboIter it((int)clicks9.size(), s);
+                while (it.next(idx9)) {
+                    Bits wb = wbits;
+                    for (int j : idx9) {
+                        const auto& c = clicks9[(size_t)j];
+                        wb.set((size_t)c.second * W2 + c.first);
+                    }
+                    worlds.push_back(wb);
+                    if ((int64_t)worlds.size() > HELP_TRANSITION_WORLD_CAP) {
+                        too_many = true; break;
+                    }
+                }
+                if (too_many) break;
+            }
+            if (too_many) break;
+        }
+    } catch (const std::exception&) {
+        return fail("enumeration_error");
+    }
+    if (too_many) {
+        out["world_upper"] = py::int_(world_upper);
+        return fail("world_count_exceeded");
+    }
+    if (worlds.empty()) return fail("no_feasible_worlds");
+
+    ExactEngine eng;
+    eng.w = w; eng.h = h; eng.W2 = W2; eng.a = a;
+    eng.node_cap = 0;
+    eng.total_bits = (int)ncell;
+    eng.nw = nw_engine;
+    eng.all_bits.zero(eng.nw);
+    eng.opened0.zero(eng.nw);
+    for (int y = 1; y <= h; ++y)
+        for (int x = 1; x <= w; ++x) {
+            const int idx = eng.idx_of(x, y);
+            eng.all_bits.set(idx);
+            const int32_t v = cv[(size_t)y * W2 + x];
+            if (v >= 0 && v <= 8) eng.opened0.set(idx);
+        }
+    eng.nbr.assign(ncell, Bits());
+    for (int y = 1; y <= h; ++y)
+        for (int x = 1; x <= w; ++x) {
+            Bits m; m.zero(eng.nw);
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (!dx && !dy) continue;
+                    const int nx = x + dx, ny = y + dy;
+                    if (nx >= 1 && nx <= w && ny >= 1 && ny <= h)
+                        m.set(eng.idx_of(nx, ny));
+                }
+            eng.nbr[(size_t)eng.idx_of(x, y)] = m;
+        }
+    eng.world_bits = std::move(worlds);
+
+    // 缓存本轮世界集：help_exact_transitions 在 decide 出口被调用一次，
+    // 之后悬停任意格都复用这份引擎，不再重新枚举世界集。
+    {
+        TransitionEngineCache c;
+        c.fp = board_fingerprint(cv);
+        c.a = a; c.w = w; c.h = h;
+        c.eng = eng;
+        c.cv = cv;
+        c.valid = true;
+        c.reason = "";
+        g_tr_cache = std::move(c);
+    }
+    return compute_transitions_for_cell(eng, cv, best_x, best_y);
+}
+
+// 按「鼠标悬停的任意格 (x,y)」算状态转移（Python 悬停时调用）。
+// 优先复用 decide 出口缓存的世界集（指纹一致即命中，零重枚举）；
+// 盘面变了或缓存失效时退回 help_exact_transitions 重建并刷新缓存。
+static py::dict py_transitions_for(
+    py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
+    int a, int w, int h, int x, int y) {
+    const int32_t* raw = static_cast<const int32_t*>(cell_value.request().ptr);
+    const size_t ncell = (size_t)(h + 2) * (w + 2);
+    std::vector<int32_t> cv(raw, raw + ncell);
+    const uint64_t fp = board_fingerprint(cv);
+    if (g_tr_cache.valid && g_tr_cache.fp == fp &&
+        g_tr_cache.a == a && g_tr_cache.w == w && g_tr_cache.h == h) {
+        py::dict r = compute_transitions_for_cell(
+            g_tr_cache.eng, g_tr_cache.cv, x, y);
+        r["cached"] = py::bool_(true);
+        return r;
+    }
+    py::dict r = help_exact_transitions(cell_value, a, w, h, x, y);
+    r["cached"] = py::bool_(false);
+    return r;
 }
 
 static py::dict py_decide(
     py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
-    int a, int w, int h, double wr_threshold, int64_t node_cap,
-    int64_t mem_budget, uint64_t seed) {
+    int a, int w, int h, int64_t node_cap,
+    int64_t mem_budget, uint64_t seed, bool is_play) {
+    // P1/P0-4：mem_budget 形参仅为兼容既有 pybind 签名保留，决策层内部
+    // 一律使用 DEFAULT_MEM_BUDGET（1.5GB 用户铁律硬上限），不再消费其值。
+    (void)mem_budget;
     // decide() is a PURE function: output depends only on cell_value+config.
     // seed is accepted for harness symmetry but is intentionally unused;
     // tie-break is deterministic (option A, user-approved strategy change).
     (void)seed;
-    return decide_impl(cell_value, a, w, h, wr_threshold, node_cap, mem_budget);
+    // ⚠️ 2026-11-09：`wr_threshold` 参数已删除（用户裁决「winrate 分支都取消了，
+    //    应该取消这个参数」）。它曾是 pbs 层的准入阈值
+    //    `use_win_rate = limitation <= wr_threshold`，但该分支已随 LAYER 2 整体
+    //    删除，参数在 decide_impl 函数体内**零消费**（只被转发）。
+    //    保留它会让 Python 侧的「自适应调阈值」看起来在生效、实则无效。
+    py::dict r = decide_impl(cell_value, a, w, h, node_cap,
+                             mem_budget, is_play);
+    // ---- 论文对齐诊断（2026-11-09）----
+    // situations = 本次算出的精确 ‖S‖（论文 Algorithm 1 的一致世界总数）。
+    //   -1 = 未计数（被 world_upper 粗筛挡掉 / 内存闸拒绝 / 计数异常）。
+    //   用于与 Python 参考实现 count_worlds_exact 逐位对拍，并解释准入行为。
+    // dstar = 本次生效的 DSTAR（自动 256 / 帮助 768；MSW_DSTAR 可覆盖）。
+    r["situations"] = py::int_(g_last_situations);
+    r["dstar"] = py::int_(g_last_dstar);
+    // 把决策难度 limitation 作为诊断字段返回（与 decide_impl 内部同公式）：
+    //   limitation = clicks9 数量 * 0.8 + log2(world_upper)
+    // Python 侧用它 + 真实耗时驱动自适应 wr_threshold 升降档；此前该值只在
+    // C++ 内部用于选层，从未外传 ⇒ 30s 预算无法驱动任何调整（用户实测）。
+    try {
+        py::tuple sp = py_split_frontier(cell_value);
+        const double n9 = (double)py::len(sp[1].cast<py::list>());
+        const double wu = (double)py::float_(r["world_upper"]);
+        // limitation 保留为**诊断字段**（不参与任何决策，2026-11-08 起）：
+        // 实测它与真实成本方向相反且其消费点全为死分支，仅用于日志/热力图展示。
+        r["limitation"] = py::float_(n9 * 0.8 + std::log2(std::max(1.0, wu)));
+        // 前瞻层真实成本量（新增诊断）：log2(world_upper × C(n9, rem_max))。
+        // 这是判定「能否做精确前瞻」的正确量，也是动态深度的输入。
+        // 与 decide_impl 内部同口径（见该函数 COST_CAP 处注释）。
+        // ⚠️ py_split_frontier 返回 (frontier, interior, num9, num10)，
+        //    用 sp[3] 取 num10；切勿假设 decide 返回值里有 num10 字段（它没有）。
+        try {
+            const int64_t num10v = (int64_t)py::int_(sp[3]);
+            // ⚠️ 2026-11-09：此诊断字段必须与 decide_impl 的准入闸**同口径**，
+            // 否则「日志说规模很小、实际却被拒」这类误判无法从日志看出
+            // （实测就是如此：cost_log2=9.17 但 LAYER 2 撞 HARD_CAP 失败）。
+            // 旧实现取 rem = min(a-num10, n9) 再算 C(n9, rem)，与准入闸
+            // 同一个单峰函数方向性错误（rem 靠近 n9 时低估达指数级）。
+            int64_t rem_cap = (int64_t)a - num10v;
+            if (rem_cap < 0) rem_cap = 0;
+            double lb = std::log2(std::max(1.0, wu));
+            lb += inner_expand_log2_upper((int64_t)n9, rem_cap);
+            r["cost_log2"] = py::float_(lb);
+        } catch (const std::exception&) {
+            r["cost_log2"] = py::float_(-1.0);
+        }
+    } catch (const std::exception&) {
+        r["limitation"] = py::float_(-1.0);   // 诊断字段失败不影响决策
+        r["cost_log2"] = py::float_(-1.0);
+    }
+    // 帮助模式专用：决策层（certain_safe / win_rate / pbs / limitation 等）此前
+    // 不产出状态转移，导致帮助浮层恒显示「暂无」。这里在决策结果已定之后补一次
+    // 精确世界前瞻（OPTIMAL 层自带转移，已有则不再重算）。
+    // 自动模式（is_play=true）完全跳过 —— 用户明确要求 Auto 页只显示热力图。
+    // MSW_NO_HELP_TRANSITIONS=1 可关闭前瞻（诊断/回退用）。
+    static const bool no_help_tr = [] {
+        const char* e = std::getenv("MSW_NO_HELP_TRANSITIONS");
+        return e && std::string(e) == "1";
+    }();
+    if (!no_help_tr && !is_play && r.contains("x") && r.contains("y")) {
+        py::object existing = r["transitions"];
+        if (existing.is_none() || py::len(existing) == 0) {
+            try {
+                py::dict t = help_exact_transitions(
+                    cell_value, a, w, h,
+                    py::int_(r["x"]), py::int_(r["y"]));
+                r["transitions"] = t["transitions"];
+                r["transition_meta"] = t["transition_meta"];
+                r["transition_reason"] = t["reason"];
+            } catch (const std::exception& e) {
+                // 前瞻失败绝不影响决策结果本身（x/y/prob/tied 已确定）。
+                py::dict meta;
+                meta["basis"] = py::str("unavailable");
+                meta["reason"] = py::str(e.what());
+                r["transition_meta"] = meta;
+                r["transition_reason"] = py::str("lookahead_exception");
+            }
+        }
+    }
+    return r;
 }
 
 }  // namespace decision_layer
@@ -3366,10 +3209,19 @@ PYBIND11_MODULE(mscore, m) {
 #ifdef MSW_TRIAL_DECIDE
     m.def("decide", &decision_layer::py_decide,
           py::arg("cell_value"), py::arg("a") = 99, py::arg("w") = 30, py::arg("h") = 16,
-          py::arg("wr_threshold") = 8.0, py::arg("node_cap") = 2000000,
+          py::arg("node_cap") = 2000000,
           py::arg("mem_budget") = decision_layer::DEFAULT_MEM_BUDGET,
-          py::arg("seed") = 0,
-          "TRIAL ONLY: unified native decision, compare against Python number5_1.");
+          py::arg("seed") = 0, py::arg("is_play") = true,
+          "Unified native decision. NOTE: mem_budget is accepted for ABI "
+          "compatibility only; the decision layer always enforces the fixed "
+          "1.5GB DEFAULT_MEM_BUDGET and ignores this value.");
+    m.def("transitions_for", &decision_layer::py_transitions_for,
+          py::arg("cell_value"), py::arg("a") = 99, py::arg("w") = 30,
+          py::arg("h") = 16, py::arg("x"), py::arg("y"),
+          "Real state transitions for clicking the hovered cell (x,y).\n"
+          "Reuses the world set cached by the last decide() call; rebuilds\n"
+          "only when the board changes. 7x7 outcome boards are centered on\n"
+          "the hovered cell, not the best cell.");
 #else
     // decide() is intentionally NOT exported in production builds: full
     // number5_1 semantic parity must be verified first.
@@ -3400,66 +3252,10 @@ PYBIND11_MODULE(mscore, m) {
           py::arg("cs"), py::arg("num10"), py::arg("num9"), py::arg("a"), py::arg("w"),
           py::arg("h"), py::arg("progress"),
           "part_solve_single 内核（_try=False）：返回 (解矩阵[num×n], num)");
-    m.def("_hash_probe", [](py::array_t<int32_t, py::array::c_style | py::array::forcecast> board,
-                            py::object cells) {
-        // 测试钩子：证明"增量哈希 == 全盘重算哈希"不变式（评审要求）。
-        // 逐步施加增量更新，返回 (增量, 全盘重算, 是否相等)。
-        auto buf = board.unchecked<1>();
-        Board b(buf.data(0), buf.data(0) + buf.shape(0));
-
-        WinRateCtx ctx(1, 1, 0, false, py::object(), 0);
-        WinRateCtx::Key128 cur = ctx.hash_board(b);
-        py::list out;
-        for (auto item : cells) {
-            py::tuple t = py::cast<py::tuple>(item);
-            size_t pos = py::cast<size_t>(t[0]);
-            int32_t nv = py::cast<int32_t>(t[1]);
-            cur = WinRateCtx::inc_hash(cur, pos, b[pos], nv);
-            b[pos] = nv;
-            WinRateCtx::Key128 ref = ctx.hash_board(b);
-            out.append(py::make_tuple(
-                py::make_tuple(cur.a, cur.b),
-                py::make_tuple(ref.a, ref.b),
-                (cur == ref)));
-        }
-        return out;
-    }, py::arg("board"), py::arg("cells"),
-       "测试钩子：逐步施加增量哈希更新，返回 (增量, 全盘重算, 是否相等) 列表");
-
-    m.def("win_rate", &py_win_rate, py::arg("clicks"), py::arg("clicks9"), py::arg("res_list"),
-          py::arg("cell_value"), py::arg("ck"), py::arg("num10"), py::arg("a"), py::arg("w"),
-          py::arg("h"), py::arg("is_play"), py::arg("progress"),
-          py::arg("node_cap") = 0,
-          py::arg("depth_limit_override") = -1.0,
-          py::arg("adaptive_depth") = 0,
-          "win_rate 完整移植：返回 (res, sorted_clicks, total, clicks2p)。\n"
-          "node_cap > 0 时限制递归节点数，超限抛 RuntimeError（调用方应回退）；\n"
-          "node_cap = 0（默认）表示不限制，行为与旧版完全一致。\n"
-          "depth_limit_override > 0 时覆盖默认深度上限 200/len(clicks)；\n"
-          "默认 -1.0 = 沿用原公式，输出与旧版逐位一致。\n"
-          "adaptive_depth > 0 时按成本预估主动变浅以避免 node_cap 降级；\n"
-          "默认 0 = 关闭（生产默认路径，行为与旧版逐位一致）。");
-    m.def("last_phase", []() {
-        const LastPhase& p = g_last_phase;
-        return py::make_tuple(p.worlds, p.enum_ms, p.outer_ms,
-                              p.depth_limit, p.shrunk, p.wr_nodes);
-    }, "返回最近一次 win_rate 调用的分阶段快照：\n"
-       "(worlds, enum_ms, outer_ms, depth_limit, shrunk, wr_nodes)。\n"
-       "shrunk=1 表示 adaptive_depth 规则**实际触发**并改变了 depth_limit。");
     m.def("pbs_compute", &py_pbs_compute, py::arg("total"), py::arg("num10"), py::arg("clicks"),
           py::arg("clicks9"), py::arg("res_list"), py::arg("ck"), py::arg("a"), py::arg("progress"),
           py::arg("visible"),
           "process_bigger_situation 纯计算部分：返回 (res, mine_num, total)");
-    m.def("exact_eval", &py_exact_eval, py::arg("worlds"), py::arg("clicks"),
-          py::arg("clicks9"), py::arg("cell_value"), py::arg("a"), py::arg("w"), py::arg("h"),
-          py::arg("node_cap") = 0, py::arg("ply") = 0,
-          "精确 V* 引擎（bench/arms_lookahead.py::ExactEngine 的 C++ 版）。\n"
-          "worlds: 每个世界的雷位列表（bit=(y)*W2+x，含 1 格外框），由调用方枚举。\n"
-          "返回 (q_list, cand_coords, nodes, v_opt)：\n"
-          "  q_list[i] = after_click(候选 i) 的精确值（含 0 连锁 flood-fill）\n"
-          "  cand_coords[i] = (x, y) 1-based\n"
-          "ply > 0 时额外返回 ply_score 而非 after_click（用于浅层搜索臂）。\n"
-          "node_cap > 0 时超限抛 RuntimeError。");
     m.def("md5",
           [](py::bytes data) {
               std::string s = data;  // 拷贝需持有 GIL
@@ -3825,9 +3621,9 @@ extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
     py::dict r;
     try {
         r = decision_layer::decide_impl(board, a, w, h,
-                                        /*wr_threshold*/ 8.0,
                                         node_cap > 0 ? node_cap : 2000000,
-                                        decision_layer::DEFAULT_MEM_BUDGET);
+                                        decision_layer::DEFAULT_MEM_BUDGET,
+                                        /*is_play*/ true);
     } catch (const std::exception&) {
         return 0;   // any native failure -> caller falls back safely
     }
@@ -3956,9 +3752,10 @@ extern "C" int abnative_decide_batch(const int32_t* cv, int w, int h, int a,
                 sizeof(int32_t) * (size_t)(h + 2) * (size_t)(w + 2));
     py::dict r;
     try {
-        r = decision_layer::decide_impl(board, a, w, h, /*wr_threshold*/ 8.0,
+        r = decision_layer::decide_impl(board, a, w, h,
                                         node_cap > 0 ? node_cap : 2000000,
-                                        decision_layer::DEFAULT_MEM_BUDGET);
+                                        decision_layer::DEFAULT_MEM_BUDGET,
+                                        /*is_play*/ true);
     } catch (const std::exception&) {
         return 0;
     }
