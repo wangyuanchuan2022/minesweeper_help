@@ -1,0 +1,58 @@
+{
+  "batch": "review2/20261109_audit_all",
+  "created": "2026-11-09T23:45:00+08:00",
+  "mode": "scan --all (陌生仓库全量审计；工作区含大量未提交改动，非单一 diff)",
+  "object_root": "D:\\python\\projects\\minesweeper_help",
+  "risk_declaration": "行为兼容 / 输入处理 / 无认证面（本机桌面工具，无网络服务）",
+  "scope_glob_verified": true,
+  "scope_glob_note": "组织者已用 Get-ChildItem 实测核对：根级 4 个生产 .py、utils/ 14 个、ui/ 5 个（bg_rc.py 为 10MB 生成资源已排除）、cpp/mscore.cpp 3766 行、tests/ 11 个测试文件、bench/ 210 个历史脚本、docs/ 7 份、state/ 运行期数据。",
+  "reviewable": [
+    "main.py", "setting.py", "logger.py", "color.py",
+    "ui/window.py", "ui/window.ui", "ui/edit_setting.py",
+    "ui/preview_popup.py", "ui/screenshot.py",
+    "utils/__init__.py", "utils/solver.py", "utils/probability.py",
+    "utils/vision.py", "utils/native.py", "utils/e2e_probe.py",
+    "utils/decide_trace.py", "utils/deduction.py", "utils/combinatorics.py",
+    "utils/mm0.py", "utils/clicking.py", "utils/misc.py", "utils/util.py",
+    "utils/analyze_decide_trace.py",
+    "cpp/mscore.cpp", "cpp/build.bat",
+    "tests/*.py",
+    "tools/coverage_probe.py",
+    "bench/e2e_900.py", "bench/analyze_e2e.py", "bench/audit_dead_code.py",
+    "bench/verify_getlist_fix.py", "bench/verify_prob_truth.py",
+    "bench/verify_paper_layers.py", "bench/repro_world_count_split.py",
+    "bench/dstar_10k_serial.py", "bench/run_2000_after_cleanup.py",
+    "sim/*.py",
+    "README.md", "docs/现行架构与测量.md", "docs/实验总报告.md",
+    "docs/变量名与算法细节.md", "docs/胜率测试套件说明.md",
+    "CHANGELOG.md", "HANDOFF.md", "cfg.json", "requirements.txt", ".gitignore"
+  ],
+  "excluded": [
+    {"path": "ui/bg_rc.py", "reason": "10MB Qt 生成资源，无可执行逻辑"},
+    {"path": "bench/ 其余约 200 个脚本", "reason": "历史实验史料，用户已批准保留但不保证可运行；非生产路径"},
+    {"path": "state/", "reason": "gitignore 运行期数据"},
+    {"path": "review/", "reason": "历史评审批次，不混用"},
+    {"path": "image/", "reason": "二进制模板资源"},
+    {"path": "*.pyd / *.obj / *.zip", "reason": "编译产物与二进制"},
+    {"path": "docs/e2e测量与死代码审计-20261109.md 等历史报告", "reason": "历史快照，非现行代码"}
+  ],
+  "ownership_boundary": "本批 review2/ 独占；不写入 review/（历史批次）；两席只读，仅可写各自报告到 review2/。组织者负责补测试与改代码，不归入本批评审写面。",
+  "known_context": [
+    "唯一决策路径为 C++ decide（论文 AAAI-17 WS-17-15 Algorithm 3：‖S‖≤DSTAR→OPTIMAL 否则 pbs+PSEQ）",
+    "wr_threshold / win_rate / part_solve / exact_eval / LAYER 2 前瞻 / 自适应阈值 / Python 决策回退均已删除",
+    "pyd 当前 sha8 45C18B2F；cpp/mscore.cpp 由 build.bat 以 MSW_TRIAL_DECIDE 构建",
+    "真实 E2E 须用户在自己终端跑（沙箱低完整性级别无法驱动 Arbiter 输入）",
+    "2026-11-09 刚清理删除 44 个失效 bench、5 个失效 .cmd、作废 state 数据"
+  ],
+  "coverage_instrument": {
+    "tool": "tools/coverage_probe.py（自建，无外部依赖）",
+    "reason": "coverage.py pip 安装失败（沙箱无网络/代理），改用 sys.settrace + AST 可执行行分母",
+    "baseline_denominator_lines": 5287,
+    "baseline_modules": 22,
+    "caveat": "与 coverage.py statement coverage 近似但不等价；不含分支覆盖、不含 C++、不含真实 GUI/Arbiter 交互"
+  },
+  "deliverable_paths": {
+    "code_reviewer": "review2/20261109_audit_all/code-reviewer.md",
+    "architect": "review2/20261109_audit_all/architect.md"
+  }
+}
