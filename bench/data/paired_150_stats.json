@@ -1,0 +1,8 @@
+{
+ "games": 150,
+ "py_wins": 49,
+ "cpp_wins": 36,
+ "only_py": 24,
+ "only_cpp": 11,
+ "mcnemar_p": 0.0243
+}

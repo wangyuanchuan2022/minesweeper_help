@@ -1,0 +1,129 @@
+{
+ "scope": "PYTHON production ab_policy baseline, SAME seeds as C++ run",
+ "seeds": "20274000+",
+ "games": 20,
+ "wins": 6,
+ "per_game_s": 8.142,
+ "results": [
+  {
+   "seed": 20274000,
+   "won": true,
+   "steps": 23,
+   "err": null
+  },
+  {
+   "seed": 20274001,
+   "won": false,
+   "steps": 11,
+   "err": null
+  },
+  {
+   "seed": 20274002,
+   "won": false,
+   "steps": 10,
+   "err": null
+  },
+  {
+   "seed": 20274003,
+   "won": true,
+   "steps": 25,
+   "err": null
+  },
+  {
+   "seed": 20274004,
+   "won": false,
+   "steps": 4,
+   "err": null
+  },
+  {
+   "seed": 20274005,
+   "won": false,
+   "steps": 4,
+   "err": null
+  },
+  {
+   "seed": 20274006,
+   "won": false,
+   "steps": 12,
+   "err": null
+  },
+  {
+   "seed": 20274007,
+   "won": false,
+   "steps": 11,
+   "err": null
+  },
+  {
+   "seed": 20274008,
+   "won": false,
+   "steps": 10,
+   "err": null
+  },
+  {
+   "seed": 20274009,
+   "won": true,
+   "steps": 14,
+   "err": null
+  },
+  {
+   "seed": 20274010,
+   "won": false,
+   "steps": 2,
+   "err": null
+  },
+  {
+   "seed": 20274011,
+   "won": true,
+   "steps": 16,
+   "err": null
+  },
+  {
+   "seed": 20274012,
+   "won": false,
+   "steps": 12,
+   "err": null
+  },
+  {
+   "seed": 20274013,
+   "won": true,
+   "steps": 25,
+   "err": null
+  },
+  {
+   "seed": 20274014,
+   "won": false,
+   "steps": 3,
+   "err": null
+  },
+  {
+   "seed": 20274015,
+   "won": false,
+   "steps": 2,
+   "err": null
+  },
+  {
+   "seed": 20274016,
+   "won": false,
+   "steps": 3,
+   "err": null
+  },
+  {
+   "seed": 20274017,
+   "won": false,
+   "steps": 19,
+   "err": null
+  },
+  {
+   "seed": 20274018,
+   "won": false,
+   "steps": 9,
+   "err": null
+  },
+  {
+   "seed": 20274019,
+   "won": true,
+   "steps": 18,
+   "err": null
+  }
+ ]
+}

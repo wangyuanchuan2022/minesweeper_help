@@ -1,0 +1,721 @@
+Exploring Efﬁcient Strategies for Minesweeper
+Jinzheng Tu
+Electrical Engr.
+Tsinghua Univ.
+Beijing, China
+Tianhong Li
+IIIS
+Tsinghua Univ.
+Beijing, China
+Shiteng Chen
+Inst. of Software
+CAS
+Beijing, China
+Chong Zu
+Dept. of Physics
+Univ. of California
+Berkeley
+Zhaoquan Gu
+Dept. of CS
+HKU
+Hong Kong, China
+Abstract
+Minesweeper is a famous single-player computer game, in
+which the grid of blocks contains some mines and the player
+is to uncover (probe) all blocks that do not contain any mines.
+Many heuristic strategies have been prompted to play the
+game, but the rate of success is not high. In this paper, we ex-
+plore efﬁcient strategies for the Minesweeper game. First, we
+show a counterintuitive result that probing the corner blocks
+could increase the rate of success. Then, we present a se-
+ries of heuristic strategies, and the combination of them could
+lead to better results. We also transplant the optimal proce-
+dure on the basis of our proposed methods, and it achieves
+the highest rate of success. Through extensive simulations,
+a combination of heuristic strategies, “PSEQ”, yields a suc-
+cess rate of 81.627(8) %, 78.122(8) %, and 39.616(5) % for
+beginner, intermediate, and expert levels respectively, outper-
+forming the state-of-the-art strategies. Moreover, the devel-
+oped quasi-optimal method, combining the optimal proce-
+dure and our heuristic methods, raise the success rate to at
+least 81.79(2) %, 78.22(3) %, and 40.06(2) % respectively.
+1 Introduction
+Minesweeper is a popular single-player game which is in-
+cluded in many operation systems, such as Microsoft Win-
+dows and Linux. The game consists of a grid of blocks, and
+some blocks contain hidden “mines”. Initially, all blocks re-
+main covered, and the player only knows the grid’s width,
+height, and the number of mines. In each step, the player
+can uncover or probe a covered block. If the block contains
+a “mine”, the player loses the game; otherwise, the block re-
+turns the number of adjacent blocks that contain “mines”. If
+all blocks that do not contain any “mine” have been probed,
+the player wins the game.
+Although the simplicity of the rules makes the
+Minesweeper game interesting and deceptively easy, the
+Minesweeper game is theoretically proved to be NP-
+Complete by Kaye (2000). Furthermore, Pedersen proved
+Copyright © 2017, Association for the Advancement of Artiﬁcial
+Intelligence (www.aaai.org). All rights reserved.
+Minesweeper assignments to be # P-complete. Given any
+conﬁguration containing the uncovered and covered blocks,
+the Minesweeper Consistency problem , which is to assign
+the mines to the covered blocks of the conﬁguration such
+that the uncovered blocks have the correct number of ad-
+jacent mines, is shown to be NP-Complete. Moreover, the
+Minesweeper Counting problem, which is to count the num-
+ber of legal and consistent assignments of the conﬁguration,
+is also #P-complete (Pedersen 2004).
+The Minesweeper game has attracted much attention in
+the last decades, and many strategies have been proposed.
+The majority of them implement combinations of constraint-
+based approaches and heuristic methods to achieve better
+success ratio. The former is to deduce which blocks are free
+of mines, i.e. the blocks do not contain a “mine” deﬁnitely,
+while the latter is to select which blocks are better for prob-
+ing when every covered blocks may contain mines. There
+are two types of heuristic methods: deterministic algorithms
+result in the same choice to probe when the player faces the
+same Minesweeper conﬁguration, while non-deterministic
+algorithms could lead to different options for probing. The
+native method of choosing the blocks with least probabil-
+ity of mine wins only about 35% of the expert level games
+(30 × 16 grid with 99 mines); Studholme (2000) tries to
+probe the block in the corner, winning 33.9% of expert
+level deterministically. Legendre et al. (2012) minimizes
+the distance towards the boundary, winning 37.5% of ex-
+pert level. Buffet et al. (2013) introduces upper conﬁdence
+trees (UCT, ﬁrst introduced by Kocsis and Szepesv ´ari) for
+the heuristic methods, winning 38.7(18)% of expert level
+non-deterministically.
+In this paper, we are to explore efﬁcient algorithms for
+increasing the rate of success. In traditional Minesweeper
+rules, the ﬁrst step of probing is certainly safe, which may
+play an important role in designing efﬁcient algorithms. In
+this paper, we ﬁrstly show that we can improve the survival
+probability within two steps by 4.4% by probing the cor-
+ner in the ﬁrst step. Secondly, we introduce several heuris-
+tic methods for handling the game, of which combinations
+The AAAI-17 Workshop on  
+What's Next for AI in Games? 
+WS-17-15
+999
+could improve the success ratio. Thirdly, we propose quasi-
+optimal algorithms to enumerate the possible assignments of
+the conﬁgurations when the time complexity is acceptable.
+Finally, we conduct extensive simulations to evaluate these
+algorithms, and the results show that our algorithms outper-
+form the state-of-the-art results.
+The remaining of the paper is organized as follows.
+The next section highlights some related works about the
+Minesweeper game. The preliminaries are presented in Sec-
+tion 3. The impact of the ﬁrst probe is discussed in Section 4,
+and heuristic methods handling the game are introduced in
+Section 5. Section 6 presents the quasi-optimal methods that
+could achieve better results. We conduct extensive simula-
+tions to evaluate the algorithms, and the results are shown in
+Section 7. Finally, we conclude the paper in Section 8.
+2 Related Works
+The studies of strategies of Minesweeper date back to
+1990s. Despite unique approaches such as cellular automa-
+tion (Adamatzky 1997), learning algorithms (Castillo and
+Wrobel 2003; Pena 2004), graphical algorithms (Kamenet-
+sky and Teo 2007; Golan 2011; 2014), and non-deterministic
+upper conﬁdence trees (Buffet et al. 2013; Sebag and Tey-
+taud 2012a; 2012b), most of them implemented combi-
+nations of constraint-based approaches and deterministic
+heuristic methods.
+For the constraint part, the full-scale constraint solver,
+used by Studholme (2000) and Legendre et al. (2012), is
+the most popular one. It takes all constraints into consider-
+ation at the same time and solve for all possible solutions.
+However, simpliﬁed solvers are also used (Bayer, Snyder,
+and Choueiry 2006; Pedersen 2004; Collet 2005), consider-
+ing only locally related constraints. Legendre et al. (2012)
+demonstrate that the full-scale solver outperform simpliﬁed
+ones regarding the success ratio.
+For the heuristic methods, various have been promoted
+and/or tested. Studholme (2000) developed a heuristic
+method that prefers probing corners and edges every time.
+Legendre et al. (2012) tried to maximize or minimize the dis-
+tance towards the boundary / boundary or frame. Legendre
+et al. also combined these distance-related methods together
+and tested these compounded methods’ performance.
+For the initial move, Buffet et al. (2013) preferred the cor-
+ner blocks without explanation. Studholme (2000) and Be-
+cerra (2015), however, both asserted that the corner blocks
+are optimal because corner blocks have the highest probabil-
+ity of getting a zero.
+3 Preliminary
+Suppose the Minesweeper game consists of an w × h grid,
+and there are m blocks in the grid containing a “mine”. We
+use the notation “w-h-Tm” to represent such conﬁguration.
+Deﬁne G as the grid of blocks, and all blocks are initially
+covered with no information apprised. In each step, the
+player can uncover or probe a block to see if it contains a
+mine or not. Denote C as the set of closed blocks, i.e. cov-
+ered blocks, and B = G \ C as the set of open blocks, i.e.
+probed blocks. Denote M as the set of blocks containing
+mines. The player loses the game if any block b ∈ M is
+chosen to probe. Deﬁne function U : G →P (G) where
+U(b) represents the set of neighboring blocks around block
+b ∈ G. P(G) represents the set of G’s subsets. Deﬁne func-
+tion f : B → N where f(b)=‖M ∩U(b)‖represents the
+number of mines around block b. Figure 1 gives an intuitive
+illustration of these notations.
+The rule of playing the Minesweeper game may vary by
+different versions; however, we consider the following rules
+that are commonly adopted.
+1. The ﬁrst choice of probing a block is guaranteed to be
+safe; mines are distributed uniformly over all blocks ex-
+cept the initially probed one.
+2. The difﬁculty levels are 8-8-T10 (beginner), 16-16-T40
+(intermediate) and 30-16-T99 (expert).
+3. The player is allowed to probe any closed blocks, but
+probing open blocks are forbidden.
+4. When a block without mine b/∈ M is probed, it is marked
+as open (∈ B,/∈ C) and the player is informed of f(b).
+The neighboring blocks U(b) will not be probed automat-
+ically even if f(b)=0 . In some version of the game,
+the neighboring blocks will be probed automatically when
+f(b)=0 . However , any player with basic knowledge of
+the game knows that U(b) ∩ M = ∅ and then probe the
+neighboring blocks.
+5. When a block with mine b ∈ M is probed, the player
+loses the game immediately.
+6. When there are only ‖C‖= m closed blocks left, the
+player wins.
+After the ﬁrst probe, the player could decide which block
+is safe or have to guess from the closed blocks. Formally, the
+player should choose a block b ∈ C to probe with knowl-
+edge of U,C,B and f(b),∀b ∈ B. When all blocks that do
+not contain mines are uncovered (probed), the player wins
+the game.
+There are two common metrics for evaluating the
+Minesweeper strategies: average time consumption, repre-
+senting the time for winning the game; and the rate of suc-
+cess, representing the success ratio when the player or strat-
+egy has enough time to make decisions. In this paper, we
+mainly focus on the rate of success and to design efﬁcient
+algorithms with high ratios of winning the game with ac-
+ceptable time complexity. Naturally, the ﬁrst choice of prob-
+
+
+
+
+
+
+
+
+
+
+	
+
+
+	
+	 
+
+Figure 1: Notation used in this paper and possible response
+after probing a block.
+1000
+ing should be discussed separately because of its high sym-
+metricity and simplicity. Subsequently, with blocks gradu-
+ally uncovered, it is very likely that some blocks can be as-
+serted free of mine. For example, Figure 1 shows an example
+that the block to the left has f(b)=0 , and their neighbors
+must be free of mines, of which security is logically asserted.
+However, when all left closed blocks may contain mines, the
+player has to GUESS with the known conﬁguration, includ-
+ing U,C,B , and f(b),b ∈ B. We formally describe the
+strategy of handling the game as in Algorithm 1.
+Algorithm 1 A Generalized Minesweeper Strategy
+1: procedure STRA TEGY(U,C,B,f )
+2: ifB = ∅ then
+3: Probe the block at some speciﬁc position
+4: else
+5: S ←{ s|s ∈P (C),‖s‖= m}
+6: for all b ∈ B do
+7: S ←{ s|s ∈ S,‖s∩U(b)‖= f(b)}
+8: X ← C \(∪S)
+9: ifX = ∅ then
+10: X ← GUESS(C,B,f,S )
+11: Probe an arbitrary block ∈ X
+The “speciﬁc position” in line 3 is where we should
+choose for the ﬁrst probe. The function G UESS is used to
+guess which blocks are better when no blocks are logically
+free of mine. In the following sections, we will discuss
+which block is the optimal choice for the ﬁrst probe, and
+how to design efﬁcient G UESS functions.
+4 Impact of the Initial Probe
+There are three types of blocks: corner blocks which has
+only three neighbors, edge blocks which has ﬁve neighbors,
+and the other, central blocks have eight neighbors. Since the
+ﬁrst probe is always safe, the player could get different in-
+formation by probing different types of blocks. An intuitive
+view would be choosing a block in or near the middle, which
+may increase the success ratio since it contains more infor-
+mation than other blocks. However, in this section, we show
+that probing the corner blocks in the ﬁrst step could result in
+higher rate of success in all the three difﬁculty levels.
+Conjecture 1. Probing the corner blocks at the ﬁrst move
+maximizes the rate of success.
+Before we discuss Conjecture 1, we analyze a weak ver-
+sion that the player survives in two moves as Lemma 1.
+Lemma 1. Probing the corner blocks at the ﬁrst move max-
+imizes the probability of survival within two moves.
+Proof. Assume there are N = ‖U(b)‖blocks adjacent to
+a given one (i.e., three for a corner block, ﬁve for an edge
+block, and eight for central blocks). Denote random vari-
+able X = f(b). We can easily deduce that X follows the
+hypergeometric distribution (N,w ×h−1,m). Whichever
+Table 1: Upper-bounds on the success rate on various difﬁ-
+culty levels and initial probing positions.
+Difﬁculty Corner Edge Central
+8-8-T10 0.9396 0. 9117 0. 8983
+16-16-T40 0.9381 0. 9108 0. 8963
+30-16-T99 0.8970 0. 8614 0. 8530
+N 358
+strategy we use, the probability of survival following thesec-
+ond move is precisely given by:
+E
+(
+1−min
+{X
+N, m−X
+w×h−1−N
+})
+(1)
+Numerically, we evaluated probability in (1) as Table 1. The
+calculation indicates that an upper-bound on the success rate
+of any corner-ﬁrst strategy is higher than that of edge-ﬁrst
+or center-ﬁrst strategies. In other words, not probing the
+corner ﬁrst increases the probability of immediate death in
+the second move signiﬁcantly.
+ 
+(a) 8-8-T10 T
+ 
+(b) 8-8-T10 P
+ 
+(c) 16-16-T40 T
+ 
+(d) 30-16-T99 T
+ 
+(e) 16-16-T40 P
+ 
+(f) 30-16-T99 P
+Figure 2: Rate of success with different initial position spec-
+iﬁcation on various size of grids. Darker block indicates a
+higher rate of success. “P” represents the naive guessing,
+and “T” represents the trivial guessing.
+Unfortunately, generalizing Lemma 1 to Conjecture 1 is
+tough because the number of possible situations balloons
+rapidly when we consider more moves. However, Monte
+1001
+Table 2: Impact of the initial probe on the rate of success
+for various difﬁculties and guessing strategies.
+Conﬁg.1 Corners2 Non-corners2
+Max. Min.
+8-8-T10 P 78.44(2)% 74. 90(2)% 71. 89(2)%
+16-16-T40 P 74.30(2)% 71. 06(2)% 68. 18(2)%
+30-16-T99 P 35.56(1)% 34. 50(2)% 32. 45(2)%
+8-8-T10 T 36.06(2)% 29. 52(2)% 15. 92(1)%
+16-16-T40 T 34.49(2)% 28. 80(2)% 16. 91(1)%
+30-16-T99 T 5.097(6)% 4 .369(8)% 2 .049(6)%
+1 “P” represents the naive guessing, and “T” represents the
+trivial guessing.
+2 Signiﬁcant ﬁgures are estimated by 0.05 quantiles of β-
+distribution.
+Carlo simulations can be used to consolidate it. We imple-
+mented them for each possible position using two different
+strategies on the three difﬁculty levels. The ﬁrst strategy,
+naive guessing, solely uses the naive guessing algorithm by
+picking the block with least probability of mine. The sec-
+ond strategy, trivial guessing, surrenders when it is forced
+to guess. These two strategies were chosen for their ex-
+cellent representativeness and simplicity. Each position has
+been tested 2.5×107 times for one combination of difﬁ-
+culty level and strategy, while the corners have been tested
+5.0×107 times each. Results are partially listed in Table 2,
+with intuitive ﬁgures (2a to 2f) provided as reference. These
+results show that probing the corner blocks increases the
+lower bound of the rate of success for whichever strategies
+or difﬁculty levels.
+Remark. Although further theoretical analysis and numeri-
+cal experiments are necessary for optimality, Conjecture 1,
+that choosing corner blocks at the ﬁrst move is not a bad
+choice.
+5 Heuristic Strategies
+With the initial move ﬁxed at the corner blocks, we discuss
+the heuristic strategies for the Minesweeper game rigorously
+in this section. The naive heuristic strategy is to minimize
+the probability of uncovering a mine for a given conﬁgura-
+tion, and we called the method F ILTER -P. Rigorously, let
+p(b)= P(b ∈ M)= ‖{s|s ∈ S,b ∈ s}‖
+‖S‖
+and F ILTER -P returns the set of b ∈ C with minimal p(b).
+It can be thought as maximizing the probability of opening
+at least one more block (i.e., with minimum probability of
+uncovering a mine within one step).
+We present another method called FILTER -Q, which max-
+
+
+ 
+
+
+
+
+
+
+
+
+     
+
+
+
+	
+
+	
+	
+ĺ/RVH
+ĺ
+	
+ĺ/RVH
+ĺ
+	
+ĺ/RVH
+ĺ
+ĺ
+	
+ĺ/RVH
+ĺ
+ĺ
+	
+ĺ/RVH
+ĺ
+ĺ
+ĺ
+Figure 3: Calculation of s(b) ande(b). s(b) is the probability
+of obtaining a safe blocks, while e(b) is the expectation of
+the number of safe blocks. Table 3 gives the result of s(b)
+ande(b).
+imizes the entropy, q(b), of the distribution of f(b):
+S(b,n)= {s|s ∈ S,b /∈ s,U (b)∩s = n}
+p(b,n)= P(f(b)= n)= ‖S(b,n)‖
+‖S‖
+q(b)= −
+∞∑
+i=0,p(b,i)⁄=0
+p(b,i)log 2 p(b,i)
+We introduce two more strategies that are related to the
+safe blocks, i.e. the blocks are guaranteed without any
+mines. F ILTER -E maximizes the expected number e(b) of
+safe blocks for the next move, and F ILTER -S maximizes the
+probability s(b) of obtaining at least one safe block for the
+next move. The χ : N → R,x ↦→χ(x) is the function that
+returns 0 when x =0 and returns 1 when x ≥ 1.
+e(b)=
+∞∑
+n=0
+p(b,n)‖C−{b}− (∪S(b,n))‖
+s(b)=
+∞∑
+n=0
+p(b,n)χ(‖C−{b}− (∪S(b,n))‖)
+Arising from Lemma 1, we introduce F ILTER -U, which
+maximizes u(b), the probability of survival after two steps.
+p′(b,n)=1 −min
+c∈C−{b}
+‖{s|s ∈ S(b,n),b ∈ s}‖
+‖S(b,n)‖
+u(b)=
+∞∑
+n=0
+p(b,n)p′(b,n)
+To summarize, we provide intuitive demonstrations of
+various strategies in a 6-1-T2 Minesweeper game in Figure 3
+and Table 3.
+1002
+Table 3: Examples of heuristic strategies when applied to
+a 6-1-T2 Minesweeper game with C = {g1,g 3,g 4,g 5,g 6},
+B = {g2}, f(g2)=1 . Blocks preferred by each strategy
+separately are underlined.
+bg 1 g3 g4 g5 g6
+p(b)1 /21 /21 /3 1/3 1/3
+q(b) 0 0.637 1. 040 0 0.693
+s(b)0 1 1/20 1
+e(b)0 4 /3 1/20 1
+u(b)1 /31 /21 /21 /32 /3
+Actually, the proposed strategies can be combined for
+making a good choice for probing. For example, we com-
+bine F ILTER -P, F ILTER -S, F ILTER -E, and F ILTER -Q to-
+gether, as described in Algorithm 2. We denote such a
+greedy heuristic algorithm as “PSEQ” (the sequence mat-
+ters!). Referring to Table 3, we can ﬁnd that F ILTER -
+P returns X = {g4,g 5,g 6}, and F ILTER -S reduced it to
+X = {g6}. Obviously, g3 is not there—it has been elim-
+inated by F ILTER -P ahead! Finally, “PSEQ” will choose
+X = {g6} to probe, which is the same as F ILTER -U. In-
+deed, this combined strategy would work better than any
+single strategy (including F ILTER -U), and we will present
+the comparison results in Section 7.
+Algorithm 2 The compounded heuristic strategy “PSEQ”
+1: procedure HEURISTIC -PSEQ(U,C,B,f,S )
+2: X ← C
+3: X ← FILTER -P(U,C,B,f,S,X )
+4: X ← FILTER -S(U,C,B,f,S,X )
+5: X ← FILTER -E(U,C,B,f,S,X )
+6: X ← FILTER -Q(U,C,B,f,S,X )
+7: returnX
+6 Quasi-optimal Strategies
+The optimal minesweeper strategy has been discussed by
+Golan (2014). With ˜B = B ∪{b} and ˜f : ˜B → N, ˜f(b)=
+i, ˜f(x)= f(x) forx ∈ B, we deﬁne
+popt(B,f,b )=
+∞∑
+i=0
+p(b,i)popt(˜B, ˜f)
+popt(B,f )=
+{
+1 ‖G\B‖= m
+max
+b∈B
+popt(B,f,b ), otherwise.
+The optimal strategy is to choose the block b with maximum
+popt(B,f,b ). We denote the strategy as O PTIMAL . Unfor-
+tunately, its application is signiﬁcantly retarded by the time
+complexity, where the number of function calls it involves
+to solve even a beginner Minesweeper game has a lower
+bound of roughly1019. In this section, we are to combine the
+optimal procedure and our proposed heuristic strategies for
+achieving high rate of success regarding for heuristic meth-
+ods, and decreasing the time complexity regarding for the
+optimal method.
+The intuitive idea is that: the amount of computation be-
+comes feasible in the ﬁnal phases of the whole game. In such
+cases, the best choice of blocks can be easily determined by
+running the O PTIMAL procedure. For the other situations
+where the recursion is too deep and/or wide, our proposed
+compounded heuristic method could be applied.
+We use the number of situations ‖S‖ to determine
+whether O PTIMAL procedure or H EURISTIC strategies
+should be adopted, as shown in Algorithm 3. By ﬁxing
+‖S‖, we can get a better result with controlled time con-
+sumption. Denote a heuristic strategy composed of “P” and
+the quasi-optimal solver as “P-D*”, where “D*” stands for
+the criterion of ‖S‖. By combing the heuristic strategies and
+the optimal procedures, we can improve the rate of success
+signiﬁcantly. The simulation results are shown in the next
+section.
+Algorithm 3 The quasi-optimal method “PSEQ-D*”.
+1: procedure QUASI OPTIMAL -PSEQ(U,C,B,f,S )
+2: if‖S‖≤criterion then
+3: return OPTIMAL (U,C,B,f,S )
+4: else
+5: return HEURISTIC -PSEQ(U,C,B,f,S )
+7 Simulation
+In this section, we conduct extensive simulations to evalu-
+ate the performance of our proposed (compounded) heuristic
+strategies.
+To examine which combination of these methods attains
+maximum performance, we perform Monte Carlo simula-
+tion on expert level Minesweeper games, and the results are
+shown in Table 4, where both the rate of success and the
+consumed time evaluated. Note that the estimation of time
+is independent of the estimation of rate of success. For esti-
+mating time, the testing platform is Intel®Core™i7-4650U,
+the sample volume is 104, and5% outliers are removed. For
+estimating rate of success, sample volumes are listed in Ta-
+ble 4, and signiﬁcant ﬁgures are estimated by 0.05 quantiles
+of β-distribution. Although “U” (short for F ILTER -U, the
+other notations are denoted similarly) signiﬁcantly outper-
+forms “P” regarding the rate of success, its extended time
+consumption limited its application. From Table 4, conclu-
+sively, “PSEQ” has the best performance regarding the rate
+of success (39.616(5)%) among these combinations.
+Similarly, we use numeric simulation to test the quasi-
+optimal methods’ performance. Figure 4 shows the suc-
+cess rates and time complexity using different criterions. It
+should then be stressed that the quasi-optimal methods made
+a signiﬁcant difference as the value of the criterion (x-axis)
+varies. The rate of success increases as the value of the cri-
+terion increases. Nevertheless, the rapidity of the growth
+in time cost could not be ignored. Different heuristic algo-
+rithms (we only plot “P” and “PSEQ” as the representative
+examples) shared a similar pattern (the trend of increasing
+success ratio and the time complexity) using quasi-optimal
+1003
+Table 4: Performance of heuristic strategies.
+Strategy Trials Rate Time/ms
+U 1.02×106 39.14(9)% 11. 845
+P 5.00×107 35.56(1)% 1. 150
+S 1.02×106 35.05(9)% 6. 165
+E 1.02×106 30.72(9)% 5. 017
+Q 1.02×106 13.24(7)% 1. 976
+PS 1.00×107 39.25(3)% 2. 191
+PU 1.00×107 39.12(3)% 2. 119
+PE 1.00×106 38.0(1)% 2. 063
+PQ 1.00×106 34.95(9)% 2. 615
+PSE 3.00×107 39.60(2)% 1. 831
+PSU 3.00×107 39.25(2)% 1. 907
+PSQ 5.00×106 39.34(4)% 2. 054
+PSEQ 3.20×108 39.616(5)% 2. 153
+PSEQU 3.20×108 39.616(5)% 2. 088
+PSEUQ 1.00×108 39.61(1)% 2. 101
+PSEU 2.00×107 39.57(2)% 2. 059
+
+
+
+	
+	
+  	    	  
+
+
+
+
+
+       
+
+
+
+
+
+
+
+       
+Figure 4: Rate of success and time consumption of quasi-
+optimal methods.
+methods. In addition, from the ﬁgure, the quasi-optimal al-
+gorithm consumes much more time than traditional heuris-
+tic algorithms, where “P-D1” and “PSEQ-D1” represent the
+traditional “P” and “PSEQ” strategies.
+Table 5 lists a comparison of the state-of-the-art deter-
+ministic and non-deterministic strategies. The results show
+that our proposed algorithms have better performance on all
+three difﬁculty levels. For the beginner (intermediate, ex-
+pert) level, the “PSEQ” strategy achieves 1.427% (3.722%,
+0.916%) higher success ratio than the state-of-the-art algo-
+rithms. Moreover, when we adopt the quasi-optimal version,
+“PSEQ-D256” strategy, the success ratio is 1.59% (3.82%,
+1.36%) higher than existant algorithms.
+Optimistic Heuristics (OH) (Buffet et al. 2013) is the
+latest result with highest success ratio among the existant
+works, and our proposed algorithms have better performance
+than it. We should mention that there exist a slight connec-
+tion and some clear differences between deterministic quasi-
+optimal strategies “PSEQ-D*” and non-deterministic strate-
+gies OH. The connection is that “looking ahead” is imple-
+mented in both. But there are four main differences. First,
+“PSEQ-D*” postpones the procedure until the ﬁnal phase
+and exhausts all possible descendants, whereas OH starts the
+procedure immediately and stochastically exhausts a certain
+number of descendants. Second, “PSEQ-D*” enumerates
+all mine assignments and considers all legal moves, whereas
+OH expands the upper conﬁdence tree gradually and elim-
+inates some potential moves by some heuristic methods.
+Third, the set of preferred blocks derived by “PSEQ-D*” un-
+der certain situations is always the same as a deterministic
+strategy, whereas that for OH is likely to vary because of the
+Monte Carlo part. Finally, the coupling between heuristic
+methods and “PSEQ-D*” is much looser than that between
+these strategies and OH, because we can extend any algo-
+rithm “X” to “X-D*” easily, whereas OH uses the heuristic
+ideas to achieve such good result. In general, “PSEQ-D*”
+boasts more advantages than OH.
+From these simulation results, our proposed (com-
+pounded) heuristic algorithms could achieve good perfor-
+mance, especially the “PSEQ” method works better than
+all existant algorithms. Moreover, the proposed quasi-
+optimal algorithm, which consumes more time than tradi-
+tional heuristic methods, could improve the rate of success
+ratio signiﬁcantly for all three common difﬁculties: begin-
+ner, intermediate and expert levels.
+8 Conclusion
+In this paper, we study the interesting Minesweeper game by
+designing efﬁcient algorithms to guarantee a higher rate of
+success. In the ﬁrst step, we show a counterintuitive result
+that probing a corner block at the ﬁrst move could result in
+higher rate of success. Then, we propose a series of heuristic
+strategies, of which combinations improve the rate of suc-
+cess signiﬁcantly. Following that, we design quasi-optimal
+algorithms by modifying the optimal procedure with pro-
+posed methods. Through extensive simulation results, our
+proposed deterministic heuristic strategy, “PSEQ”, could
+solve 81.627(8)%, 78.122(8)%, and 39.616(5)% of be-
+ginner, intermediate, and expert levels respectively, outper-
+forming all previous strategies. Moreover, the quasi-optimal
+methods that boosts the rate of success of “PSEQ” to at least
+81.79(2)%, 78.22(3)%, and 40.06(2)% respectively.
+In the future, we are to tighten the upper bound of success
+rates by the concept introduced in Equation (1), and develop
+rigorous proof (or disproof) of the conjecture to probing the
+corner block at the ﬁrst move. Besides, we could design
+better heuristic methods and accelerate the quasi-optimal al-
+gorithms to improve the rate of success further.
+References
+Adamatzky, A. 1997. How cellular automaton plays
+minesweeper. Applied mathematics and computation
+85(2):127–137.
+Bayer, K. M.; Snyder, J.; and Choueiry, B. Y . 2006. An inter-
+active constraint-based approach to minesweeper. In AAAI,
+1933–1934.
+1004
+Table 5: Performance comparison of the state-of-the-art strategies and our strategies. The highest rate of success of each
+difﬁculty level are marked with bold font.
+Strategy Deterministic 8-8-T10 16-16-T40 30-16-T99
+PSEQ-D256 (this paper) Ye s 81.79(2) %1 78.22(3) %1 40.06(2) %2
+PSEQ (this paper) Ye s 81.627(8)% 1 78.122(8)% 1 39.616(5)% 2
+OH (Buffet et al. 2013) No 80.2% 74 .4% 38 .7%
+cSimEnuLoClf (Legendre et al. 2012) Y es 80% 75. 6% 37 .5%
+CSP (Studholme 2000) Y es 80.0% 44 .3% 33 .9%
+CSCSP (Becerra 2015) Y es 75.94% 32. 90%
+LSWPE (Pedersen 2004) Y es 67.7% 25 .0%
+LBP-MC (Kamenetsky and Teo 2007) Y es 78.6% 44 .8%
+PGMS (Ramsdell 1995) Y es 71% 36% 26%
+1 The sample volume for “PSEQ-D256” is 107, and that for “PSEQ” is 108.
+2 The sample volume for “PSEQ-D256” is 1.88×107, and that for “PSEQ” is 3.2×108.
+Becerra, D. J. 2015. Algorithmic Approaches to Playing
+Minesweeper. Bachelor’s thesis, Harvard College.
+Buffet, O.; Lee, C.-S.; Lin, W.-T.; and Teytaud, O. 2013.
+Optimistic heuristics for minesweeper. In Chang, R.-S.;
+Jain, L. C.; and Peng, S.-L., eds., Advances in Intelligent
+Systems and Applications , volume 20. Springer Berlin Hei-
+delberg. 199–207.
+Castillo, L. P ., and Wrobel, S. 2003. Learning minesweeper
+with multirelational learning. In IJCAI, 533–540.
+Collet, R. 2005. Playing the minesweeper with con-
+straints. In V an Roy, P ., ed.,Multiparadigm Programming in
+Mozart/Oz, volume 3389. Springer Berlin Heidelberg. 251–
+262.
+Golan, S. 2011. Minesweeper on graphs. Applied Mathe-
+matics and Computation 217(14):6616–6623.
+Golan, S. 2014. Minesweeper strategy for one mine. Applied
+Mathematics and Computation 232:292–302.
+Kamenetsky, D., and Teo, C. H. 2007. Solving minesweeper
+using graphical models. Technical report, Australian Na-
+tional University.
+Kaye, R. 2000. Minesweeper is np-complete. The Mathe-
+matical Intelligencer 22(2):9–15.
+Kocsis, L., and Szepesv ´ari, C. 2006. Bandit based monte-
+carlo planning. In European conference on machine learn-
+ing, 282–293. Springer.
+Legendre, M.; Hollard, K.; Buffet, O.; and Dutech, A. 2012.
+Minesweeper: Where to probe? Technical report, INRIA.
+Pedersen, K. 2004. The complexity of minesweeper and
+strategies for game playing. Technical report, Warwick Uni-
+versity.
+Pena, M. L. 2004. Search Improvements in Multirela-
+tional Learning. Ph.D. Dissertation, PhD thesis, Ottovon-
+Guericke-Universit¨at Magdeburg.
+Ramsdell, J. D. 1995. Programmer’s minesweeper.
+http://www.ccs.neu.edu/home/ramsdell/pgms/.
+Sebag, M., and Teytaud, O. 2012a. Upper conﬁ-
+dence tree-based consistent reactive planning application to
+minesweeper. In Learning and Intelligent Optimization.
+Springer. 220–234.
+Sebag, M., and Teytaud, O. 2012b. Combining myopic
+optimization and tree search: Application to minesweeper.
+In LION6, Learning and Intelligent Optimization, volume
+7219, 222–236. Paris, France: Sringer V erlag.
+Studholme, C. 2000. Minesweeper as a constraint satisfac-
+tion problem. Unpublished project report.
+1005

@@ -1,0 +1,76 @@
+{
+ "scope": "PURE C++ whole-game driver, no Python decision in loop",
+ "seed": 20274000,
+ "config": {
+  "w": 30,
+  "h": 16,
+  "a": 99,
+  "world_cap": 200000,
+  "wr_threshold": 8.0
+ },
+ "results": {
+  "production": {
+   "games": 40,
+   "wins": 12,
+   "deaths": 28,
+   "steps": [
+    191,
+    9,
+    8,
+    1,
+    211,
+    202,
+    1,
+    159,
+    2,
+    232,
+    208,
+    200,
+    2,
+    2,
+    1,
+    212,
+    184,
+    7,
+    177,
+    250,
+    216,
+    211,
+    1,
+    116,
+    200,
+    4,
+    2,
+    11,
+    19,
+    217,
+    193,
+    2,
+    197,
+    211,
+    1,
+    225,
+    1,
+    218,
+    3,
+    227
+   ],
+   "certain_safe": 4139,
+   "wall_ms": 58042.0
+  },
+  "oracle": {
+   "games": 5,
+   "wins": 5,
+   "deaths": 0,
+   "steps": [
+    182,
+    233,
+    201,
+    191,
+    219
+   ],
+   "certain_safe": 0,
+   "wall_ms": 5.0
+  }
+ }
+}

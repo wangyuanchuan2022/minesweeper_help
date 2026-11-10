@@ -1,0 +1,320 @@
+{
+ "whitebox_gate": {
+  "all_passed": true,
+  "results": [
+   {
+    "test": "win_rate_tiebreak_intercepted",
+    "passed": true,
+    "idx": 0,
+    "chosen_xy": [
+     1,
+     1
+    ]
+   },
+   {
+    "test": "first_click_uniform_NOT_intercepted",
+    "passed": true,
+    "got": 1,
+    "orig": 1
+   },
+   {
+    "test": "SAME_p_as_win_rate_but_branch_none_NOT_intercepted",
+    "passed": true,
+    "p_identical_to_win_rate": true,
+    "got": 0,
+    "orig": 0
+   },
+   {
+    "test": "pbs_weighted_intercepted",
+    "passed": true,
+    "chosen_xy": [
+     11,
+     2
+    ]
+   },
+   {
+    "test": "outside_scope_NOT_intercepted",
+    "passed": true
+   },
+   {
+    "test": "restore_restores_choice_id",
+    "passed": true,
+    "id_before": 1386847569456,
+    "id_patched": 1386867951424,
+    "id_after": 1386847569456
+   }
+  ]
+ },
+ "preconditions": {
+  "preregistered_seed_20274000_plus": true,
+  "baseline_unpatched": true,
+  "optionA_only_win_rate_pbs_patched": true,
+  "diagnostics_cover_both_branches": false,
+  "opt_branches": [
+   "pbs",
+   "win_rate"
+  ],
+  "opt_chosen_xy_none_count": 15,
+  "opt_decision_total": 18,
+  "paired_intermediate_state_identical": true,
+  "baseline_vs_HANDOFF_36_35pct": {
+   "baseline_rate": 0.3333333333333333,
+   "historical": 0.3635,
+   "ci95": [
+    -0.18081067978989113,
+    0.907810679789891
+   ],
+   "within_ci": true
+  },
+  "ALL_PRECONDITIONS_MET": false
+ },
+ "scope": "STRATEGY pilot, NOT C++ decide() parity, NOT 40% validation",
+ "patch_scope": "optionA patch active ONLY inside _number5_1_core; baseline unpatched",
+ "seed_note": "HANDOFF preregistered strategy-arm range 20274000+",
+ "games_per_arm": 3,
+ "seed": 20274000,
+ "config": {
+  "w": 30,
+  "h": 16,
+  "a": 99,
+  "limit": 80,
+  "world_cap": 4096,
+  "node_cap": 200000
+ },
+ "baseline_random_tiebreak": {
+  "wins": 1,
+  "rate": 0.3333333333333333
+ },
+ "optionA_deterministic": {
+  "wins": 1,
+  "rate": 0.3333333333333333
+ },
+ "delta_pp": 0.0,
+ "paired": {
+  "only_optionA": 0,
+  "only_baseline": 0
+ },
+ "caveat": "n=10, directional only, NOT a verdict; n=10 CI ~ +/-25pp",
+ "base": [
+  {
+   "seed": 20274000,
+   "won": true,
+   "err": null,
+   "steps": 23,
+   "decisions": [],
+   "n_decisions": 0,
+   "n51_calls": null,
+   "choice_calls": null,
+   "n_ties": 0,
+   "branches": []
+  },
+  {
+   "seed": 20274001,
+   "won": false,
+   "err": null,
+   "steps": 11,
+   "decisions": [],
+   "n_decisions": 0,
+   "n51_calls": null,
+   "choice_calls": null,
+   "n_ties": 0,
+   "branches": []
+  },
+  {
+   "seed": 20274002,
+   "won": false,
+   "err": null,
+   "steps": 10,
+   "decisions": [],
+   "n_decisions": 0,
+   "n51_calls": null,
+   "choice_calls": null,
+   "n_ties": 0,
+   "branches": []
+  }
+ ],
+ "opt": [
+  {
+   "seed": 20274000,
+   "won": true,
+   "err": null,
+   "steps": 27,
+   "decisions": [
+    {
+     "branch": "pbs",
+     "tie_size": 8,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 4,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 8,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 3,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 2,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 2,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "win_rate",
+     "tie_size": 5,
+     "tie_triggered": true,
+     "chosen_xy": [
+      1,
+      4
+     ],
+     "pool_available": true
+    }
+   ],
+   "n_decisions": 13,
+   "n51_calls": 11,
+   "choice_calls": 13,
+   "n_ties": 7,
+   "branches": [
+    "pbs",
+    "win_rate"
+   ]
+  },
+  {
+   "seed": 20274001,
+   "won": false,
+   "err": null,
+   "steps": 13,
+   "decisions": [
+    {
+     "branch": "pbs",
+     "tie_size": 8,
+     "tie_triggered": true,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "win_rate",
+     "tie_size": 2,
+     "tie_triggered": true,
+     "chosen_xy": [
+      1,
+      5
+     ],
+     "pool_available": true
+    },
+    {
+     "branch": "win_rate",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": [
+      1,
+      4
+     ],
+     "pool_available": true
+    }
+   ],
+   "n_decisions": 3,
+   "n51_calls": 3,
+   "choice_calls": 3,
+   "n_ties": 2,
+   "branches": [
+    "pbs",
+    "win_rate"
+   ]
+  },
+  {
+   "seed": 20274002,
+   "won": false,
+   "err": null,
+   "steps": 10,
+   "decisions": [
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    },
+    {
+     "branch": "pbs",
+     "tie_size": 1,
+     "tie_triggered": false,
+     "chosen_xy": null,
+     "pool_available": false
+    }
+   ],
+   "n_decisions": 2,
+   "n51_calls": 2,
+   "choice_calls": 2,
+   "n_ties": 0,
+   "branches": [
+    "pbs"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,372 @@
+{
+ "scope": "SAME-BOARD paired comparison (Python-generated layouts, 50 games)",
+ "py": {
+  "wins": 14,
+  "rate": 0.28,
+  "results": [
+   {
+    "seed": 20274000,
+    "won": true,
+    "steps": 23,
+    "err": null
+   },
+   {
+    "seed": 20274001,
+    "won": false,
+    "steps": 11,
+    "err": null
+   },
+   {
+    "seed": 20274002,
+    "won": false,
+    "steps": 10,
+    "err": null
+   },
+   {
+    "seed": 20274003,
+    "won": true,
+    "steps": 25,
+    "err": null
+   },
+   {
+    "seed": 20274004,
+    "won": false,
+    "steps": 4,
+    "err": null
+   },
+   {
+    "seed": 20274005,
+    "won": false,
+    "steps": 4,
+    "err": null
+   },
+   {
+    "seed": 20274006,
+    "won": false,
+    "steps": 12,
+    "err": null
+   },
+   {
+    "seed": 20274007,
+    "won": false,
+    "steps": 11,
+    "err": null
+   },
+   {
+    "seed": 20274008,
+    "won": false,
+    "steps": 10,
+    "err": null
+   },
+   {
+    "seed": 20274009,
+    "won": true,
+    "steps": 14,
+    "err": null
+   },
+   {
+    "seed": 20274010,
+    "won": false,
+    "steps": 2,
+    "err": null
+   },
+   {
+    "seed": 20274011,
+    "won": true,
+    "steps": 16,
+    "err": null
+   },
+   {
+    "seed": 20274012,
+    "won": false,
+    "steps": 12,
+    "err": null
+   },
+   {
+    "seed": 20274013,
+    "won": true,
+    "steps": 25,
+    "err": null
+   },
+   {
+    "seed": 20274014,
+    "won": false,
+    "steps": 3,
+    "err": null
+   },
+   {
+    "seed": 20274015,
+    "won": false,
+    "steps": 2,
+    "err": null
+   },
+   {
+    "seed": 20274016,
+    "won": false,
+    "steps": 3,
+    "err": null
+   },
+   {
+    "seed": 20274017,
+    "won": false,
+    "steps": 19,
+    "err": null
+   },
+   {
+    "seed": 20274018,
+    "won": false,
+    "steps": 9,
+    "err": null
+   },
+   {
+    "seed": 20274019,
+    "won": true,
+    "steps": 18,
+    "err": null
+   },
+   {
+    "seed": 20274020,
+    "won": false,
+    "steps": 7,
+    "err": null
+   },
+   {
+    "seed": 20274021,
+    "won": false,
+    "steps": 1,
+    "err": null
+   },
+   {
+    "seed": 20274022,
+    "won": true,
+    "steps": 30,
+    "err": null
+   },
+   {
+    "seed": 20274023,
+    "won": false,
+    "steps": 15,
+    "err": null
+   },
+   {
+    "seed": 20274024,
+    "won": false,
+    "steps": 2,
+    "err": null
+   },
+   {
+    "seed": 20274025,
+    "won": false,
+    "steps": 22,
+    "err": null
+   },
+   {
+    "seed": 20274026,
+    "won": false,
+    "steps": 13,
+    "err": null
+   },
+   {
+    "seed": 20274027,
+    "won": false,
+    "steps": 15,
+    "err": null
+   },
+   {
+    "seed": 20274028,
+    "won": false,
+    "steps": 10,
+    "err": null
+   },
+   {
+    "seed": 20274029,
+    "won": false,
+    "steps": 11,
+    "err": null
+   },
+   {
+    "seed": 20274030,
+    "won": false,
+    "steps": 3,
+    "err": null
+   },
+   {
+    "seed": 20274031,
+    "won": true,
+    "steps": 17,
+    "err": null
+   },
+   {
+    "seed": 20274032,
+    "won": false,
+    "steps": 1,
+    "err": null
+   },
+   {
+    "seed": 20274033,
+    "won": false,
+    "steps": 1,
+    "err": null
+   },
+   {
+    "seed": 20274034,
+    "won": false,
+    "steps": 2,
+    "err": null
+   },
+   {
+    "seed": 20274035,
+    "won": false,
+    "steps": 20,
+    "err": null
+   },
+   {
+    "seed": 20274036,
+    "won": true,
+    "steps": 18,
+    "err": null
+   },
+   {
+    "seed": 20274037,
+    "won": false,
+    "steps": 20,
+    "err": null
+   },
+   {
+    "seed": 20274038,
+    "won": false,
+    "steps": 14,
+    "err": null
+   },
+   {
+    "seed": 20274039,
+    "won": false,
+    "steps": 1,
+    "err": null
+   },
+   {
+    "seed": 20274040,
+    "won": true,
+    "steps": 10,
+    "err": null
+   },
+   {
+    "seed": 20274041,
+    "won": true,
+    "steps": 15,
+    "err": null
+   },
+   {
+    "seed": 20274042,
+    "won": false,
+    "steps": 18,
+    "err": null
+   },
+   {
+    "seed": 20274043,
+    "won": false,
+    "steps": 3,
+    "err": null
+   },
+   {
+    "seed": 20274044,
+    "won": false,
+    "steps": 7,
+    "err": null
+   },
+   {
+    "seed": 20274045,
+    "won": false,
+    "steps": 4,
+    "err": null
+   },
+   {
+    "seed": 20274046,
+    "won": true,
+    "steps": 10,
+    "err": null
+   },
+   {
+    "seed": 20274047,
+    "won": true,
+    "steps": 14,
+    "err": null
+   },
+   {
+    "seed": 20274048,
+    "won": false,
+    "steps": 1,
+    "err": null
+   },
+   {
+    "seed": 20274049,
+    "won": true,
+    "steps": 27,
+    "err": null
+   }
+  ]
+ },
+ "cpp": {
+  "wins": 8,
+  "rate": 0.16,
+  "deaths": 42,
+  "steps": [
+   223,
+   204,
+   185,
+   7,
+   6,
+   3,
+   231,
+   214,
+   241,
+   2,
+   1,
+   203,
+   174,
+   206,
+   3,
+   3,
+   202,
+   142,
+   163,
+   153,
+   206,
+   195,
+   193,
+   227,
+   197,
+   3,
+   198,
+   203,
+   205,
+   209,
+   4,
+   223,
+   232,
+   2,
+   186,
+   204,
+   255,
+   153,
+   205,
+   235,
+   195,
+   26,
+   222,
+   1,
+   3,
+   5,
+   200,
+   1,
+   3,
+   10
+  ]
+ },
+ "paired": {
+  "only_py_wins": 8,
+  "only_cpp_wins": 2,
+  "mcnemar_exact_p": 0.0879
+ },
+ "conclusion": "no significant difference"
+}

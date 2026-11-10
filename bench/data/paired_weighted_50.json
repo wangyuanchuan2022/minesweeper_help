@@ -1,0 +1,16 @@
+{
+ "scope": "SAME-BOARD paired after open_num5x5 weighted tie-break",
+ "py_wins": 14,
+ "cpp_wins": 10,
+ "cpp_rate": 0.2,
+ "cpp_wilson95": [
+  0.11243750015776112,
+  0.3303710593222542
+ ],
+ "paired": {
+  "only_py": 6,
+  "only_cpp": 2,
+  "mcnemar_p": 0.2188
+ },
+ "per_game_s": 0.147
+}

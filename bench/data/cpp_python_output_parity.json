@@ -1,0 +1,448 @@
+{
+ "scope_banner": "[SCOPE] UNIQUE_REFERENCE = Python production number5_1 ACTUAL OUTPUT (chosen coord, confidence, branch path)\n[SCOPE] TESTED = trial C++ decide() (utils/trial, MSW_TRIAL_DECIDE)\n[SCOPE] wr_cases_big.json / midgame_cases.json are INPUT STATE only, NOT the reference\n[SCOPE] production baseline utils/mscore.pyd is NOT loaded/modified here",
+ "unique_reference": "Python production number5_1 actual output",
+ "tested": "trial C++ decide() (isolated utils/trial build)",
+ "cases": 6,
+ "comparable": 6,
+ "identical": 6,
+ "rows": [
+  {
+   "i": 0,
+   "src": "win_rate",
+   "rng_seed": 20261105,
+   "limitation": 7.6000000000000005,
+   "total": 4,
+   "py": {
+    "x": 1,
+    "y": 15,
+    "confidence": 0.82143,
+    "path": 0,
+    "total": 28.0,
+    "events": [
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "part_solve",
+     "_wr_memory_ok",
+     "win_rate"
+    ],
+    "tied": [
+     [
+      1,
+      15
+     ],
+     [
+      1,
+      16
+     ]
+    ]
+   },
+   "cpp": {
+    "x": 1,
+    "y": 15,
+    "confidence": 0.82143,
+    "path": 0,
+    "reason": "win_rate",
+    "total": 4.0,
+    "tied": [
+     [
+      1,
+      15
+     ],
+     [
+      1,
+      16
+     ]
+    ]
+   },
+   "diffs": []
+  },
+  {
+   "i": 1,
+   "src": "pbs",
+   "rng_seed": 20261106,
+   "limitation": 379.8,
+   "total": 8,
+   "py": {
+    "x": 15,
+    "y": 8,
+    "confidence": 0.875,
+    "path": 1,
+    "total": 8.0,
+    "events": [
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "part_solve",
+     "process_bigger_situation",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5"
+    ],
+    "tied": [
+     [
+      15,
+      8
+     ],
+     [
+      15,
+      9
+     ],
+     [
+      15,
+      10
+     ],
+     [
+      16,
+      8
+     ],
+     [
+      16,
+      10
+     ],
+     [
+      17,
+      8
+     ],
+     [
+      17,
+      9
+     ],
+     [
+      17,
+      10
+     ]
+    ]
+   },
+   "cpp": {
+    "x": 15,
+    "y": 8,
+    "confidence": 0.875,
+    "path": 1,
+    "reason": "limitation",
+    "total": 8.0,
+    "tied": [
+     [
+      15,
+      8
+     ],
+     [
+      16,
+      8
+     ],
+     [
+      17,
+      8
+     ],
+     [
+      15,
+      9
+     ],
+     [
+      17,
+      9
+     ],
+     [
+      15,
+      10
+     ],
+     [
+      16,
+      10
+     ],
+     [
+      17,
+      10
+     ]
+    ]
+   },
+   "diffs": []
+  },
+  {
+   "i": 2,
+   "src": "win_rate",
+   "rng_seed": 20261107,
+   "limitation": 2.8,
+   "total": 4,
+   "py": {
+    "x": 25,
+    "y": 1,
+    "confidence": 0.5,
+    "path": 0,
+    "total": 4.0,
+    "events": [
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "part_solve",
+     "part_solve",
+     "_wr_memory_ok",
+     "win_rate"
+    ],
+    "tied": [
+     [
+      25,
+      1
+     ],
+     [
+      25,
+      2
+     ],
+     [
+      26,
+      2
+     ]
+    ]
+   },
+   "cpp": {
+    "x": 25,
+    "y": 1,
+    "confidence": 0.5,
+    "path": 0,
+    "reason": "win_rate",
+    "total": 4.0,
+    "tied": [
+     [
+      25,
+      1
+     ],
+     [
+      25,
+      2
+     ],
+     [
+      26,
+      2
+     ]
+    ]
+   },
+   "diffs": []
+  },
+  {
+   "i": 3,
+   "src": "pbs",
+   "rng_seed": 20261108,
+   "limitation": 378.307,
+   "total": 15,
+   "py": {
+    "x": 15,
+    "y": 8,
+    "confidence": 0.9798499941825867,
+    "path": 1,
+    "total": 12.772117962466488,
+    "events": [
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "part_solve",
+     "process_bigger_situation",
+     "open_num5x5",
+     "open_num5x5",
+     "open_num5x5"
+    ],
+    "tied": [
+     [
+      15,
+      8
+     ],
+     [
+      15,
+      9
+     ],
+     [
+      15,
+      10
+     ]
+    ]
+   },
+   "cpp": {
+    "x": 15,
+    "y": 8,
+    "confidence": 0.9798488616943359,
+    "path": 1,
+    "reason": "limitation",
+    "total": 15.0,
+    "tied": [
+     [
+      15,
+      8
+     ],
+     [
+      15,
+      9
+     ],
+     [
+      15,
+      10
+     ]
+    ]
+   },
+   "diffs": []
+  },
+  {
+   "i": 4,
+   "src": "win_rate",
+   "rng_seed": 20261109,
+   "limitation": 6.784962500721156,
+   "total": 12,
+   "py": {
+    "x": 10,
+    "y": 1,
+    "confidence": 0.16667,
+    "path": 0,
+    "total": 72.0,
+    "events": [
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "part_solve",
+     "part_solve",
+     "part_solve",
+     "_wr_memory_ok",
+     "win_rate"
+    ],
+    "tied": [
+     [
+      10,
+      1
+     ],
+     [
+      11,
+      2
+     ],
+     [
+      29,
+      4
+     ],
+     [
+      30,
+      4
+     ]
+    ]
+   },
+   "cpp": {
+    "x": 10,
+    "y": 1,
+    "confidence": 0.16667,
+    "path": 0,
+    "reason": "win_rate",
+    "total": 12.0,
+    "tied": [
+     [
+      10,
+      1
+     ],
+     [
+      11,
+      2
+     ],
+     [
+      29,
+      4
+     ],
+     [
+      30,
+      4
+     ]
+    ]
+   },
+   "diffs": []
+  },
+  {
+   "i": 5,
+   "src": "pbs",
+   "rng_seed": 20261110,
+   "limitation": 376.7,
+   "total": 26,
+   "py": {
+    "x": 15,
+    "y": 8,
+    "confidence": 0.9768099784851074,
+    "path": 1,
+    "total": 11.1891891891892,
+    "events": [
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "get_set_1",
+     "part_solve",
+     "process_bigger_situation",
+     "open_num5x5",
+     "open_num5x5"
+    ],
+    "tied": [
+     [
+      15,
+      8
+     ],
+     [
+      15,
+      10
+     ]
+    ]
+   },
+   "cpp": {
+    "x": 15,
+    "y": 8,
+    "confidence": 0.9768115878105164,
+    "path": 1,
+    "reason": "limitation",
+    "total": 26.0,
+    "tied": [
+     [
+      15,
+      8
+     ],
+     [
+      15,
+      10
+     ]
+    ]
+   },
+   "diffs": []
+  }
+ ],
+ "verdict": "CPP_PYTHON_OUTPUT_PARITY_PARTIAL",
+ "tie_set_members_compared": true,
+ "tie_sets_sorted_before_compare": true,
+ "forced_tie_case": "verified: 5 equal-p candidates -> min (x,y)"
+}

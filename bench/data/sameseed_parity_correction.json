@@ -1,0 +1,16 @@
+{
+ "correction": "cross-seed comparison invalid",
+ "python_same_seed": {
+  "games": 20,
+  "wins": 6,
+  "rate": 0.3,
+  "per_game_s": 8.142
+ },
+ "cpp_same_seed_range": {
+  "games": 60,
+  "wins": 18,
+  "rate": 0.3,
+  "per_game_s": 0.196
+ },
+ "note": "both arms 30.0 percent on seed range 20274000 plus; earlier 26 vs 36.35 compared different seed ranges"
+}
