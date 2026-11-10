@@ -2,7 +2,7 @@
 rem ============================================================
 rem Build script for mscore.cpp (MSVC + pybind11, target cp310)
 rem Usage (from repo root):  cpp\build.bat
-rem Output: utils\mscore.cp310-win_amd64.pyd
+rem Output: cpp\mscore_new.pyd  (install with apply_native_fix.cmd)
 rem ============================================================
 setlocal
 
@@ -33,7 +33,7 @@ cl /nologo /O2 /utf-8 /std:c++17 /EHsc /MD /LD ^
     /I "%PYBIND11_INC%" ^
     /I "%PYHOME%\include" ^
     cpp\mscore.cpp ^
-    /Fe:utils\mscore.cp310-win_amd64.pyd ^
+    /Fe:cpp\mscore_new.pyd ^
     /Fo:cpp\mscore.obj ^
     /link /LIBPATH:"%PYHOME%\libs" python310.lib
 
@@ -43,5 +43,6 @@ if errorlevel 1 (
 )
 
 del /q cpp\mscore.obj 2>nul
-echo [OK] build done: utils\mscore.cp310-win_amd64.pyd
+echo [OK] build done: cpp\mscore_new.pyd
+echo      Install after closing the app: apply_native_fix.cmd
 endlocal

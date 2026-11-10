@@ -33,62 +33,30 @@ class TestNumber51(unittest.TestCase):
             self.assertLessEqual(result[0], 1)
 
 
-class TestPartSolve(unittest.TestCase):
-    """基于真实对局数据（test_33.json）的 part_solve 集成测试。"""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.data = load_test_data("test_33.json")
-        cls.cell_value = np.array(cls.data["cell_value"], dtype=np.int32)
-
-    def _make_solver(self):
-        return make_full_solver(w=30, h=16, a=99)
-
-    def test_part_solve_format(self):
-        solver = self._make_solver()
-        result = solver.part_solve(
-            self.data["clicks"][:5], self.cell_value.copy(),
-            self.data["num10"], self.data["num9"], self.data["cs"], _try=False)
-        res_l, num_solve, canopen_res = result
-        self.assertIsInstance(res_l, list)
-        self.assertIsInstance(num_solve, int)
-        self.assertIsInstance(canopen_res, np.ndarray)
-        # 注：任意点击子集可能无可行解，故不强制 num_solve > 0
-
-    def test_part_solve_single_format(self):
-        solver = self._make_solver()
-        result = solver.part_solve_single(
-            self.data["clicks"][:5], self.cell_value.copy(),
-            self.data["num10"], self.data["num9"], self.data["cs"], _try=False)
-        res_list, total, canopen_res = result
-        self.assertIsInstance(res_list, list)
-        self.assertIsInstance(total, int)
-        self.assertIsInstance(canopen_res, np.ndarray)
-        # 注：任意点击子集可能无可行解，故不强制 total > 0
-
+# ⚠️ 2026-11-09：`TestPartSolve` 已作废删除。
+# 原因：`part_solve` / `part_solve_single` 整条 pbs 链路已按用户裁决彻底删除
+# （生产不可达，实测 0 调用点；C++ 决策链走 mscore.decide）。
+# 这两个测试只验证「已删除函数」的返回格式，失去被测对象后不构成任何契约。
+# 保留的等价契约由 test_cpp_decide_wiring 的 hasattr 断言把守。
 
 class TestWinRate(unittest.TestCase):
-    """win_rate 的最小确定性用例。"""
+    """[已移除 2026-11-09] win_rate 的最小确定性用例。
 
-    def test_minimal(self):
-        solver = make_full_solver(w=3, h=3, a=1)
-        cell_value = np.zeros((5, 5), dtype=np.int32)
-        cell_value[2, 2] = 1  # 中心数字 1，两格未开，恰有 1 雷
-        clicks = [(1, 2), (3, 2)]
-        clicks9 = []
-        # 单组两种场景：左雷右安全 / 左安全右雷
-        res_list = [[np.array([1, 0]), np.array([0, 1])]]
-        ck = [2]
+    说明（需求变更留痕，非放宽判据）：
+      ProbabilityMixin.win_rate 与 C++ py_win_rate 已按用户裁决
+      「彻底删干净（含导出）」一并删除 —— 实测 C++ 决策链（decide_impl）
+      与 Python 生产侧均**零调用方**，仅 16 个 11-03~11-04 的作废 bench
+      脚本曾直接调 native.mscore.win_rate。
 
-        res, sorted_clicks, total, clicks2p = solver.win_rate(
-            clicks, clicks9, res_list, cell_value, ck, num10=0)
+      原用例断言 solver.win_rate(...) 返回 (res, sorted_clicks, total,
+      clicks2p)，锁的是被删 API 的具体返回结构；API 已不存在，断言对象
+      随之消失，故删除用例本体并保留类占位。
 
-        self.assertIsInstance(res, list)
-        self.assertEqual(len(res), 2)
-        self.assertEqual(total, 2)
-        for v in res:
-            self.assertAlmostEqual(v, 0.5, places=6)
-        self.assertIsInstance(clicks2p, dict)
+    当前「逐候选胜率」语义的正确入口是 C++ 决策层 OPTIMAL 的 after_click
+    （`ExactEngine`，见 cpp/mscore.cpp）。⚠️ 注意：原先把
+    bench/verify_exact_cpp.py 列为对拍脚本，但它依赖已删的 mscore.exact_eval
+    导出、现无法运行（实测 exit=1），故不再作引用。
+    """
 
 
 class TestTimeBudget(unittest.TestCase):
@@ -136,62 +104,19 @@ class TestTimeBudget(unittest.TestCase):
 
 
 class TestWrFeedback(unittest.TestCase):
-    """win_rate 阈值反馈：步长 0.5、无上限、下限 0；升档需边界采样且快，降档为安全阀。"""
+    """[已移除 2026-11-09] win_rate 阈值反馈用例。
 
-    def setUp(self):
-        # 隔离文件系统：_wr_update 的 _tb_save 不写真实状态文件
-        p = mock.patch("utils.probability._tb_save")
-        p.start(); self.addCleanup(p.stop)
+    说明（需求变更留痕，非放宽判据）：
+      用户裁决「wr_threshold winrate 分支都取消了，应该取消这个参数」。
+      `_wr_update` / `_wr_current_threshold` 整条「自适应阈值」链路已删除
+      —— 它读写 state/time_budget.json 的 wr.t、把阈值传给 C++，而 C++
+      在 LAYER 2 删除后对该参数**零消费**，属于自我循环的空转。
+      本类原 7 个用例全部直接断言 _wr_update 的步长/边界/上下限行为，
+      被测函数已不存在，故移除用例本体、保留类占位与留痕。
 
-    def _ms(self, frac):
-        from utils.probability import DECISION_TIME_BUDGET
-        return DECISION_TIME_BUDGET * 1000.0 * frac
-
-    def test_no_history_returns_start(self):
-        from utils.probability import _wr_current_threshold
-        self.assertEqual(_wr_current_threshold({}), 8.0)
-
-    def test_raise_at_edge_and_fast(self):
-        from utils.probability import _wr_update
-        tb = {}
-        th = _wr_update(tb, limitation=8.0, ms=self._ms(0.10))   # 边界内 + 快
-        self.assertEqual(th, 8.5)
-        th = _wr_update(tb, limitation=8.5, ms=self._ms(0.05))   # 再快 → 逐级爬
-        self.assertEqual(th, 9.0)
-
-    def test_no_raise_away_from_edge(self):
-        from utils.probability import _wr_update
-        tb = {}
-        th = _wr_update(tb, limitation=3.0, ms=self._ms(0.05))   # 快但远离边界 → 不动
-        self.assertEqual(th, 8.0)
-
-    def test_mid_speed_at_edge_holds(self):
-        from utils.probability import _wr_update
-        tb = {}
-        th = _wr_update(tb, limitation=8.0, ms=self._ms(0.50))   # 边界内但中速 → 不动
-        self.assertEqual(th, 8.0)
-
-    def test_drop_on_slow_anywhere(self):
-        from utils.probability import _wr_update
-        tb = {}
-        th = _wr_update(tb, limitation=3.0, ms=self._ms(1.20))   # 远离边界但超预算（>×_WR_SLOW_FRAC=1）→ 仍降
-        self.assertEqual(th, 7.5)
-
-    def test_floor_is_zero(self):
-        from utils.probability import _wr_update
-        tb = {}
-        th = 8.0
-        for _ in range(30):  # 连续超预算一路降到 0，不再为负
-            th = _wr_update(tb, limitation=8.0, ms=self._ms(1.20))
-        self.assertEqual(th, 0.0)
-
-    def test_no_upper_bound(self):
-        from utils.probability import _wr_update
-        tb = {}
-        th = 8.0
-        for _ in range(20):  # 边界内连续快 → 逐级 +0.5，无上限
-            th = _wr_update(tb, limitation=th, ms=self._ms(0.10))
-        self.assertEqual(th, 18.0)
+    阈值相关的运行期状态（state/time_budget.json 的 wr 字段）已同步清理；
+    时间预算模型（ps_k / ps_base_ms）不受影响，仍在 TestTimeBudget 覆盖。
+    """
 
 
 class TestFitK(unittest.TestCase):

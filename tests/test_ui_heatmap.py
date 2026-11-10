@@ -79,15 +79,29 @@ class TestHeatmapUI(unittest.TestCase):
         self.assertIn("border: 3px", self.win.heatmap_btn_list[0][1].styleSheet())
 
     def test_stats_line_content(self):
+        """统计栏文案契约 = main.py:776 的「当前格非雷的概率」。
+
+        ⚠️ 文案变更出处（勿再反向改 main.py 迁就本测试）：提交 cfb27da
+        （2026-09-15，提交信息原文「…状态栏文案改为『当前格非雷的概率』」）
+        已把文案定稿为「当前格非雷的概率」；旧断言「当前点击方格不是雷的
+        概率」是未同步的历史断言（review/代码质量域.md 的 F5、
+        review/UI交互域.md:281 均记录同一结论）。
+
+        判据语义保持不变：仍校验 87.50% 数值、以及整行「已完局/赢局/胜率」
+        三段结构；只同步文案措辞，不放宽任何断言。
+        """
         cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
         payload = {"prob": {}, "best": None, "best_conf": 0.875, "total": 0.0,
                    "cell_value": cv, "played": 7, "win": 3}
         self.win.update_heatmap(payload)
         t = self.win.heatmap_label_stats.text()
-        self.assertIn("当前点击方格不是雷的概率: 87.50%", t)
+        self.assertIn("当前格非雷的概率: 87.50%", t)
         self.assertIn("已完局: 7", t)
         self.assertIn("赢局: 3", t)
         self.assertIn("胜率: 42.86%", t)
+        # 整行字段顺序与分隔符（防止只改文案时把结构改坏）
+        self.assertGreaterEqual(len(t.split("｜")), 4)
+        self.assertNotIn("当前点击方格不是雷的概率", t)  # 旧文案必须已消失
 
     def test_style_dedup_skips_unchanged(self):
         cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
@@ -98,14 +112,126 @@ class TestHeatmapUI(unittest.TestCase):
         self.win.update_heatmap(payload)                   # 相同 payload：缓存应零变化
         self.assertEqual(self.win._hm_last, before)
 
+    def test_computing_phase_keeps_previous_heatmap(self):
+        """win-rate 前瞻开始时的 phase=computing 帧不得清空上一帧热力图。"""
+        cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
+        self.win.update_heatmap({
+            "prob": {(2, 1): 0.995}, "best": (2, 1), "best_conf": 0.995,
+            "total": 40.0, "cell_value": cv, "played": 3, "win": 1,
+            "phase": "decision"})
+        before = (self.win.heatmap_btn_list[0][1].text(),
+                  self.win.heatmap_btn_list[0][1].styleSheet())
+        # C++ 进入 win-rate 前瞻：只发状态、没有新 prob/best
+        self.win.update_heatmap({
+            "prob": {}, "best": None, "best_conf": None, "total": 0.0,
+            "cell_value": cv, "played": 3, "win": 1, "phase": "computing"})
+        after = (self.win.heatmap_btn_list[0][1].text(),
+                 self.win.heatmap_btn_list[0][1].styleSheet())
+        self.assertEqual(before, after,
+                         "computing 帧必须保留上一帧真实概率色与 best 蓝框")
+        self.assertIn("正在计算下一步", self.win.heatmap_label_stats.text())
+
+    def test_repeated_empty_middle_frames_keep_heatmap(self):
+        """win-rate 期间可连续多帧「无新估值」；热力图必须始终保留。"""
+        cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
+        self.win.update_heatmap({
+            "prob": {(2, 1): 0.995}, "best": (2, 1), "best_conf": 0.995,
+            "total": 40.0, "cell_value": cv, "played": 3, "win": 1,
+            "phase": "decision", "clear": False})
+        for i in range(4):
+            self.win.update_heatmap({
+                "prob": {}, "best": None, "best_conf": None, "total": 0.0,
+                "cell_value": cv, "played": 3, "win": 1,
+                "phase": "rescanned", "clear": False})
+            style = self.win.heatmap_btn_list[0][1].styleSheet()
+            self.assertIn("border: 3px", style,
+                          f"第 {i + 1} 个空中间帧不得丢掉 best 蓝框")
+            self.assertIn("rgba(0, 255, 0", style,
+                          f"第 {i + 1} 个空中间帧不得丢掉概率色")
+
+    def test_explicit_clear_frame_drops_heatmap(self):
+        """显式 clear=True（新局/停止）必须真的清掉概率层。"""
+        cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
+        self.win.update_heatmap({
+            "prob": {(2, 1): 0.995}, "best": (2, 1), "best_conf": 0.995,
+            "total": 40.0, "cell_value": cv, "played": 3, "win": 1,
+            "phase": "decision", "clear": False})
+        self.assertIn("rgba(0, 255, 0",
+                      self.win.heatmap_btn_list[0][1].styleSheet())
+        self.win.update_heatmap({
+            "prob": {}, "best": None, "best_conf": None, "total": 0.0,
+            "cell_value": cv, "played": 4, "win": 2,
+            "phase": "ready", "clear": True})
+        self.assertNotIn("border: 3px",
+                         self.win.heatmap_btn_list[0][1].styleSheet())
+        self.assertIn("rgba(255, 255, 255, 180)",
+                      self.win.heatmap_btn_list[0][1].styleSheet())
+
+    def test_computing_phase_without_previous_keeps_screen(self):
+        """无历史估值时 computing 帧不得把整盘刷回灰色（win-rate 消失根因）。"""
+        cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
+        self.win.update_heatmap({
+            "prob": {(2, 1): 0.995}, "best": (2, 1), "best_conf": 0.995,
+            "total": 40.0, "cell_value": cv, "played": 1, "win": 0})
+        before = (self.win.heatmap_btn_list[0][1].text(),
+                  self.win.heatmap_btn_list[0][1].styleSheet())
+        self.win._last_heatmap_payload = None
+        self.win.update_heatmap({
+            "prob": {}, "best": None, "best_conf": None, "total": 0.0,
+            "cell_value": cv, "played": 1, "win": 0, "phase": "computing"})
+        after = (self.win.heatmap_btn_list[0][1].text(),
+                 self.win.heatmap_btn_list[0][1].styleSheet())
+        self.assertEqual(before, after,
+                         "无历史估值时 computing 帧不得重绘成整盘灰色")
+
+    def test_reload_rebuilds_grid_when_w_h_change(self):
+        """进程内改 cfg 的 W/H 后，reload() 必须重建自动页热力图网格。
+
+        用户实测 2026-11-08「修改 W 和 H 的值之后，自动界面的热力图的
+        长宽没有相应的改变」。根因：网格只在 __init__ 按初始尺寸建一次，
+        reload() 只更新数值不重建；_render_heatmap_grid 用
+        min(self.h, len(btn_list)) 保护 ⇒ 新尺寸下多出的格子根本不存在。
+        """
+        from unittest import mock
+        import json
+        import setting
+
+        win = main.MyMainWindow()
+        try:
+            orig_w, orig_h = win.w, win.h
+            self.assertEqual(len(win.heatmap_btn_list), orig_h)
+            self.assertEqual(len(win.heatmap_btn_list[0]), orig_w)
+
+            changed = dict(setting.load_cfg(), w=orig_w + 5, h=orig_h + 3)
+            with mock.patch.object(setting, "load_cfg", return_value=changed):
+                win.reload()
+            self.assertEqual(win.w, orig_w + 5)
+            self.assertEqual(win.h, orig_h + 3)
+            self.assertEqual(len(win.heatmap_btn_list), orig_h + 3)
+            self.assertEqual(len(win.heatmap_btn_list[0]), orig_w + 5)
+            self.assertEqual(win.heatmap_frame.minimumHeight(),
+                             (orig_h + 3 + 1) * win.heatmap_btn_width)
+
+            # 改回原值也要能缩回去
+            restored = dict(changed, w=orig_w, h=orig_h)
+            with mock.patch.object(setting, "load_cfg", return_value=restored):
+                win.reload()
+            self.assertEqual(len(win.heatmap_btn_list), orig_h)
+            self.assertEqual(len(win.heatmap_btn_list[0]), orig_w)
+        finally:
+            win.deleteLater()
+
     def test_clear_payload_renders_white_transparent(self):
+        """显式 clear=True 的空 payload 才清空概率色（新局/停止语义）。"""
         cv = np.full((self.h + 2, self.w + 2), 9, dtype="int32")
         prob = {(i, j): 0.5 for i in range(1, self.w + 1)
                 for j in range(1, self.h + 1)}
         self.win.update_heatmap({"prob": prob, "best": None, "total": 5.0,
-                                 "cell_value": cv, "played": 1, "win": 1})
+                                 "cell_value": cv, "played": 1, "win": 1,
+                                 "clear": False})
         self.win.update_heatmap({"prob": {}, "best": None, "total": 0.0,
-                                 "cell_value": cv, "played": 2, "win": 1})
+                                 "cell_value": cv, "played": 2, "win": 1,
+                                 "clear": True})
         btn = self.win.heatmap_btn_list[0][0]
         # 概率清空后：未开无概率格 → 白色半透明（用户设定的无数据格样式）
         self.assertIn("rgba(255, 255, 255, 180)", btn.styleSheet())

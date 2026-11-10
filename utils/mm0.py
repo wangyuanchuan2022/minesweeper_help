@@ -18,10 +18,6 @@ from win32com import client
 import setting
 
 
-def pil_to_cv(img):
-    return cv2.cvtColor(numpy.asarray(img), cv2.COLOR_RGB2BGR)
-
-
 def minesweeper_run(mine_dir):
     class_name = None
     title_name = setting.win_name
@@ -171,7 +167,8 @@ def set_top_window(hwnd):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    with open("data.json", "r") as f:
+    # data.json 经 setting 解析成项目根下的绝对路径（原为 cwd 相对的裸文件名）
+    with open(setting.DATA_PATH, "r", encoding="utf-8") as f:
         data = json.loads(f.read())
 
     x = []

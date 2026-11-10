@@ -54,9 +54,13 @@ def _make_gradient_qss(samples=11):
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(1035, 783)
-        MainWindow.setMinimumSize(QtCore.QSize(1035, 0))
-        MainWindow.setMaximumSize(QtCore.QSize(1035, 800))
+        MainWindow.resize(1180, 860)
+        # ⚠️ 原实现把窗口尺寸**写死**：min=(1035,0) / max=(1035,800)。
+        # 结果是窗口既不能加宽也不能拉高，注入的紧凑卡片/热力图一旦超出
+        # 就被压扁裁切（用户实测「窗口有大小限制，UI 不能完整显示」）。
+        # 现在放开上限、只保留一个合理下限，让窗口可自由缩放并配合
+        # page_2/page_3 的 QScrollArea 完整展示内容。
+        MainWindow.setMinimumSize(QtCore.QSize(900, 600))
         MainWindow.setWindowOpacity(1.0)
         MainWindow.setToolTipDuration(1)
         self.centralwidget = QtWidgets.QWidget(MainWindow)
@@ -346,6 +350,26 @@ class Ui_MainWindow(object):
         self.plainTextEdit.setPlainText("")
         self.plainTextEdit.setObjectName("plainTextEdit")
         self.verticalLayout_2.addWidget(self.plainTextEdit)
+        # ⚠️ 滚动容器（2026-11-07 遮挡修复）：热力图 16×24+24=408px 高 + 统计栏
+        # + 4 张信息卡，总高已超过 800px 视口；不套 QScrollArea 时 QVBoxLayout
+        # 会把子项压到最小尺寸以下并**让相邻项互相重叠**（实测 frame_2 与卡片
+        # 重叠 101px，卡片盖住棋盘）。滚动后内容超高只出现滚动条，永不重叠。
+        self.auto_scroll = QtWidgets.QScrollArea(self.page_2)
+        self.auto_scroll.setObjectName("auto_scroll")
+        self.auto_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.auto_scroll.setWidgetResizable(True)
+        # 页面背景图来自 `QStackedWidget > QWidget{background-image:...}`，
+        # 只作用于 page_2 自身；滚动内容与 viewport 必须透明才能透出底图。
+        self.auto_scroll.setStyleSheet(
+            "QScrollArea{background: transparent;border: none;}"
+            "QScrollArea > QWidget > QWidget{background: transparent;}"
+        )
+        self.auto_scroll_content = QtWidgets.QWidget()
+        self.auto_scroll_content.setObjectName("auto_scroll_content")
+        self.verticalLayout_auto_content = QtWidgets.QVBoxLayout(self.auto_scroll_content)
+        self.verticalLayout_auto_content.setObjectName("verticalLayout_auto_content")
+        self.auto_scroll.setWidget(self.auto_scroll_content)
+        self.verticalLayout_2.addWidget(self.auto_scroll)
         self.pgb = QtWidgets.QProgressBar(self.page_2)
         self.pgb.setMinimumSize(QtCore.QSize(580, 35))
         font = QtGui.QFont()
@@ -387,8 +411,36 @@ class Ui_MainWindow(object):
         self.return_to_main_p3.setIcon(icon5)
         self.return_to_main_p3.setObjectName("return_to_main_p3")
         self.verticalLayout_3.addWidget(self.return_to_main_p3)
-        self.frame_explaination = QtWidgets.QFrame(self.page_3)
-        self.frame_explaination.setMinimumSize(QtCore.QSize(598, 210))
+        # ⚠️ 滚动容器（2026-11-07 遮挡修复，见 review/fix-help-heatmap-overlap.md）：
+        # 帮助页原布局 = 返回键 40 + 说明 210 + 棋盘 400 + 2 张卡 + 按钮条 34
+        # + 进度条 35 ≈ 950px，而内容区只有 800px。QVBoxLayout 装不下时的行为
+        # 是**压缩子项到 minimumSize 以下并互相重叠**（实测 frame_2 底部 671px
+        # 而棋盘按钮画到 679px；卡片被挤到 y=570 起，直接压在棋盘上）。
+        # 套 QScrollArea 后：内容超高只出现滚动条，任何子项都不再重叠。
+        self.help_scroll = QtWidgets.QScrollArea(self.page_3)
+        self.help_scroll.setObjectName("help_scroll")
+        self.help_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.help_scroll.setWidgetResizable(True)
+        self.help_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        # 背景图选择器 `QStackedWidget > QWidget{...}` 只命中 page_3 自身，
+        # viewport 与滚动内容默认是 palette 底色，必须显式透明才能透出底图。
+        self.help_scroll.setStyleSheet(
+            "QScrollArea{background: transparent;border: none;}"
+            "QScrollArea > QWidget > QWidget{background: transparent;}"
+        )
+        self.help_scroll_content = QtWidgets.QWidget()
+        self.help_scroll_content.setObjectName("help_scroll_content")
+        self.verticalLayout_help_content = QtWidgets.QVBoxLayout(self.help_scroll_content)
+        self.verticalLayout_help_content.setObjectName("verticalLayout_help_content")
+        self.help_scroll.setWidget(self.help_scroll_content)
+        # 滚动区吃掉全部剩余高度（stretch=1），按钮条/进度条固定在页底。
+        self.verticalLayout_3.addWidget(self.help_scroll, 1)
+        self.frame_explaination = QtWidgets.QFrame(self.help_scroll_content)
+        # ⚠️ 原为 setMinimumSize(598, 210)：598 的硬下限在窗口缩到最小宽度
+        # （900）时会撑出水平滚动条（实测 hbar range=0..94），表现为「内容
+        # 显示不全、需要横向拖」。这里只保留合理下限 0，让图例区随窗口宽度
+        # 自适应，纵向高度仍固定 210（图例排版依赖该高度）。
+        self.frame_explaination.setMinimumSize(QtCore.QSize(0, 210))
         self.frame_explaination.setMaximumSize(QtCore.QSize(16777215, 210))
         self.frame_explaination.setStyleSheet(
             'QLabel{color: rgb(255, 255, 255);font: 10pt "楷体";}\n' ""
@@ -475,8 +527,8 @@ class Ui_MainWindow(object):
         self.label_18 = QtWidgets.QLabel(self.frame_explaination)
         self.label_18.setGeometry(QtCore.QRect(10, 160, 781, 17))
         self.label_18.setObjectName("label_18")
-        self.verticalLayout_3.addWidget(self.frame_explaination)
-        self.frame_2 = QtWidgets.QFrame(self.page_3)
+        self.verticalLayout_help_content.addWidget(self.frame_explaination)
+        self.frame_2 = QtWidgets.QFrame(self.help_scroll_content)
         self.frame_2.setMinimumSize(QtCore.QSize(0, 400))
         self.frame_2.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.frame_2.setFrameShadow(QtWidgets.QFrame.Raised)
@@ -485,7 +537,7 @@ class Ui_MainWindow(object):
         self.label_p3.setGeometry(QtCore.QRect(13, 13, 111, 41))
         self.label_p3.setText("")
         self.label_p3.setObjectName("label_p3")
-        self.verticalLayout_3.addWidget(self.frame_2)
+        self.verticalLayout_help_content.addWidget(self.frame_2)
         self.frame_3 = QtWidgets.QFrame(self.page_3)
         self.frame_3.setMaximumSize(QtCore.QSize(16777215, 40))
         self.frame_3.setStyleSheet(

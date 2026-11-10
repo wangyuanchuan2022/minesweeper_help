@@ -130,29 +130,10 @@ class TestGetSet1(unittest.TestCase):
         self.assertNotIn((4, 4), result)
 
 
-class TestOpenNum5x5(unittest.TestCase):
-    def setUp(self):
-        self.solver = make_solver(w=10, h=10)
-
-    def test_center_fully_open(self):
-        cell_value = make_board(10, 10)
-        self.assertEqual(self.solver.open_num5x5(cell_value, (5, 5)), 25)
-
-    def test_center_fully_unopened(self):
-        cell_value = make_board(10, 10, fill=9)
-        self.assertEqual(self.solver.open_num5x5(cell_value, (5, 5)), 0)
-
-    def test_boundary(self):
-        cell_value = make_board(10, 10, fill=9)
-        self.assertGreater(self.solver.open_num5x5(cell_value, (1, 1)), 0)
-
-    def test_mixed(self):
-        cell_value = make_board(10, 10, fill=9)
-        for i in range(4, 7):
-            for j in range(4, 7):
-                cell_value[j, i] = 1
-        self.assertEqual(self.solver.open_num5x5(cell_value, (5, 5)), 9)
-
+# ⚠️ 2026-11-09：`TestOpenNum5x5` 已作废删除。
+# 原因：`open_num5x5`（生产破平局打分）随 pbs 链路一并删除——
+# 生产决策已全部由 C++ mscore.decide 承担，该函数实测 0 生产调用点。
+# 保留的等价契约由 test_cpp_decide_wiring 的 hasattr 断言把守。
 
 class TestNumber0(unittest.TestCase):
     def setUp(self):

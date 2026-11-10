@@ -6,20 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1035</width>
-    <height>783</height>
+    <width>1180</width>
+    <height>860</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>1035</width>
-    <height>0</height>
-   </size>
-  </property>
-  <property name="maximumSize">
-   <size>
-    <width>1035</width>
-    <height>800</height>
+    <width>900</width>
+    <height>600</height>
    </size>
   </property>
   <property name="windowTitle">
@@ -455,7 +449,7 @@ color: rgb(0, 0, 0)}</string>
        </property>
        <layout class="QVBoxLayout" name="verticalLayout_2">
         <item>
-         <widget class="QPushButton" name="end_quto_play_thread">
+         <widget class="QPushButton" name="end_auto_play_thread">
           <property name="minimumSize">
            <size>
             <width>150</width>
@@ -542,6 +536,24 @@ border: 3px solid rgb(225, 225, 225);background-color: rgba(44, 44, 44, 170);col
          </widget>
         </item>
         <item>
+         <widget class="QScrollArea" name="auto_scroll">
+          <property name="frameShape">
+           <enum>QFrame::NoFrame</enum>
+          </property>
+          <property name="widgetResizable">
+           <bool>true</bool>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QScrollArea{background: transparent;border: none;}
+QScrollArea &gt; QWidget &gt; QWidget{background: transparent;}</string>
+          </property>
+          <widget class="QWidget" name="auto_scroll_content">
+           <layout class="QVBoxLayout" name="verticalLayout_auto_content">
+           </layout>
+          </widget>
+         </widget>
+        </item>
+        <item>
          <widget class="QProgressBar" name="pgb">
           <property name="minimumSize">
            <size>
@@ -605,6 +617,20 @@ color: rgb(0, 0, 0)}QPushButton:disabled{background-color:rgba(255, 255, 255, 15
           </property>
          </widget>
         </item>
+        <item>
+         <widget class="QScrollArea" name="help_scroll">
+          <property name="frameShape">
+           <enum>QFrame::NoFrame</enum>
+          </property>
+          <property name="widgetResizable">
+           <bool>true</bool>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">QScrollArea{background: transparent;border: none;}
+QScrollArea &gt; QWidget &gt; QWidget{background: transparent;}</string>
+          </property>
+          <widget class="QWidget" name="help_scroll_content">
+           <layout class="QVBoxLayout" name="verticalLayout_help_content">
         <item>
          <widget class="QFrame" name="frame_explaination">
           <property name="minimumSize">
@@ -943,6 +969,10 @@ QPushButton:disabled{border: none;background-color:rgba(0, 0, 0, 0);color:rgba(2
            <property name="text">
             <string/>
            </property>
+          </widget>
+         </widget>
+        </item>
+           </layout>
           </widget>
          </widget>
         </item>

@@ -1,0 +1,1706 @@
+{
+  "schema_version": "1",
+  "crgate_version": "1.0.0",
+  "mode": "workspace",
+  "repository": "D:\\python\\projects\\minesweeper_help",
+  "from": "",
+  "to": "",
+  "head_sha": "afa3f4c4f350e8057ab4440406148018c8b6f2bb",
+  "selection_hash": "ce94658c55c30cdf",
+  "generated_at": "2026-11-08T16:39:37.318Z",
+  "total_files": 305,
+  "reviewable_count": 231,
+  "excluded_count": 74,
+  "total_insertions": 50335,
+  "total_deletions": 904,
+  "reviewable_files": [
+    {
+      "path": "CHANGELOG.md",
+      "status": "M",
+      "insertions": 33,
+      "deletions": 0
+    },
+    {
+      "path": "README.md",
+      "status": "M",
+      "insertions": 167,
+      "deletions": 74
+    },
+    {
+      "path": "cpp/build.bat",
+      "status": "M",
+      "insertions": 4,
+      "deletions": 3
+    },
+    {
+      "path": "cpp/build_ab_native.bat",
+      "status": "M",
+      "insertions": 3,
+      "deletions": 3
+    },
+    {
+      "path": "cpp/mscore.cpp",
+      "status": "M",
+      "insertions": 770,
+      "deletions": 33
+    },
+    {
+      "path": "data.json",
+      "status": "M",
+      "insertions": 1,
+      "deletions": 1
+    },
+    {
+      "path": "main.py",
+      "status": "M",
+      "insertions": 1523,
+      "deletions": 187
+    },
+    {
+      "path": "review/cleanup-20261108.md",
+      "status": "A",
+      "insertions": 157,
+      "deletions": 0
+    },
+    {
+      "path": "review/cpp-lookahead-current.md",
+      "status": "A",
+      "insertions": 134,
+      "deletions": 0
+    },
+    {
+      "path": "setting.py",
+      "status": "M",
+      "insertions": 72,
+      "deletions": 2
+    },
+    {
+      "path": "tests/test_scan.py",
+      "status": "M",
+      "insertions": 373,
+      "deletions": 11
+    },
+    {
+      "path": "tests/test_ui_heatmap.py",
+      "status": "M",
+      "insertions": 129,
+      "deletions": 3
+    },
+    {
+      "path": "ui/window.py",
+      "status": "M",
+      "insertions": 60,
+      "deletions": 8
+    },
+    {
+      "path": "utils/mm0.py",
+      "status": "M",
+      "insertions": 2,
+      "deletions": 1
+    },
+    {
+      "path": "utils/native.py",
+      "status": "M",
+      "insertions": 63,
+      "deletions": 7
+    },
+    {
+      "path": "utils/probability.py",
+      "status": "M",
+      "insertions": 862,
+      "deletions": 455
+    },
+    {
+      "path": "utils/solver.py",
+      "status": "M",
+      "insertions": 236,
+      "deletions": 84
+    },
+    {
+      "path": "utils/vision.py",
+      "status": "M",
+      "insertions": 284,
+      "deletions": 32
+    },
+    {
+      "path": ".idea/editor.xml",
+      "status": "A",
+      "insertions": 254,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_artifacts/formal_verification_results.json",
+      "status": "A",
+      "insertions": 67,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_contamination.py",
+      "status": "A",
+      "insertions": 228,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_control_worldframe.py",
+      "status": "A",
+      "insertions": 194,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_corner_pseq.py",
+      "status": "A",
+      "insertions": 102,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_corner_rand.py",
+      "status": "A",
+      "insertions": 93,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_formal_verification.py",
+      "status": "A",
+      "insertions": 413,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_fullflow_capped.py",
+      "status": "A",
+      "insertions": 193,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_fullflow_pseq.py",
+      "status": "A",
+      "insertions": 211,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_param_arms.py",
+      "status": "A",
+      "insertions": 204,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_pseq_compare.py",
+      "status": "A",
+      "insertions": 215,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_qformula.py",
+      "status": "A",
+      "insertions": 127,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_randres_ablation.py",
+      "status": "A",
+      "insertions": 152,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_regret_offline.py",
+      "status": "A",
+      "insertions": 86,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_regret_offline2.py",
+      "status": "A",
+      "insertions": 78,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_audit_regret_probe.py",
+      "status": "A",
+      "insertions": 68,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_baseline2000_cpp.py",
+      "status": "A",
+      "insertions": 87,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_baseline2000_py.py",
+      "status": "A",
+      "insertions": 40,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_corner2000.py",
+      "status": "A",
+      "insertions": 105,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_corner_stats.py",
+      "status": "A",
+      "insertions": 21,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_chk2000.py",
+      "status": "A",
+      "insertions": 5,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_dstar0.py",
+      "status": "A",
+      "insertions": 5,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_note.py",
+      "status": "A",
+      "insertions": 26,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_note2.py",
+      "status": "A",
+      "insertions": 25,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_pickdiff.py",
+      "status": "A",
+      "insertions": 126,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_pseq_post.py",
+      "status": "A",
+      "insertions": 27,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_qfix_note.py",
+      "status": "A",
+      "insertions": 34,
+      "deletions": 0
+    },
+    {
+      "path": "bench/_tmp_wudist.py",
+      "status": "A",
+      "insertions": 76,
+      "deletions": 0
+    },
+    {
+      "path": "bench/ab_optionA_10games.py",
+      "status": "A",
+      "insertions": 397,
+      "deletions": 0
+    },
+    {
+      "path": "bench/ablation_cornerPref.py",
+      "status": "A",
+      "insertions": 136,
+      "deletions": 0
+    },
+    {
+      "path": "bench/ablation_filterU.py",
+      "status": "A",
+      "insertions": 243,
+      "deletions": 0
+    },
+    {
+      "path": "bench/ablation_tiebreak.py",
+      "status": "A",
+      "insertions": 193,
+      "deletions": 0
+    },
+    {
+      "path": "bench/acceptance_threelayer_150.py",
+      "status": "A",
+      "insertions": 141,
+      "deletions": 0
+    },
+    {
+      "path": "bench/compare_trial_decide.py",
+      "status": "A",
+      "insertions": 293,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/_boardcheck.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/_dbg_py_boards.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/_early_death_targets.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/ablation_cornerPref_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/ablation_filterU_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/ablation_filterU_multiseed.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/ablation_tiebreak_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/cpp_python_output_parity.json",
+      "status": "A",
+      "insertions": 448,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/dstar_sweep_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/game_limit_proxy.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/optionA_10games.json",
+      "status": "A",
+      "insertions": 313,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/optionA_pilot3.json",
+      "status": "A",
+      "insertions": 320,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/paired_150_stats.json",
+      "status": "A",
+      "insertions": 8,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/paired_sameboard_50.json",
+      "status": "A",
+      "insertions": 372,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/paired_weighted_50.json",
+      "status": "A",
+      "insertions": 16,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/param_arms_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pseq_contamination_true.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pseq_contamination_world.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pseq_control_worldframe.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pseq_vs_filterU_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pure_cpp_100games.json",
+      "status": "A",
+      "insertions": 125,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pure_cpp_batch50.json",
+      "status": "A",
+      "insertions": 66,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pure_cpp_c9fallback60.json",
+      "status": "A",
+      "insertions": 77,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/pure_cpp_wholegame_baseline.json",
+      "status": "A",
+      "insertions": 76,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/py_sameseed_20.json",
+      "status": "A",
+      "insertions": 129,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/randres_noSE_Q.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/sameseed_parity_correction.json",
+      "status": "A",
+      "insertions": 16,
+      "deletions": 0
+    },
+    {
+      "path": "bench/data/threelayer_150.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "bench/newlayout_phase1_py.py",
+      "status": "A",
+      "insertions": 35,
+      "deletions": 0
+    },
+    {
+      "path": "bench/newlayout_phase2_det.py",
+      "status": "A",
+      "insertions": 18,
+      "deletions": 0
+    },
+    {
+      "path": "bench/newlayout_phase3_arms.py",
+      "status": "A",
+      "insertions": 158,
+      "deletions": 0
+    },
+    {
+      "path": "bench/paired_expand.py",
+      "status": "A",
+      "insertions": 125,
+      "deletions": 0
+    },
+    {
+      "path": "bench/paired_weighted_stats.py",
+      "status": "A",
+      "insertions": 51,
+      "deletions": 0
+    },
+    {
+      "path": "bench/replay_threelayer.py",
+      "status": "A",
+      "insertions": 122,
+      "deletions": 0
+    },
+    {
+      "path": "bench/smoke_threelayer_guarded.py",
+      "status": "A",
+      "insertions": 120,
+      "deletions": 0
+    },
+    {
+      "path": "bench/stress_20k_production.py",
+      "status": "A",
+      "insertions": 670,
+      "deletions": 0
+    },
+    {
+      "path": "bench/sweep_dstar.py",
+      "status": "A",
+      "insertions": 142,
+      "deletions": 0
+    },
+    {
+      "path": "bench/truthcheck_optimal_mmv2.py",
+      "status": "A",
+      "insertions": 100,
+      "deletions": 0
+    },
+    {
+      "path": "bench/verify_batch_coord_format.py",
+      "status": "A",
+      "insertions": 102,
+      "deletions": 0
+    },
+    {
+      "path": "bench/verify_decision_orchestration.py",
+      "status": "A",
+      "insertions": 488,
+      "deletions": 0
+    },
+    {
+      "path": "bench/verify_decision_primitives.py",
+      "status": "A",
+      "insertions": 130,
+      "deletions": 0
+    },
+    {
+      "path": "bench/verify_optionA_scope.py",
+      "status": "A",
+      "insertions": 163,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/app.js",
+      "status": "A",
+      "insertions": 1701,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/assemble.py",
+      "status": "A",
+      "insertions": 278,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/base.css",
+      "status": "A",
+      "insertions": 998,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/course-template.html",
+      "status": "A",
+      "insertions": 310,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/diag_bet.py",
+      "status": "A",
+      "insertions": 18,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/diag_pairing.py",
+      "status": "A",
+      "insertions": 27,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/diag_why.py",
+      "status": "A",
+      "insertions": 13,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/notes.md",
+      "status": "A",
+      "insertions": 181,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/01-m1.html",
+      "status": "A",
+      "insertions": 219,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/01-m2.html",
+      "status": "A",
+      "insertions": 251,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/01-m3.html",
+      "status": "A",
+      "insertions": 184,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/02-m4.html",
+      "status": "A",
+      "insertions": 176,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/02-m5.html",
+      "status": "A",
+      "insertions": 154,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/02-m6.html",
+      "status": "A",
+      "insertions": 194,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/03-m7.html",
+      "status": "A",
+      "insertions": 187,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/03-m8.html",
+      "status": "A",
+      "insertions": 203,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/03-m9.html",
+      "status": "A",
+      "insertions": 246,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/04-m10.html",
+      "status": "A",
+      "insertions": 212,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/04-m11.html",
+      "status": "A",
+      "insertions": 235,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/04-m12.html",
+      "status": "A",
+      "insertions": 201,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/04-m13.html",
+      "status": "A",
+      "insertions": 250,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/05-finale.html",
+      "status": "A",
+      "insertions": 63,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/05-m14.html",
+      "status": "A",
+      "insertions": 200,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/05-m15.html",
+      "status": "A",
+      "insertions": 209,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/05-m16.html",
+      "status": "A",
+      "insertions": 178,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/05-m17.html",
+      "status": "A",
+      "insertions": 190,
+      "deletions": 0
+    },
+    {
+      "path": "course/_build/seg/index-main.html",
+      "status": "A",
+      "insertions": 79,
+      "deletions": 0
+    },
+    {
+      "path": "course/index.html",
+      "status": "A",
+      "insertions": 2842,
+      "deletions": 0
+    },
+    {
+      "path": "cpp/build_trial.bat",
+      "status": "A",
+      "insertions": 53,
+      "deletions": 0
+    },
+    {
+      "path": "cpp/build_wholegame.bat",
+      "status": "A",
+      "insertions": 57,
+      "deletions": 0
+    },
+    {
+      "path": "output/_ab_runner.py",
+      "status": "A",
+      "insertions": 143,
+      "deletions": 0
+    },
+    {
+      "path": "output/_align_probe.py",
+      "status": "A",
+      "insertions": 184,
+      "deletions": 0
+    },
+    {
+      "path": "output/_align_probe2.py",
+      "status": "A",
+      "insertions": 169,
+      "deletions": 0
+    },
+    {
+      "path": "output/_arbiter_snap.py",
+      "status": "A",
+      "insertions": 33,
+      "deletions": 0
+    },
+    {
+      "path": "output/_build_buggy.py",
+      "status": "A",
+      "insertions": 73,
+      "deletions": 0
+    },
+    {
+      "path": "output/_build_buggy_ref.py",
+      "status": "A",
+      "insertions": 57,
+      "deletions": 0
+    },
+    {
+      "path": "output/_calibrate_cost_gate.py",
+      "status": "A",
+      "insertions": 84,
+      "deletions": 0
+    },
+    {
+      "path": "output/_calibrate_f2_gate.py",
+      "status": "A",
+      "insertions": 79,
+      "deletions": 0
+    },
+    {
+      "path": "output/_check_bad_boards.py",
+      "status": "A",
+      "insertions": 62,
+      "deletions": 0
+    },
+    {
+      "path": "output/_cost_calibration.json",
+      "status": "A",
+      "insertions": 1,
+      "deletions": 0
+    },
+    {
+      "path": "output/_cost_calibration.py",
+      "status": "A",
+      "insertions": 264,
+      "deletions": 0
+    },
+    {
+      "path": "output/_cost_proxy_search.py",
+      "status": "A",
+      "insertions": 134,
+      "deletions": 0
+    },
+    {
+      "path": "output/_depth_calib_points.json",
+      "status": "A",
+      "insertions": 1332,
+      "deletions": 0
+    },
+    {
+      "path": "output/_depth_design.py",
+      "status": "A",
+      "insertions": 162,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_ab.json",
+      "status": "A",
+      "insertions": 1986,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_ab.py",
+      "status": "A",
+      "insertions": 197,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_ab2.py",
+      "status": "A",
+      "insertions": 219,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_ab3.json",
+      "status": "A",
+      "insertions": 1900,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_ab3.py",
+      "status": "A",
+      "insertions": 139,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_gate.py",
+      "status": "A",
+      "insertions": 65,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_impact.py",
+      "status": "A",
+      "insertions": 202,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_joint_prob.json",
+      "status": "A",
+      "insertions": 13,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_joint_prob.py",
+      "status": "A",
+      "insertions": 125,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_real_games.py",
+      "status": "A",
+      "insertions": 208,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_static_count.json",
+      "status": "A",
+      "insertions": 139,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_static_count.py",
+      "status": "A",
+      "insertions": 102,
+      "deletions": 0
+    },
+    {
+      "path": "output/_digit8_trigger_rate.py",
+      "status": "A",
+      "insertions": 214,
+      "deletions": 0
+    },
+    {
+      "path": "output/_dpi_probe.py",
+      "status": "A",
+      "insertions": 149,
+      "deletions": 0
+    },
+    {
+      "path": "output/_dstar_analysis.py",
+      "status": "A",
+      "insertions": 57,
+      "deletions": 0
+    },
+    {
+      "path": "output/_dynamic_depth_design.py",
+      "status": "A",
+      "insertions": 140,
+      "deletions": 0
+    },
+    {
+      "path": "output/_empty_group_cause.py",
+      "status": "A",
+      "insertions": 240,
+      "deletions": 0
+    },
+    {
+      "path": "output/_empty_group_forensic6.py",
+      "status": "A",
+      "insertions": 245,
+      "deletions": 0
+    },
+    {
+      "path": "output/_empty_group_root.py",
+      "status": "A",
+      "insertions": 91,
+      "deletions": 0
+    },
+    {
+      "path": "output/_endgame_root.py",
+      "status": "A",
+      "insertions": 91,
+      "deletions": 0
+    },
+    {
+      "path": "output/_find_slow.py",
+      "status": "A",
+      "insertions": 57,
+      "deletions": 0
+    },
+    {
+      "path": "output/_flag_forensic.py",
+      "status": "A",
+      "insertions": 82,
+      "deletions": 0
+    },
+    {
+      "path": "output/_gate_bidir.py",
+      "status": "A",
+      "insertions": 81,
+      "deletions": 0
+    },
+    {
+      "path": "output/_group_diagnose.py",
+      "status": "A",
+      "insertions": 227,
+      "deletions": 0
+    },
+    {
+      "path": "output/_limitation_audit.py",
+      "status": "A",
+      "insertions": 100,
+      "deletions": 0
+    },
+    {
+      "path": "output/_minrepro_8.py",
+      "status": "A",
+      "insertions": 84,
+      "deletions": 0
+    },
+    {
+      "path": "output/_minrepro_8_consistent.py",
+      "status": "A",
+      "insertions": 86,
+      "deletions": 0
+    },
+    {
+      "path": "output/_new_cost_proxy.py",
+      "status": "A",
+      "insertions": 94,
+      "deletions": 0
+    },
+    {
+      "path": "output/_nines_forensic.py",
+      "status": "A",
+      "insertions": 91,
+      "deletions": 0
+    },
+    {
+      "path": "output/_open_winrate.py",
+      "status": "A",
+      "insertions": 188,
+      "deletions": 0
+    },
+    {
+      "path": "output/_optimal_rate.py",
+      "status": "A",
+      "insertions": 51,
+      "deletions": 0
+    },
+    {
+      "path": "output/_pick_formula.py",
+      "status": "A",
+      "insertions": 98,
+      "deletions": 0
+    },
+    {
+      "path": "output/_ratio_stats.py",
+      "status": "A",
+      "insertions": 32,
+      "deletions": 0
+    },
+    {
+      "path": "output/_real_chain_diag.py",
+      "status": "A",
+      "insertions": 126,
+      "deletions": 0
+    },
+    {
+      "path": "output/_real_chain_diag2.py",
+      "status": "A",
+      "insertions": 91,
+      "deletions": 0
+    },
+    {
+      "path": "output/_real_scan_repro.py",
+      "status": "A",
+      "insertions": 62,
+      "deletions": 0
+    },
+    {
+      "path": "output/_regress_compare.py",
+      "status": "A",
+      "insertions": 50,
+      "deletions": 0
+    },
+    {
+      "path": "output/_regress_runner.py",
+      "status": "A",
+      "insertions": 92,
+      "deletions": 0
+    },
+    {
+      "path": "output/_repro_num9_99.py",
+      "status": "A",
+      "insertions": 63,
+      "deletions": 0
+    },
+    {
+      "path": "output/_slow_params.py",
+      "status": "A",
+      "insertions": 62,
+      "deletions": 0
+    },
+    {
+      "path": "output/_smoke_trace_e2e.py",
+      "status": "A",
+      "insertions": 156,
+      "deletions": 0
+    },
+    {
+      "path": "output/_three_gates.py",
+      "status": "A",
+      "insertions": 106,
+      "deletions": 0
+    },
+    {
+      "path": "output/_trace_deep9.py",
+      "status": "A",
+      "insertions": 117,
+      "deletions": 0
+    },
+    {
+      "path": "output/_true_cost_formula.py",
+      "status": "A",
+      "insertions": 87,
+      "deletions": 0
+    },
+    {
+      "path": "output/_true_gate_static.json",
+      "status": "A",
+      "insertions": 7,
+      "deletions": 0
+    },
+    {
+      "path": "output/_true_gate_static.py",
+      "status": "A",
+      "insertions": 111,
+      "deletions": 0
+    },
+    {
+      "path": "output/_true_world_scale.py",
+      "status": "A",
+      "insertions": 94,
+      "deletions": 0
+    },
+    {
+      "path": "output/_verify_depth_scaling.py",
+      "status": "A",
+      "insertions": 95,
+      "deletions": 0
+    },
+    {
+      "path": "output/_verify_digit8_fix.py",
+      "status": "A",
+      "insertions": 85,
+      "deletions": 0
+    },
+    {
+      "path": "output/_verify_dyn_depth.py",
+      "status": "A",
+      "insertions": 147,
+      "deletions": 0
+    },
+    {
+      "path": "output/_verify_installed_fix.py",
+      "status": "A",
+      "insertions": 67,
+      "deletions": 0
+    },
+    {
+      "path": "output/_verify_ratio.py",
+      "status": "A",
+      "insertions": 55,
+      "deletions": 0
+    },
+    {
+      "path": "output/_who_runs.py",
+      "status": "A",
+      "insertions": 27,
+      "deletions": 0
+    },
+    {
+      "path": "output/_winrate_block.py",
+      "status": "A",
+      "insertions": 202,
+      "deletions": 0
+    },
+    {
+      "path": "output/_winrate_openability.py",
+      "status": "A",
+      "insertions": 220,
+      "deletions": 0
+    },
+    {
+      "path": "review-spec.json",
+      "status": "A",
+      "insertions": 1708,
+      "deletions": 0
+    },
+    {
+      "path": "review/architecture-audit-20261105.md",
+      "status": "A",
+      "insertions": 373,
+      "deletions": 0
+    },
+    {
+      "path": "review/cleanup-20261108-result.json",
+      "status": "A",
+      "insertions": 72,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-config-lifecycle.md",
+      "status": "A",
+      "insertions": 104,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-help-heatmap-overlap.md",
+      "status": "A",
+      "insertions": 394,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-help-unified-board.md",
+      "status": "A",
+      "insertions": 263,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-test-contract-evidence/loop_probe.py",
+      "status": "A",
+      "insertions": 115,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-test-contract-evidence/mut_report.md",
+      "status": "A",
+      "insertions": 19,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-test-contract-evidence/mutate_check.py",
+      "status": "A",
+      "insertions": 183,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-test-contract.md",
+      "status": "A",
+      "insertions": 169,
+      "deletions": 0
+    },
+    {
+      "path": "review/fix-vision-contract.md",
+      "status": "A",
+      "insertions": 149,
+      "deletions": 0
+    },
+    {
+      "path": "review/handoff-remove-py-decision-chain-20261106.md",
+      "status": "A",
+      "insertions": 140,
+      "deletions": 0
+    },
+    {
+      "path": "review/open-questions.md",
+      "status": "A",
+      "insertions": 16,
+      "deletions": 0
+    },
+    {
+      "path": "review/remove-per-click-death-check.md",
+      "status": "A",
+      "insertions": 284,
+      "deletions": 0
+    },
+    {
+      "path": "review/remove-py-decision-implementation-evidence/mutate.py",
+      "status": "A",
+      "insertions": 122,
+      "deletions": 0
+    },
+    {
+      "path": "review/remove-py-decision-implementation.md",
+      "status": "A",
+      "insertions": 418,
+      "deletions": 0
+    },
+    {
+      "path": "review/remove-py-decision-plan.md",
+      "status": "A",
+      "insertions": 404,
+      "deletions": 0
+    },
+    {
+      "path": "review/review-20261109/_shared-material.md",
+      "status": "A",
+      "insertions": 51,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-design-spec.md",
+      "status": "A",
+      "insertions": 376,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-bc.md",
+      "status": "A",
+      "insertions": 213,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-code-review-anchor-report.json",
+      "status": "A",
+      "insertions": 109,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-code-review-final.json",
+      "status": "A",
+      "insertions": 13,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-code-review-ledger.json",
+      "status": "A",
+      "insertions": 24,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-code-review-spec.json",
+      "status": "A",
+      "insertions": 54,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-code-review.md",
+      "status": "A",
+      "insertions": 136,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-explore.md",
+      "status": "A",
+      "insertions": 162,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-implementation.md",
+      "status": "A",
+      "insertions": 254,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-migration-verification.md",
+      "status": "A",
+      "insertions": 169,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-prototype.html",
+      "status": "A",
+      "insertions": 1525,
+      "deletions": 0
+    },
+    {
+      "path": "review/ui-window-fit-update.md",
+      "status": "A",
+      "insertions": 122,
+      "deletions": 0
+    },
+    {
+      "path": "review/winrate-final-20261106.md",
+      "status": "A",
+      "insertions": 58,
+      "deletions": 0
+    },
+    {
+      "path": "tests/test_config_lifecycle.py",
+      "status": "A",
+      "insertions": 536,
+      "deletions": 0
+    },
+    {
+      "path": "tests/test_cpp_decide_wiring.py",
+      "status": "A",
+      "insertions": 1531,
+      "deletions": 0
+    },
+    {
+      "path": "tests/test_ui_migration.py",
+      "status": "A",
+      "insertions": 1333,
+      "deletions": 0
+    },
+    {
+      "path": "tests/test_ui_preview_popup.py",
+      "status": "A",
+      "insertions": 760,
+      "deletions": 0
+    },
+    {
+      "path": "ui/preview_popup.py",
+      "status": "A",
+      "insertions": 907,
+      "deletions": 0
+    },
+    {
+      "path": "utils/analyze_decide_trace.py",
+      "status": "A",
+      "insertions": 177,
+      "deletions": 0
+    },
+    {
+      "path": "utils/decide_trace.py",
+      "status": "A",
+      "insertions": 147,
+      "deletions": 0
+    }
+  ],
+  "excluded_files": [
+    {
+      "path": "bench/data/b_line_probe.log",
+      "exclude_reason": "deleted"
+    },
+    {
+      "path": "bench/data/p2_formal_OLD_INVALID.log",
+      "exclude_reason": "deleted"
+    },
+    {
+      "path": "cpp/check_mscore_exports.exe",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "image/save.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "run_winrate_suite.cmd",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "ui/window.ui",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "_3s_fail.cmd",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "apply_native_fix.cmd",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "bench/data/aaa17_strategies.pdf",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "bench/data/aaa17_strategies.txt",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "bench/data/decision_orchestration_parity.json",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "bench_native.log",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "chat-export/session-7fdc3308-15da-4975-bafc-59a04fa17935.raw.jsonl",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "chat-export/session-7fdc3308-15da-4975-bafc-59a04fa17935.txt",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "course/01-boot.html",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "course/02-vision.html",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "course/03-deduction.html",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "course/04-probability.html",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "course/05-engine.html",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "cpp/ab_native.cpp.mojibake_bak",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "cpp/mscore.cpp.bak_before_costproxy",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "cpp/mscore.cpp.bak_before_digit8",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "cpp/mscore_new.pyd",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "debug.log",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "\"docs/\\350\\203\\234\\347\\216\\207\\346\\265\\213\\350\\257\\225\\345\\245\\227\\344\\273\\266\\350\\257\\264\\346\\230\\216.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_arbiter_now.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_bad2.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_bad_out.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_digit8_impact.json",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "output/_flag_crop.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_flag_marked.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_gate2.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_gate_out.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_nines_sheet.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_board_aligned.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_board_aware.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_board_best.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_board_unaware.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_grid.npy",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_screen_physical.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_probe_window.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_ratio2.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_ratio_out.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_real_board_endgame.npy",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_real_scan.npy",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_scan_out.txt",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "output/_solver_crop.png",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "\"review/Cpp\\347\\273\\237\\344\\270\\200decide_\\347\\274\\226\\346\\216\\222\\350\\247\\204\\346\\240\\274\\344\\270\\216\\350\\257\\201\\346\\215\\256\\350\\276\\271\\347\\225\\214.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "review/fix-test-contract-evidence/full_test_run_after_summary.txt",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "review/fix-test-contract-evidence/full_test_run_before_summary.txt",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "review/fix-test-contract-evidence/loop_probe_report.txt",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "review/fix-test-contract-evidence/targeted_run_after_summary.txt",
+      "exclude_reason": "extension-not-allowed"
+    },
+    {
+      "path": "review/review-20261109/review-spec.json",
+      "exclude_reason": "too-large"
+    },
+    {
+      "path": "\"review/\\345\\205\\250\\351\\235\\242\\345\\256\\241\\346\\237\\245-UI\\344\\270\\216\\350\\260\\203\\347\\224\\250\\346\\265\\201\\347\\250\\213-20261106.md\"",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "review_test.log",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "review_test2.log",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/ab_native.cp310-win_amd64.pyd",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak2",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_ab_verify",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_baseline",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_before_digit8",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_before_optimal_fix",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_before_transitions",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_decision_preflight",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_decision_primitives",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_packed_diag",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_prehelp",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.bak_smoke",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.incoming",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.new",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/mscore.cp310-win_amd64.pyd.old_locked",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/trial_decide/mscore.cp310-win_amd64.pyd",
+      "exclude_reason": "binary"
+    },
+    {
+      "path": "utils/trial_wholegame/mscore.cp310-win_amd64.pyd",
+      "exclude_reason": "binary"
+    }
+  ],
+  "warnings": [
+    "large-changeset: reviewable files exceed 40; declare split-batches or partial in the report"
+  ],
+  "spec_sha": "8d870ffe12025f2e"
+}

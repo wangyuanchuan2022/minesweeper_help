@@ -135,8 +135,14 @@ def get_list(a, num, listnum, start=0, stop=-1):
     if a < 1:
         a = 1
 
-    if num > listnum - 1:
-        num = listnum - 1
+    # ⚠️ 2026-11-09 正确性修复（与 cpp/mscore.cpp:get_list_sizes 同步）：
+    #   原为 `if num > listnum - 1: num = listnum - 1`，把上限钳到 listnum-1，
+    #   使「从 listnum 个里全选」（唯一解，C(N,N)=1）被替换成「选 N-1 个」
+    #   （C(N,N-1)=N 个解，且每个都少一个元素）。
+    #   实证见 bench/repro_world_count_split.py：物化世界数 36 ≠ ‖S‖ 30，
+    #   ΣP(雷) 98.6667 ≠ 剩余雷数 99。上限应为 listnum。
+    if num > listnum:
+        num = listnum
 
     if num < 1:
         num = 1

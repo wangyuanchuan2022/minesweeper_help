@@ -7,7 +7,7 @@ rem   - define AB_NATIVE_MERGED  -> mscore.cpp skips its PYBIND11_MODULE
 rem   - ab_native.cpp provides the single PYBIND11_MODULE(mscore)
 rem   - ab_native.cpp calls extern "C" abnative_decide() from mscore.cpp
 rem
-rem Output: utils\ab_native.cp310-win_amd64.pyd  (module name is still mscore)
+rem Output: utils\mscore.cp310-win_amd64.pyd  (module name is mscore)
 rem Production build still uses cpp\build.bat (no macro), unchanged.
 rem ============================================================
 setlocal
@@ -26,11 +26,11 @@ cl /nologo /O2 /utf-8 /std:c++17 /EHsc /MD /LD ^
     /I "%PYBIND11_INC%" ^
     /I "%PYHOME%\include" ^
     cpp\mscore.cpp cpp\ab_native.cpp ^
-    /Fe:utils\ab_native.cp310-win_amd64.pyd ^
+    /Fe:utils\mscore.cp310-win_amd64.pyd ^
     /link /LIBPATH:"%PYHOME%\libs" python310.lib
 
 if errorlevel 1 ( echo [ERROR] merged build failed & exit /b 1 )
 del /q *.obj 2>nul
 del /q cpp\*.obj 2>nul
-echo [OK] merged build done: utils\ab_native.cp310-win_amd64.pyd
+echo [OK] merged build done: utils\mscore.cp310-win_amd64.pyd
 endlocal
