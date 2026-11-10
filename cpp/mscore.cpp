@@ -275,15 +275,13 @@ struct ComboIter {
     }
 };
 
-// C_num(a, b)：对应 combinatorics.py（浮点逐步除法，结果为 double）
-double C_num(int a, int b) {
-    double result = 1.0;
-    for (int i = 0; i < b; ++i) {
-        result *= (double)(a - i);
-        result /= (double)(i + 1);
-    }
-    return result;
-}
+// 2026-11-10 精简：C_num 已删除。
+//   它是 combinatorics.py C_num 的移植，但**本文件内零调用点**（decide 两层
+//   决策链只用 combination_ratio_checked，不用 C_num）。三条独立证据：
+//   · MSVC /W4 C4505「已删除具有内部链接的未引用函数」
+//   · GCC -Wall -Wunused-function
+//   · gcov 整文件插桩实测 execution_count == 0（多轮真实负载）
+//   Python 侧 utils/combinatorics.C_num 是独立实现，不依赖此 C++ 版本。
 
 // combination_ratio(x, x_min, n)：对应 combinatorics.py（浮点逐步乘除）。
 // 断言失败不直接抛 Python 异常（抛异常需 GIL，而调用点位于释放 GIL 的计算段），
@@ -299,17 +297,12 @@ static bool combination_ratio_checked(int x, int x_min, int n, double* out) {
     return true;
 }
 
-// 在持有 GIL 的上下文中使用（保留原语义：AssertionError）
-double combination_ratio(int x, int x_min, int n) {
-    double out;
-    if (!combination_ratio_checked(x, x_min, n, &out)) {
-        PyErr_SetString(PyExc_AssertionError, "assert 0 <= x <= x_min <= n");
-        throw py::error_already_set();
-    }
-    return out;
-}
+// 2026-11-10 精简：combination_ratio（持有 GIL 版本的抛异常包装）已删除。
+//   唯一消费方是已移除的 pbs_compute / part_solve 导出面；decide 内部只走
+//   combination_ratio_checked（返回 bool，由调用方决定如何处理非法输入）。
+//   证据同上：C4505 + -Wunused-function + gcov execution_count == 0。
 
-// get_list 的尺寸范围钳制（start=0, stop=-1 路径——part_solve_single / 世界物化均如此调用）
+// get_list 的尺寸范围钳制（start=0, stop=-1 路径——世界物化均如此调用）
 // 返回需要枚举的组合大小列表（升序，含边界）。
 //
 // ⚠️ 2026-11-09 正确性修复（用户指令「看看计算是否准确」）：
@@ -945,10 +938,22 @@ struct ExactEngine {
     int total_bits = 0;          // (w+2)*(h+2)
     int64_t node_cap = 0;
     int64_t nodes = 0;
-    // ⚠️ 2026-11-09 墙钟时间闸（见 tick()）：<=0 表示不启用。
-    // 由调用方在构造后设置：time_budget_sec + t_start（进入计算前的时间点）。
-    double time_budget_sec = 0.0;
-    std::chrono::steady_clock::time_point t_start{};
+    // 2026-11-10 精简：已删除「墙钟时间闸」两个成员（time_budget_sec / t_start）。
+    //
+    // ⚠️ 这是一处**假安全机制**的真实案例，值得留档：
+    //   2026-11-09 曾因真机实测「2^19 世界时单次 after_click 递归可跑 100+ 秒」
+    //   而在 tick() 里加了墙钟闸，注释写「由调用方在构造后设置」——
+    //   但**全仓从未有任何代码给它赋值**（grep 全仓 time_budget_sec 只有
+    //   声明、注释与读取三处，零赋值点），因此 `time_budget_sec > 0.0` 恒假，
+    //   该闸从未生效。三条证据：
+    //     · 全仓 grep 零赋值点（含 cpp/ 与所有 .py/.bat）
+    //     · gcov 整文件插桩：L973-978 五条语句 execution_count == 0
+    //     · 若真触发过，NodeCapExceeded 构造器必有计数；实测其执行次数
+    //       虽非 0（node_cap 分支触发），但时间闸分支为 0
+    //   ⇒ 删掉的是**从未生效**的代码，不是削弱现存保护。
+    //   ⇒ 若将来需要真正的墙钟保护：在构造 ExactEngine 后显式设置
+    //      eng.time_budget_sec = X; eng.t_start = steady_clock::now();
+    //      并在 tick() 中恢复 (nodes & 0xFFF) 采样检查。
 
     Bits all_bits;               // 全部 w*h 格
     Bits opened0;                // 初始已开格
@@ -973,16 +978,9 @@ struct ExactEngine {
     void tick() {
         ++nodes;
         if (node_cap > 0 && nodes > node_cap) throw NodeCapExceeded(node_cap, nodes);
-        // ⚠️ 2026-11-09 墙钟时间闸（真机实测：2^19 世界时单次 after_click 递归
-        // 可跑 100+ 秒，而 node_cap 是节点数上限、与墙钟不成正比）。
-        // 每 4096 节点查一次 steady_clock（避免每节点都查时钟拖慢）。
-        // time_budget_sec <= 0 表示不启用。
-        if (time_budget_sec > 0.0 && (nodes & 0xFFF) == 0) {
-            const double elapsed = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - t_start).count();
-            if (elapsed > time_budget_sec)
-                throw NodeCapExceeded(node_cap, nodes);   // 复用同一异常→安全降级
-        }
+        // 2026-11-10：原墙钟时间闸已删除（从未生效，见上方成员处留档）。
+        // node_cap 是本引擎唯一生效的规模闸；真实内存保护由 decide_impl 的
+        // mem.allowed（1.5GB 用户铁律硬上限）在**进入** OPTIMAL 层之前把关。
     }
 
     int idx_of(int x, int y) const { return y * W2 + x; }
@@ -1271,7 +1269,9 @@ namespace decision_layer {
 static constexpr int32_t CELL_CLOSED = 9;
 static constexpr int32_t CELL_FLAGGED = 10;
 static constexpr int64_t DEFAULT_MEM_BUDGET = 1536LL * 1024LL * 1024LL;
-static constexpr int64_t WORLD_BYTES = 2304;
+// 2026-11-10 精简：WORLD_BYTES 已删除。它只服务于 estimate_mem_impl
+// （按「世界数 × 每世界 2304B」估算内存），而后者随 AB_NATIVE_MERGED 桥接块
+// 一并移除。decide_impl 的 mem lambda 用 88.0（sizeof(Bits)）独立计算，与此无关。
 
 struct MemEstimate {
     int64_t bytes;
@@ -1497,22 +1497,15 @@ static int64_t count_situations_exact(
     return total;
 }
 
-static MemEstimate estimate_mem_impl(int64_t worlds, int64_t candidates,
-                                     int64_t budget) {
-    if (worlds < 0 || candidates < 0) {
-        throw std::invalid_argument("worlds and candidates must be non-negative");
-    }
-    if (budget <= 0) budget = DEFAULT_MEM_BUDGET;
-    // Saturate instead of overflowing: an overflow must never turn into allow.
-    const long double raw = static_cast<long double>(worlds) *
-                            static_cast<long double>(candidates) * WORLD_BYTES;
-    const int64_t bytes = raw >= static_cast<long double>(INT64_MAX)
-        ? INT64_MAX : static_cast<int64_t>(raw);
-    return {bytes, budget, worlds, candidates, bytes <= budget};
-}
-
-// 2026-11-10 精简：py_estimate_mem 已删除（estimate_mem 导出移除后无调用者）。
-// estimate_mem_impl 保留：桥接块（AB_NATIVE_MERGED）仍引用它。
+// 2026-11-10 精简：estimate_mem_impl / py_estimate_mem 一并删除。
+//   ① py_estimate_mem 导出早先已移除（Python 侧零调用）；
+//   ② estimate_mem_impl 的唯一调用点是 AB_NATIVE_MERGED 桥接块，该桥接块
+//      随 ab_native 链路整体删除（2026-11-10 用户裁决：A 档 + 坏链路一并清除）。
+//   ③ 删除前已由三条独立证据确认零引用：
+//      · MSVC /W4 报 C4505「已删除具有内部链接的未引用函数」(L1500)
+//      · GCC -Wall 报 -Wunused-function
+//      · gcov 整文件插桩实测 execution_count == 0（多轮真实负载）
+//   对应的 MemEstimate 结构体仍被 decide_impl 的 mem lambda 使用，故保留。
 
 static py::tuple py_split_frontier(
     py::array_t<int32_t, py::array::c_style | py::array::forcecast> board) {
@@ -1559,8 +1552,9 @@ static py::tuple py_split_frontier(
     return py::make_tuple(frontier, interior, num9, num10);
 }
 
-// 2026-11-10 精简：py_decision_preflight 已删除（decision_preflight 导出移除后无调用者）。
-// estimate_mem_impl 保留：桥接块（AB_NATIVE_MERGED）仍引用它。
+// 2026-11-10 精简：py_decision_preflight / estimate_mem_impl 均已删除
+// （导出移除后无调用者；estimate_mem_impl 的唯一调用点随 AB_NATIVE_MERGED
+//  桥接块一并删除）。三条独立证据见上方 estimate_mem_impl 处注释。
 
 }  // namespace decision_layer
 
@@ -2978,22 +2972,15 @@ static py::dict py_decide(
 }  // namespace decision_layer
 #endif  // MSW_TRIAL_DECIDE
 
-// ==================== B1 合并编译保护宏（2026-11-05）====================
-// 目的：允许 ab_native.cpp 与本文件编进**同一个 pyd**，从而让 C++ 侧
-//      直接调用本文件已验证的枚举/决策实现（PartSolveCtx / WinRateCtx /
-//      ExactEngine），避免自制枚举器与生产语义不一致。
-//
-// 用法：
-//   · 单独编译（生产构建，cpp/build.bat）：未定义 AB_NATIVE_MERGED
-//     ⇒ 正常生成 PYBIND11_MODULE(mscore)，行为与改动前**完全一致**。
-//   · 合并编译（cpp/build_ab_native.bat）：定义 AB_NATIVE_MERGED
-//     ⇒ 跳过本文件的模块入口，由 ab_native.cpp 提供唯一入口，
-//       并在其中调用本文件的 run_ab_impl()。
-//
-// ⚠️ 本节只加预处理保护，**不改变任何逻辑**。
-//     生产 mscore.pyd 的编译产物应逐位不变（已有 verify 流程可复核）。
-// ========================================================================
-#ifndef AB_NATIVE_MERGED
+// ==================== 模块入口（pybind11）====================
+// 2026-11-10 精简：原「B1 合并编译保护宏」小节已删除。
+//   · 该小节曾用 #ifndef AB_NATIVE_MERGED 包裹本模块入口，以支持
+//     ab_native.cpp 与本文件合并编成一个 pyd；
+//   · ab_native 整局 A/B 驱动链路自 e6e7926 起已不可编译（WinRateCtx / wr_f
+//     被删但桥接仍调用），且无任何生产/测试引用，故按用户裁决整体清除
+//     （cpp/ab_native.cpp、build_ab_native.bat、build_wholegame.bat 等）。
+//   · 现在本文件是**唯一**的 mscore 模块入口，不再需要宏开关。
+// ==============================================================
 PYBIND11_MODULE(mscore, m) {
     // 2026-11-10 精简：本模块只保留 decide 两层决策所需的最小导出面。
     //   decide          唯一决策入口（OPTIMAL / pbs+PSEQ）
@@ -3030,509 +3017,3 @@ PYBIND11_MODULE(mscore, m) {
     // 注意：py_part_solve / py_pbs_compute 的**函数本体仍保留**——decide 两层
     // 决策内部复用它们（decide_impl 内 L~1809 / L~2249 调用），只是不再对外导出。
 }
-#endif  // AB_NATIVE_MERGED（B1 合并编译保护宏，见模块入口处说明）
-
-#ifdef AB_NATIVE_MERGED   // 桥接只在合并编译时存在，保证生产 pyd 可复现
-// ==========================================================================
-// ============ B1-a-1 桥接：整局 A/B 驱动的生产决策入口 ====================
-// ==========================================================================
-// 用户批准方案 B1-a-1：**只在本文件末尾追加**纯 C++ 桥接，
-// 不改动上方任何一行已有代码；桥接内部直接调用 PartSolveCtx + wr_f，
-// 复现生产 `number5_1` 的「切分 → part_solve → win_rate → argmax」链路。
-//
-// 为什么必须这样做（历史教训）：
-//   ab_native.cpp 曾自己写了一套朴素 2^nf 全枚举 + 自设 `nf>20` 上限，
-//   实测三个真实臂 0/100 胜、兜底率 100%，而生产约 36%
-//   ⇒ 自制近似器**不可代表生产**。必须复用生产实现。
-//
-// 语义对齐要点：
-//   · clicks / clicks9 切分：生产用 OpenCV 距离变换 res<=1.5 判前沿。
-//     几何等价规则：未开格若与任一「已开数字格(1..8)」8 邻域相邻 ⇒ 前沿(clicks)，
-//     否则 ⇒ 内部(clicks9)。（dist<=1.5 的几何含义即"紧贴已开数字格"）
-//   · part_solve：直接构造 PartSolveCtx，复现 py_part_solve 的 cs 构建 + recurse。
-//   · win_rate：复现 py_win_rate 的阶段1（枚举世界）+ 阶段2（逐候选 wr_f）。
-//   · argmax：取最大胜率；并列取坐标序最小（确定性，生产用随机，这里为可复现）。
-//
-// ⚠️ 本桥接**不被生产路径调用**。生产构建（无 AB_NATIVE_MERGED）时，
-//    它只是被编译进来；有宏时由 ab_native.cpp 的 extern 声明调用。
-// ==========================================================================
-namespace abnative_bridge {
-
-// ---------- 切分 clicks / clicks9（几何等价于生产的 dist<=1.5）----------
-static void split_frontier(const std::vector<int32_t>& cv, int w, int h,
-                           std::vector<Coord>& clicks,
-                           std::vector<Coord>& clicks9) {
-    const int W2 = w + 2;
-    clicks.clear();
-    clicks9.clear();
-    for (int y = 1; y <= h; ++y) {
-        for (int x = 1; x <= w; ++x) {
-            if (cv[(size_t)y * W2 + x] != 9) continue;   // 只看未开格
-            // Mirror cv2.distanceTransform: interior-only 8-neighborhood,
-            // any neighbor not in {9,10} implies distance <= 1.5.
-            bool near_non_obstacle = false;
-            for (int dy = -1; dy <= 1 && !near_non_obstacle; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    if (!dx && !dy) continue;
-                    int nx = x + dx, ny = y + dy;
-                    if (nx < 1 || nx > w || ny < 1 || ny > h) continue;
-                    int32_t v = cv[(size_t)ny * W2 + nx];
-                    if (v != 9 && v != 10) { near_non_obstacle = true; break; }
-                }
-            }
-            if (near_non_obstacle) clicks.emplace_back(x, y);
-            else clicks9.emplace_back(x, y);
-        }
-    }
-}
-
-// ---------- part_solve：复现 py_part_solve 的 cs 构建 + recurse ----------
-// 返回 solutions（每行是对应 clicks 的 0/1 解）；失败返回 false
-static bool run_part_solve(const std::vector<int32_t>& cv, int w, int h, int a,
-                           const std::vector<Coord>& clicks,
-                           int64_t solution_cap,
-                           std::vector<std::vector<Coord>>& click_groups,
-                           std::vector<std::vector<std::vector<int32_t>>>& solutions) {
-    click_groups.clear();
-    solutions.clear();
-    if (clicks.empty()) return false;
-
-    // Match production number5_1 grouping: cells sharing at least one opened
-    // constraint number belong to the same component; transitive merges are
-    // required when a new cell touches multiple existing components.
-    std::vector<std::set<Coord>> constraint_sets;
-    constraint_sets.reserve(clicks.size());
-    const int W2 = w + 2;
-    for (const auto& pos : clicks) {
-        std::set<Coord> se;
-        for (int u = pos.first - 1; u <= pos.first + 1; ++u)
-            for (int v = pos.second - 1; v <= pos.second + 1; ++v) {
-                const int32_t val = cv[(size_t)v * W2 + u];
-                if (val >= 1 && val <= 8) se.emplace(u, v);
-            }
-        constraint_sets.push_back(std::move(se));
-    }
-    std::vector<std::set<Coord>> group_sets;
-    for (size_t i = 0; i < clicks.size(); ++i) {
-        std::vector<size_t> hit;
-        for (size_t g = 0; g < group_sets.size(); ++g) {
-            bool overlap = false;
-            for (const auto& c : constraint_sets[i]) {
-                if (group_sets[g].count(c)) { overlap = true; break; }
-            }
-            if (overlap) hit.push_back(g);
-        }
-        if (hit.empty()) {
-            click_groups.push_back({clicks[i]});
-            group_sets.push_back(constraint_sets[i]);
-        } else {
-            const size_t keep = hit.front();
-            click_groups[keep].push_back(clicks[i]);
-            group_sets[keep].insert(constraint_sets[i].begin(), constraint_sets[i].end());
-            for (size_t hi = hit.size(); hi-- > 1;) {
-                const size_t src = hit[hi];
-                click_groups[keep].insert(click_groups[keep].end(),
-                                          click_groups[src].begin(), click_groups[src].end());
-                group_sets[keep].insert(group_sets[src].begin(), group_sets[src].end());
-                click_groups.erase(click_groups.begin() + (std::ptrdiff_t)src);
-                group_sets.erase(group_sets.begin() + (std::ptrdiff_t)src);
-            }
-        }
-    }
-    for (size_t g = 0; g < click_groups.size(); ++g) {
-        const auto& group = click_groups[g];
-        const int64_t per_group_cap = solution_cap > 0 ? solution_cap : 200000;
-        PartSolveCtx ctx(group, w, h, py::reinterpret_borrow<py::object>(Py_None), a,
-                         2000000, per_group_cap);
-        ctx.board = Board(cv.data(), cv.data() + (size_t)(h + 2) * (w + 2));
-        for (size_t k = 0; k < ctx.board.size(); ++k)
-            if (ctx.board.get(k) == 10) ++ctx.mine_count;
-        ctx.cs.resize(group.size());
-        for (size_t k = 0; k < group.size(); ++k) {
-            const auto& pos = group[k];
-            for (int u = pos.first - 1; u <= pos.first + 1; ++u)
-                for (int v = pos.second - 1; v <= pos.second + 1; ++v) {
-                    const int32_t val = ctx.board[(size_t)v * ctx.W2 + u];
-                    if (val >= 1 && val <= 8) ctx.cs[k].emplace_back(u, v);
-                }
-        }
-        ctx.recurse(0, 1);
-        if (ctx.aborted) return false;
-        if (ctx.solutions.empty()) return false;
-        solutions.push_back(std::move(ctx.solutions));
-    }
-    return !solutions.empty();
-
-#if 0  // legacy flat implementation retained only as historical reference
-    PartSolveCtx ctx(clicks, w, h, py::reinterpret_borrow<py::object>(Py_None), a);
-    const size_t ncell = (size_t)(h + 2) * (w + 2);
-    ctx.board = Board(cv.data(), cv.data() + ncell);
-    for (size_t k = 0; k < ncell; ++k)
-        if (ctx.board.get(k) == 10) ++ctx.mine_count;
-
-    // 构建 cs（照抄 py_part_solve:581-607）
-    std::unordered_map<uint64_t, std::vector<Coord>> cs_map;
-    for (const auto& ck : ctx.clicks) {
-        int i = ck.first, j = ck.second;
-        uint64_t key = ((uint64_t)(uint32_t)i << 32) | (uint32_t)(uint32_t)j;
-        auto& lst = cs_map[key];
-        for (int u = i - 1; u <= i + 1; ++u) {
-            for (int v = j - 1; v <= j + 1; ++v) {
-                int32_t val = ctx.board[(size_t)v * ctx.W2 + u];
-                if (1 <= val && val <= 8) lst.emplace_back(u, v);
-            }
-        }
-    }
-    ctx.cs.resize(ctx.clicks.size());
-    for (size_t k = 0; k < ctx.clicks.size(); ++k) {
-        uint64_t key = ((uint64_t)(uint32_t)ctx.clicks[k].first << 32) |
-                       (uint32_t)ctx.clicks[k].second;
-        auto it = cs_map.find(key);
-        if (it == cs_map.end()) return false;
-        ctx.cs[k] = it->second;
-    }
-    ctx.recurse(0, 1);
-    solutions = std::move(ctx.solutions);
-    return !solutions.empty();
-#endif
-}
-
-
-// 排序后的 clicks（供 argmax 后映射回原坐标）
-static std::vector<Coord> clicks_check_;
-// ---------- win_rate：复现 py_win_rate 的阶段1 + 阶段2 ----------
-// 输入：clicks / clicks9 / part_solve 的 solutions（= res_list 单组展开）
-// 输出：每候选的胜率（与 clicks 对齐）；失败返回 false
-static bool run_win_rate(const std::vector<int32_t>& cv, int w, int h, int a,
-                        const std::vector<Coord>& clicks,
-                        const std::vector<Coord>& clicks9,
-                        const std::vector<std::vector<Coord>>& click_groups,
-                         const std::vector<std::vector<std::vector<int32_t>>>& solutions,
-                        int64_t node_cap,
-                        std::vector<double>& out_res) {
-    out_res.clear();
-    const int W2 = w + 2;
-    const size_t ncell = (size_t)(h + 2) * (w + 2);
-
-    // num10 = 盘面中已标雷数
-    int64_t num10 = 0;
-    for (size_t k = 0; k < ncell; ++k) if (cv[k] == 10) ++num10;
-
-    WinRateCtx ctx(w, h, a, false, py::reinterpret_borrow<py::object>(Py_None), node_cap);
-
-    std::vector<double> cp(clicks.size(), 0.0);
-    std::vector<double> res(clicks.size(), 0.0);
-    size_t total = 0;
-    try {
-        // ---- 阶段 1：枚举所有完整局面（照抄 py_win_rate:1098-1160 语义）----
-        std::vector<Board> cell_value_list;
-        {
-            Board base(cv.data(), cv.data() + ncell);
-            const size_t ng = click_groups.size();
-            std::vector<int> index(ng, 0);
-            while (true) {
-                Board b = base;
-                int64_t mine_total = 0;
-                size_t flat = 0;
-                for (size_t gi = 0; gi < ng; ++gi) {
-                    const auto& row = solutions[gi][(size_t)index[gi]];
-                    for (size_t j = 0; j < click_groups[gi].size(); ++j, ++flat) {
-                        if (row[j] == 1) {
-                            int u = clicks[flat].first, v = clicks[flat].second;
-                            b[(size_t)v * W2 + u] = 10;
-                            ++mine_total;
-                        }
-                    }
-                }
-                int64_t rem = (int64_t)a - num10 - mine_total;
-                if (rem == 0) {
-                    cell_value_list.push_back(std::move(b));
-                } else if ((int64_t)a <= num10 + mine_total + (int64_t)clicks9.size()) {
-                    auto sizes = get_list_sizes(rem, rem, (int)clicks9.size());
-                    std::vector<int> index_l;
-                    for (int s2 : sizes) {
-                        ComboIter it((int)clicks9.size(), s2);
-                        while (it.next(index_l)) {
-                            Board nb = b;
-                            for (int j : index_l) {
-                                int u = clicks9[(size_t)j].first;
-                                int v = clicks9[(size_t)j].second;
-                                nb[(size_t)v * W2 + u] = 10;
-                            }
-                            cell_value_list.push_back(std::move(nb));
-                        }
-                    }
-                }
-                // 里程表进位
-                size_t p = 0;
-                while (p < ng) {
-                    if (++index[p] < (int)solutions[p].size()) break;
-                    index[p] = 0;
-                    ++p;
-                }
-                if (p >= ng) break;
-            }
-        }
-        total = cell_value_list.size();
-        if (total == 0) return false;
-
-        // ---- 阶段 2 前置：算每候选 safety（cp），并稳定降序排序 ----
-        for (size_t k = 0; k < clicks.size(); ++k) {
-            int u = clicks[k].first, v = clicks[k].second;
-            size_t cnt10 = 0;
-            for (const auto& b : cell_value_list)
-                if (b[(size_t)v * W2 + u] == 10) ++cnt10;
-            cp[k] = 1.0 - (double)cnt10 / (double)total;
-        }
-        std::vector<Coord> sorted_clicks = clicks;
-        std::vector<double> sorted_cp = cp;
-        {
-            std::vector<size_t> order(clicks.size());
-            for (size_t k = 0; k < clicks.size(); ++k) order[k] = k;
-            std::stable_sort(order.begin(), order.end(),
-                             [&](size_t p, size_t q) { return cp[p] > cp[q]; });
-            for (size_t k = 0; k < clicks.size(); ++k) {
-                sorted_clicks[k] = clicks[order[k]];
-                sorted_cp[k] = cp[order[k]];
-            }
-        }
-        clicks_check_ = sorted_clicks;   // 记录排序后顺序，供 argmax 映射回坐标
-
-        // ---- 阶段 2：逐候选 wr_f ----
-        std::vector<double> res_sorted(clicks.size(), 0.0);
-        double running_max = 0.0;
-        bool has_max = false;
-        double depth_limit = 200.0 / (double)clicks.size();
-        for (size_t i = 0; i < clicks.size(); ++i) {
-            const int u = sorted_clicks[i].first, v = sorted_clicks[i].second;
-            std::vector<std::vector<Board>> gb_all;
-            std::unordered_map<int, size_t> val_slot;
-            for (const auto& b : cell_value_list) {
-                if (b[(size_t)v * W2 + u] != 10) {
-                    Board nb = b;
-                    int c9, c10;
-                    cell_around(nb, w, h, W2, u, v, c9, c10);
-                    nb[(size_t)v * W2 + u] = c10;
-                    auto it = val_slot.find(c10);
-                    if (it == val_slot.end()) {
-                        val_slot.emplace(c10, gb_all.size());
-                        gb_all.emplace_back();
-                        gb_all.back().push_back(std::move(nb));
-                    } else {
-                        gb_all[it->second].push_back(std::move(nb));
-                    }
-                }
-            }
-            double win_p = 0.0;
-            for (size_t g = 0; g < gb_all.size(); ++g) {
-                double trans_prob = (double)gb_all[g].size() / (double)total;
-                std::vector<Coord> new_clicks = sorted_clicks;
-                new_clicks.erase(new_clicks.begin() + (std::ptrdiff_t)i);
-                double win_r = wr_f(ctx, std::move(new_clicks),
-                                    std::move(gb_all[g]), 1, depth_limit, nullptr);
-                win_p += trans_prob * win_r;
-            }
-            res_sorted[i] = win_p;
-            running_max = has_max ? std::max(running_max, win_p) : win_p;
-            has_max = true;
-        }
-        out_res = res_sorted;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-
-}  // namespace abnative_bridge
-
-// DIAGNOSTIC buffer: last decision reason (filled by abnative_decide).
-static char g_last_decide_reason[64] = {0};
-
-// ==========================================================================
-// 对外纯 C 接口（供 ab_native.cpp 以 extern 声明调用）
-// ==========================================================================
-// 生产决策入口：给定当前盘面，走 decision_layer::decide_impl —— 那是与
-// Python number5_1 做过 6/6 双实现输出比对（含并列集逐坐标）的同一份 C++ 逻辑。
-//
-// 返回值：
-//   1 = 成功（out_x/out_y 有效）
-//   0 = 无可用决策（调用方降级）
-//   2 = 预检/内存闸门拒绝（调用方降级）
-//
-// ⚠️ 历史：旧桥接（abnative_bridge::run_part_solve / run_win_rate 直连）
-//    在真实局面存在分组前未约束递归、候选集口径漂移等问题，已不再被本函数调用。
-extern "C" int abnative_decide(const int32_t* cv, int w, int h, int a,
-                    int64_t node_cap, int* out_x, int* out_y,
-                    int* out_total_worlds, double* out_best_rate) {
-    if (out_x) *out_x = -1;
-    if (out_y) *out_y = -1;
-    if (out_total_worlds) *out_total_worlds = 0;
-    if (out_best_rate) *out_best_rate = 0.0;
-    if (cv == nullptr || w <= 0 || h <= 0) return 0;
-
-#ifdef MSW_TRIAL_DECIDE
-    // Reuse the byte-identical input array without copying.
-    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board(
-        {(py::ssize_t)(h + 2), (py::ssize_t)(w + 2)});
-    std::memcpy(board.mutable_data(), cv,
-                sizeof(int32_t) * (size_t)(h + 2) * (size_t)(w + 2));
-    py::dict r;
-    try {
-        r = decision_layer::decide_impl(board, a, w, h,
-                                        node_cap > 0 ? node_cap : 2000000,
-                                        decision_layer::DEFAULT_MEM_BUDGET,
-                                        /*is_play*/ true);
-    } catch (const std::exception&) {
-        return 0;   // any native failure -> caller falls back safely
-    }
-    // DIAGNOSTIC: expose the decided reason so callers can count which path
-    // actually fired (certain_safe / limitation / win_rate / memory_gate).
-    if (g_last_decide_reason != nullptr) {
-        std::string s = "unknown";
-        try { s = py::str(r["reason"]); } catch (...) {}
-        std::snprintf(g_last_decide_reason, sizeof(g_last_decide_reason), "%s", s.c_str());
-    }
-    if (out_total_worlds) *out_total_worlds = (int)py::int_(r["world_upper"]);
-    if (out_best_rate) *out_best_rate = (double)py::float_(r["confidence"]);
-    const int x = (int)py::int_(r["x"]);
-    const int y = (int)py::int_(r["y"]);
-    if (x < 1 || y < 1) return 0;
-    if (out_x) *out_x = x;
-    if (out_y) *out_y = y;
-    return 1;
-#else
-    // Without MSW_TRIAL_DECIDE the merged build has no decision logic
-    // available; fail closed so callers take their normal fallback.
-    return 0;
-#endif
-}
-
-#if 0  // legacy bridge kept only as historical reference (no longer called)
-extern "C" int abnative_decide_LEGACY(const int32_t* cv, int w, int h, int a,
-                    int64_t node_cap, int* out_x, int* out_y,
-                    int* out_total_worlds, double* out_best_rate) {
-    if (out_x) *out_x = -1;
-    if (out_y) *out_y = -1;
-    if (out_total_worlds) *out_total_worlds = 0;
-    if (out_best_rate) *out_best_rate = 0.0;
-
-    std::vector<int32_t> cel(cv, cv + (size_t)(h + 2) * (w + 2));
-    std::vector<Coord> clicks, clicks9;
-    abnative_bridge::split_frontier(cel, w, h, clicks, clicks9);
-    if (clicks.empty()) return 0;
-    std::vector<std::vector<Coord>> click_groups;
-    std::vector<std::vector<std::vector<int32_t>>> sols;
-    if (!abnative_bridge::run_part_solve(cel, w, h, a, clicks, node_cap,
-                                         click_groups, sols)) return 0;
-    // Python rewrites clicks by flattening click_list after component merges.
-    // Preserve that exact order so solution columns map to coordinates.
-    std::vector<Coord> ordered_clicks;
-    for (const auto& group : click_groups)
-        ordered_clicks.insert(ordered_clicks.end(), group.begin(), group.end());
-    if (ordered_clicks.empty()) return 0;
-
-    // The product of group solution counts is the world count consumed by
-    // run_win_rate.  Apply the same conservative stage-2 gate before that
-    // function allocates any complete-world boards.  Saturating multiplication
-    // is required: overflow must never turn an unsafe request into "allowed".
-    int64_t world_upper = 1;
-    for (const auto& group : sols) {
-        const int64_t n = static_cast<int64_t>(group.size());
-        if (n <= 0 || world_upper > INT64_MAX / n) {
-            world_upper = INT64_MAX;
-            break;
-        }
-        world_upper *= n;
-    }
-    const int64_t candidates = 1 + static_cast<int64_t>(ordered_clicks.size()) +
-                               static_cast<int64_t>(clicks9.size());
-    // Handoff world_cap is an enumeration cap, not only a wr_f node cap.
-    // Reject before materializing complete-world Boards when the grouped
-    // product already exceeds the experiment's declared bound.
-    if (node_cap > 0 && world_upper > node_cap) {
-        if (out_total_worlds) *out_total_worlds = -1;
-        return 2;
-    }
-    const auto preflight = decision_layer::estimate_mem_impl(
-        world_upper, candidates, 1536LL * 1024LL * 1024LL);
-    if (!preflight.allowed) {
-        // -1 is a diagnostic sentinel: caller still takes its normal safe
-        // fallback, but the result cannot be mistaken for a solver failure.
-        if (out_total_worlds) *out_total_worlds = -1;
-        return 2;
-    }
-
-    std::vector<double> rates;
-    if (!abnative_bridge::run_win_rate(cel, w, h, a, ordered_clicks, clicks9,
-                                       click_groups, sols,
-                                      node_cap, rates)) return 0;
-    if (rates.empty()) return 0;
-
-    const auto& order = abnative_bridge::clicks_check_;
-    if (order.size() != rates.size()) return 0;
-    size_t best = 0;
-    for (size_t i = 1; i < rates.size(); ++i)
-        if (rates[i] > rates[best]) best = i;
-    if (out_x) *out_x = order[best].first;
-    if (out_y) *out_y = order[best].second;
-    if (out_best_rate) *out_best_rate = rates[best];
-    return 1;
-}
-#endif  // legacy bridge (historical reference only)
-
-// DIAGNOSTIC accessor: reason string of the most recent abnative_decide call.
-extern "C" const char* abnative_last_reason() {
-#ifdef MSW_TRIAL_DECIDE
-    return g_last_decide_reason;
-#else
-    return "";
-#endif
-}
-
-// ==========================================================================
-// BATCH decision entry: production clicks ALL certain-safe cells in ONE
-// decision round (probability.py:1171-1189 appends every res>=0.99 cell to
-// `pos`).  Per-cell round-trips inflated decisions/game from 12 to 159
-// (13x) -> 48x slower and ~10pp lower win rate.
-//
-// Writes up to `cap` (x,y) 1-based pairs into out_xy (stride 2) and returns
-// the count; returns 0 when no batch is available (caller then uses the
-// single-cell abnative_decide path).
-// ==========================================================================
-extern "C" int abnative_decide_batch(const int32_t* cv, int w, int h, int a,
-                                     int64_t node_cap, int* out_xy, int cap) {
-#ifdef MSW_TRIAL_DECIDE
-    if (cv == nullptr || w <= 0 || h <= 0 || out_xy == nullptr || cap <= 0)
-        return 0;
-    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board(
-        {(py::ssize_t)(h + 2), (py::ssize_t)(w + 2)});
-    std::memcpy(board.mutable_data(), cv,
-                sizeof(int32_t) * (size_t)(h + 2) * (size_t)(w + 2));
-    py::dict r;
-    try {
-        r = decision_layer::decide_impl(board, a, w, h,
-                                        node_cap > 0 ? node_cap : 2000000,
-                                        decision_layer::DEFAULT_MEM_BUDGET,
-                                        /*is_play*/ true);
-    } catch (const std::exception&) {
-        return 0;
-    }
-    const std::string reason = py::str(r["reason"]);
-    if (reason != "certain_safe") return 0;   // batch only for certain-safe
-    py::list tied = r["tied"].cast<py::list>();
-    int n = 0;
-    for (auto item : tied) {
-        if (n >= cap) break;
-        auto t = item.cast<py::tuple>();
-        out_xy[2 * n] = (int)py::int_(t[0]);
-        out_xy[2 * n + 1] = (int)py::int_(t[1]);
-        ++n;
-    }
-    return n;
-#else
-    (void)cv; (void)w; (void)h; (void)a; (void)node_cap; (void)out_xy; (void)cap;
-    return 0;
-#endif
-}
-#endif  // AB_NATIVE_MERGED (bridge)

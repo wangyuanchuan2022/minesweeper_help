@@ -33,16 +33,18 @@ class TestCppExportContract(unittest.TestCase):
     def _module_block(self):
         """截取生产 PYBIND11_MODULE 块。
 
-        不能用括号配平：m.def 的字符串参数里含 '{'，且块内有
-        #ifdef/#else/#endif 预处理行，配平会越过块尾。
-        改用「PYBIND11_MODULE 起 → 后随第一个 '#endif  // AB_NATIVE_MERGED'
-        （模块入口的收尾标记）」截断。
+        ⚠️ 2026-11-10 变更：原实现用「后随第一个 '#endif  // AB_NATIVE_MERGED'
+        作截断锚点」。该锚点随 ab_native 坏链路整体删除（用户裁决）而消失，
+        现改用「PYBIND11_MODULE 起 → 后随第一个『顶层右花括号 + 行尾』」截断。
+
+        不能用括号配平：m.def 的字符串参数里含 '{'，配平会越过块尾。
+        改用行首判定：模块块的最后一行是不带缩进的 '}'。
         """
         lines = self.text.splitlines()
         start = next(i for i, l in enumerate(lines) if l.startswith("PYBIND11_MODULE"))
-        for i in range(start, len(lines)):
-            if lines[i].startswith("#endif") and "AB_NATIVE_MERGED" in lines[i]:
-                return "\n".join(lines[start:i])
+        for i in range(start + 1, len(lines)):
+            if lines[i] == "}":          # 顶层右花括号，且独占一行
+                return "\n".join(lines[start:i + 1])
         return "\n".join(lines[start:])
 
     def test_export_surface_is_minimal(self):

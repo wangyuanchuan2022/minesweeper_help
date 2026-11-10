@@ -47,10 +47,12 @@ def load_mscore_json():
 
 
 # 宏区块（行号区间）——用于给零调用函数打「结构性」标签
+# 行号区间仅作标签用途（2026-11-10 后 AB_NATIVE_MERGED 桥接块已整块删除，
+# 保留空表项会让 macro_of() 给已不存在的行打错标签，故按当前源码重设）。
+# 说明：这里只用于把零调用函数归类到「Python 不可达 / trial 块内 / 生产可达」，
+# 不影响覆盖率分母与分子。
 MACRO_BLOCKS = [
-    ("MSW_TRIAL_DECIDE", 1567, 2979),
-    ("AB_NATIVE_MERGED", 3035, 3538),
-    ("#if 0 legacy", 3411, 3482),
+    ("MSW_TRIAL_DECIDE", 1567, 2968),
 ]
 
 
