@@ -1962,19 +1962,11 @@ class MyMainWindow(QMainWindow, Ui_MainWindow):
         self.set_solver_status(
             f"自动运行中 · 已完局 {played} · 赢局 {win} · 胜率 {rate:0.2f}%"
         )
-
-        # ---- 批 A：热力图格 hover 预览（只挂未开且有真实概率的格）----
-        for j in range(self.h):
-            for i in range(self.w):
-                if (i + 1, j + 1) not in prob:
-                    continue
-                btn = self.heatmap_btn_list[j][i]
-                self._attach_preview(
-                    btn,
-                    lambda _button, x=i + 1, y=j + 1: (
-                        self._preview_payload_for_heatmap_cell(x, y)
-                    ),
-                )
+        # P0-3 / 用户铁律：Auto 界面只显示热力图，**不接状态转移预览**。
+        # 旧逻辑在这里给所有有 prob 的格挂 _attach_preview，hover 会同步
+        # 调用 C++ transitions_for；缓存未命中时最多重建 20 万世界并冻结
+        # GUI 主线程（review2 architect P0-3）。帮助页的 7x7 预览保留在
+        # 帮助页自身的按钮上，不受本处影响。
 
     def info(self, s):
         # 提示info

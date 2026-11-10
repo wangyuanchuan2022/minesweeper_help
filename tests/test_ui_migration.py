@@ -285,12 +285,21 @@ class TestPopupWiring(unittest.TestCase):
                          "切页必须关掉顶层浮层")
 
     def test_heatmap_cell_wiring_uses_real_prob(self):
+        """热力图格用真实 prob 构造 payload，且 Auto 页不挂预览（用户铁律）。
+
+        P0-3 修复留痕（review2 architect P0-3）：旧断言
+        `assertIn(btn, _preview_buttons)` 验证的是「Auto 页给热力图格挂
+        hover 预览」，而这正是用户明确要求取消的接线（Auto 只显示热力图）。
+        原判据 L294-298（payload 来自真实 prob、transitions 为 None）
+        逐字保留；L293 改为断言新语义：Auto 页按钮不在预览集合里。
+        """
         cv = np.full((self.win.h + 2, self.win.w + 2), 9, dtype="int32")
         self.win.update_heatmap({"prob": {(3, 4): 0.31}, "best": (3, 4),
                                  "best_conf": 0.31, "total": 5.0,
                                  "cell_value": cv, "played": 1, "win": 0})
         btn = self.win.heatmap_btn_list[3][2]     # (i,j)=(3,4) → btn[j-1][i-1]
-        self.assertIn(btn, self.win._preview_buttons)
+        self.assertNotIn(btn, self.win._preview_buttons,
+                         "Auto 界面不得接状态转移预览（P0-3 / 用户铁律）")
         payload = self.win._preview_payload_for_heatmap_cell(3, 4)
         self.assertEqual(payload["cell"], (3, 4))
         self.assertAlmostEqual(payload["value"], 0.31)
