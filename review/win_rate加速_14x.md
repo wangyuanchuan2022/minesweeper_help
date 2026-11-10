@@ -129,7 +129,7 @@ class Board {
 
 ### 4.1 输出指纹逐位一致
 
-`bench/bench_wr_speed.py --compare`：33 个用例全部 `✅ OK`，
+`bench/bench_wr_speed.py --compare`：33 个用例全部 `✅ OK`，（已随 win_rate API 删除）
 对比 `res` 数组的 MD5 校验和。
 
 ### 4.2 增量哈希不变式证明
@@ -172,11 +172,11 @@ class Board {
 
 ```bash
 # 建立基线（回到 MD5 版需 git checkout 19d0d17~1 -- cpp/mscore.cpp）
-python bench/bench_wr_speed.py --label before
+python bench/bench_wr_speed.py --label before（已随 win_rate API 删除）
 
 # 测当前版本
-python bench/bench_wr_speed.py --label after
-python bench/bench_wr_speed.py --compare before after
+python bench/bench_wr_speed.py --label after（已随 win_rate API 删除）
+python bench/bench_wr_speed.py --compare before after（已随 win_rate API 删除）
 
 # 增量哈希不变式（必须全 PASS 才可信）
 python bench/verify_incremental_hash.py

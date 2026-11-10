@@ -88,7 +88,7 @@ shrunk, wr_nodes)`。B 线评测器每次调用后读 `shrunk` 累加。
 
 ## 三、这与合成用例的验证结果不矛盾
 
-`bench/verify_adaptive_depth_synthetic.py` 里 G10（total=1024, n_cand=20,
+`bench/verify_adaptive_depth_synthetic.py`（已随 win_rate API 删除） 里 G10（total=1024, n_cand=20,
 cost=20480）在 ad=1 时**确实触发**：`depth_limit` 10.000 → 4.883、
 `wr_nodes` 1,241,184 → 47,016（26x）、输出改变。
 
@@ -144,6 +144,6 @@ sha256sum utils/mscore.cp310-win_amd64.pyd
 # 实测 11/11 一致
 
 # B 线（400 局，含 shrunk 统计）
-python bench/eval_depth_policy_games.py --compare base ad1 --games 400 \
+python bench/eval_depth_policy_games.py --compare base ad1 --games 400 \（已随 win_rate API 删除）
        --seed 20269000 --out state/ab/depthgames_shrunk.json
 ```

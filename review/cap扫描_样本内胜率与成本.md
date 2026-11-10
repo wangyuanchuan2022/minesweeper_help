@@ -49,7 +49,7 @@ gs = ab.gate_stats(_prod_before)            # 差值
 
 ## 零之二、受控校验（证明 node_cap 边界行为正确）
 
-`bench/verify_nodecap_controlled.py` 用**已知 424,114 节点的用例[13]**：
+`bench/verify_nodecap_controlled.py`（已随 win_rate API 删除） 用**已知 424,114 节点的用例[13]**：
 
 | cap | 预期 | 实测 | 原生函数收到的 cap |
 |---:|---|---|---:|
@@ -171,16 +171,16 @@ gs = ab.gate_stats(_prod_before)            # 差值
 
 ```bash
 # 受控校验（必须先过：已知 424,114 节点用例上 10万命中、200万不命中）
-python bench/verify_nodecap_controlled.py
+python bench/verify_nodecap_controlled.py（已随 win_rate API 删除）
 
 # 归属正确性（连续两局 cap=1 不污染）
 python bench/verify_nodecap_attribution.py
 
 # 接线核验（node_cap 是否真传入生产）
-python bench/verify_node_cap_wiring.py --games 6 --arm baseline --node-cap 1
+python bench/verify_node_cap_wiring.py --games 6 --arm baseline --node-cap 1（已随 win_rate API 删除）
 
 # 生产真实节点数分布
-python bench/measure_real_nodes.py --games 10 --arm baseline
+python bench/measure_real_nodes.py --games 10 --arm baseline（已随 win_rate API 删除）
 
 # node_cap 扫描（生产参数）
 python bench/sweep_cap.py --axis node --values 10000 100000 2000000 \
