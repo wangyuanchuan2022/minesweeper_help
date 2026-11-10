@@ -18,8 +18,8 @@
 | A 仿真、seed、首点 | `sim/minesweeper_sim.py`、`sim/eval_harness.py`、`bench/ab_policy.py`、`ab_first_click.py`、`ab_first_click_corner.py`；P2 正式/复现 JSON 与 UTF-16 日志 | reviewed | 仅策略级同 seed 配对，非相同雷位配对；未重跑 4000×2 局 |
 | B 世界枚举、V*、flood、C++ | `arms_lookahead.py`、`compare_2ply_vs_winrate.py`、`utils/probability.py`、`cpp/mscore.cpp`；`verify_exact_cpp.py`、`verify_after_click_semantics.py` | reviewed | Python/C++ 逐位相等不是独立正确性；完整 V* 已知答案仍缺；未重编二进制 |
 | C F、regret、min-max、LOO | `dump_metric_matrix_ext.py`、`merge_and_eval_cases.py`、`eval_heuristic_metrics.py`、`optimize_weights.py`、`fast_loo.py`、`search_metric_subsets.py`；mm_discovery/mm_full | reviewed | 发现 P0/P1 状态错配；不读取未评估的 ext2 验证集，避免污染冻结验证 |
-| D 参数、hook、预算、计时 | `sweep_cap.py`、`eval_depth_policy_games.py`、`timing_protocol.py`、`report_repeat_slowdown.py`、`verify_sampler_fix.py`；cap/B 线报告 | reviewed | 未复现耗时漂移根因；只做静态与既有结果审计 |
-| E 原生加速与性能 | `compare_native.py`、`bench_wr_speed.py`、`instrument_walltime.py`、`cpp/build.bat`；14.12x 与 2000 局报告 | reviewed | 未在统一新进程协议下复测 14.12x；视觉时序另有合成证据 |
+| D 参数、hook、预算、计时 | `sweep_cap.py`、`eval_depth_policy_games.py`（已随 win_rate API 删除）、`timing_protocol.py`、`report_repeat_slowdown.py`、`verify_sampler_fix.py`；cap/B 线报告 | reviewed | 未复现耗时漂移根因；只做静态与既有结果审计 |
+| E 原生加速与性能 | `compare_native.py`、`bench_wr_speed.py`（已随 win_rate API 删除）、`instrument_walltime.py`、`cpp/build.bat`；14.12x 与 2000 局报告 | reviewed | 未在统一新进程协议下复测 14.12x；视觉时序另有合成证据 |
 | F OCR、视觉、UI 像素 | `utils/vision.py`、`verify_vision_*`、`verify_ui_*`；UI/视觉报告 | reviewed | 模板贴回/随机板/offscreen 并非真实截图或实机；未实机渲染 |
 | G 启动、完整性、续跑、复现 | `run_winrate_suite.cmd`、`verify_stage_output.py`、`verify_launcher_three_states.py`、`verify_journal_resume.py`、`record_run_manifest.py`、state/ab 与日志 | reviewed | 不运行会写文件的启动/续跑脚本；检查实现与已存结果 |
 
@@ -37,7 +37,7 @@
 
 ### P1 — 通用胜率与若干实验会静默缩小异常样本分母【bench 完整性缺陷】
 
-- **位置**：`sim/eval_harness.py:407-411,481-482,555-559`；`bench/ab_policy.py:449-454,606-610`；`bench/ab_first_click.py:97-103,177-190,208-212,256-259`；`bench/pool_first_click.py:46-50`；`bench/eval_depth_policy_games.py:142-151,158-166`。
+- **位置**：`sim/eval_harness.py:407-411,481-482,555-559`；`bench/ab_policy.py:449-454,606-610`；`bench/ab_first_click.py:97-103,177-190,208-212,256-259`；`bench/pool_first_click.py:46-50`；`bench/eval_depth_policy_games.py（已随 win_rate API 删除）:142-151,158-166`。
 - **问题**：异常记录被排除出胜率；首点旧实验仍写 `complete:true`，池化器再跳过异常对；B 线甚至 `except Exception: continue`，且不检查 `r["error"]`。
 - **影响面**：历史通用胜率、早期首点合并与 B 线完成数不是请求样本的完整结果，不能与 P2 新版完整门禁等价比较。P2 新版 `ab_first_click_corner.py:121-145,208-210,225-263` 已修复该问题。
 - **置信度**：高。**【改进点】**：按请求 seed 建完整配对键，异常单列未覆盖；非完整禁止 complete/正式胜率，退出非零。最小验证：连续 3 个 seed 中第 2 个异常，输出必须 requested=3/completed=2/complete=false 且不得给正式 p 值。
@@ -51,7 +51,7 @@
 
 ### P1 — 计时协议把部分失败当成功测量；速度结论缺完整身份链【测量/复现缺陷】
 
-- **位置**：`bench/timing_protocol.py:51-54,80-105,133-153`；`bench/bench_wr_speed.py:70-85,109-147`；`bench/record_run_manifest.py:49-85`。
+- **位置**：`bench/timing_protocol.py:51-54,80-105,133-153`；`bench/bench_wr_speed.py（已随 win_rate API 删除）:70-85,109-147`；`bench/record_run_manifest.py:49-85`。
 - **问题**：新进程函数不检查 `returncode`，只要 stderr 出现计时便纳入；交错函数无输出返回 `{}`，新进程无输出返回 `None`，无显式 skipped 原因。`bench_wr_speed` 对全部 33 用例不检查集合相等，只检查交集；旧 14.12x 是同进程测量，与后制定协议冲突。manifest 无编译器、构建命令、所有 bench 脚本和输入数据哈希。
 - **影响面**：14.12x 不应按当前强制协议作为可复现性能结论；2000 局没有改前二进制的同协议对照，报告本身也正确保留此边界。部分子进程失败可产生看似有效的性能数字。
 - **【改进点】**：returncode/输出/请求重复数/用例集合硬门；每配置独立进程并保存失败项；编译器版本、编译参数、依赖、脚本和输入全量哈希入 manifest。最小验证：注入 exit 3 且带 `__ELAPSED__` 的子进程必须整项 unreliable，不允许出中位数。

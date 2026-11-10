@@ -94,7 +94,7 @@ Couëtoux 原文只保证首击格安全，并明确其他版本才保证邻域�
 ### P1-7：实验批异常局静默缩小胜率分母；计时协议不查子进程退出码
 
 - `sim/eval_harness.py:407-411` 异常局返回带 `error` 的记录，`:555-559` 把它们排除出胜率分母（`n = len(ok)`）；`bench/ab_policy.py:449-454` 同一模式。历史通用胜率、早期首点合并与 B 线完成数不是请求样本的完整结果，不能与 P2 新版完整门禁（`bench/ab_first_click_corner.py:121-145` 已修复该问题）等价比较。
-- `bench/timing_protocol.py:92-93` 只要 stderr 出现 `__ELAPSED__` 就把计时入选，不检查 returncode——失败子进程可贡献“看似有效”的计时；`bench/bench_wr_speed.py:70-85` 只检查用例交集不做集合相等。14.12x 在按新进程协议复测并补 returncode/集合硬门前，不应作为可复现性能结论引用。
+- `bench/timing_protocol.py:92-93` 只要 stderr 出现 `__ELAPSED__` 就把计时入选，不检查 returncode——失败子进程可贡献“看似有效”的计时；`bench/bench_wr_speed.py（已随 win_rate API 删除）:70-85` 只检查用例交集不做集合相等。14.12x 在按新进程协议复测并补 returncode/集合硬门前，不应作为可复现性能结论引用。
 
 **改进：** 按请求 seed 建完整配对键，异常单列未覆盖，非完整禁止出正式胜率与 p 值；计时/速度基准加 returncode、输出格式与用例集合硬门，每配置独立进程并保存失败项。最小验证：连续 3 个 seed 中第 2 个异常时输出必须 requested=3/completed=2/complete=false；注入 exit 3 且带 `__ELAPSED__` 的子进程必须整项判不可靠。
 

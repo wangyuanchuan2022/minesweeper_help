@@ -1,0 +1,136 @@
+{
+  "schema_version": "1",
+  "report": "D:\\python\\projects\\minesweeper_help\\review\\review-20261109\\code-reviewer.md",
+  "at": "",
+  "total": 13,
+  "tally": {
+    "anchored": 12,
+    "anchored-fuzzy": 0,
+    "drifted": 0,
+    "refiled": 1,
+    "ambiguous": 0,
+    "unanchored": 0,
+    "no-evidence": 0,
+    "unverifiable": 0
+  },
+  "critical_high_unanchored": 0,
+  "findings": [
+    {
+      "claim_path": "cpp/mscore.cpp",
+      "claim_line": 3164,
+      "raw_index": 44,
+      "evidence": "if (mn <= 8) { counts[ti][mn]++; }",
+      "severity": "CRITICAL",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "cpp/mscore.cpp",
+      "claim_line": 3499,
+      "raw_index": 52,
+      "evidence": "if (mn2 <= 8) cnts[ti][mn2]++;",
+      "severity": "CRITICAL",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "cpp/mscore.cpp",
+      "claim_line": 2536,
+      "raw_index": 60,
+      "evidence": "const auto mem = estimate_mem_impl(world_upper, candidates, mem_budget);",
+      "severity": "CRITICAL",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "cpp/mscore.cpp",
+      "claim_line": 4564,
+      "raw_index": 68,
+      "evidence": "r = decision_layer::decide_impl(board, a, w, h,",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/probability.py",
+      "claim_line": 1056,
+      "raw_index": 76,
+      "evidence": "wr_threshold=_auto_wr_threshold,",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 1694,
+      "raw_index": 84,
+      "evidence": "9, self._conf(pos_dict),",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 88,
+      "raw_index": 92,
+      "evidence": "(\"C++ 三层决策\", VALUE_KIND_EXACT),",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 1466,
+      "raw_index": 100,
+      "evidence": "f\"当前格非雷的概率: {conf_text} ｜ \"",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 880,
+      "raw_index": 108,
+      "evidence": "return (payload.get(\"transitions\"),",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 1305,
+      "raw_index": 116,
+      "evidence": "_iter += 1",
+      "severity": "MEDIUM",
+      "verdict": "refiled",
+      "detail": "evidence uniquely matches utils/probability.py; claim should be refiled"
+    },
+    {
+      "claim_path": "ui/preview_popup.py",
+      "claim_line": 890,
+      "raw_index": 124,
+      "evidence": "self._show_preview()",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "cpp/mscore.cpp",
+      "claim_line": 1706,
+      "raw_index": 132,
+      "evidence": "static constexpr int MAX_WORDS = 10;      // 640 位；30x16+外框=576 位 ⇒ 9 字够",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "utils/decide_trace.py",
+      "claim_line": 89,
+      "raw_index": 140,
+      "evidence": "if _seq[0] % 200 == 0 and os.path.exists(_PATH):",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    }
+  ]
+}

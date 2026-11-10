@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>扫雷助手 · 简约现代 UI 原型</title>
+  <style>
+    :root {
+      --color-canvas: #F3F5F7;
+      --color-surface: #FFFFFF;
+      --color-surface-subtle: #E9EDF1;
+      --color-ink: #182128;
+      --color-ink-muted: #596670;
+      --color-border: #CDD5DC;
+      --color-border-strong: #83919C;
+      --color-accent: #006D77;
+      --color-accent-hover: #00555D;
+      --color-focus: #A13D00;
+      --color-danger: #B42318;
+      --color-warning: #875B00;
+      --color-success: #176B4D;
+      --color-unknown: #68727B;
+      --sidebar-width: 216px;
+      --cell-base: 32px;
+      --cell-zoom: 1;
+      --cell-size: calc(var(--cell-base) * var(--cell-zoom));
+      --radius-card: 12px;
+      --radius-control: 8px;
+      --font-ui: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+      --font-mono: "IBM Plex Mono", "Cascadia Mono", monospace;
+    }
+
+    html { box-sizing: border-box; }
+    *, *::before, *::after { box-sizing: inherit; }
+    html { min-width: 320px; scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--color-canvas);
+      color: var(--color-ink);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, select, input { min-height: 40px; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .52; }
+    a { color: var(--color-accent); }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 4px; font-size: 28px; line-height: 1.3; letter-spacing: -.02em; }
+    h2 { margin-bottom: 8px; font-size: 18px; line-height: 1.45; }
+    h3 { margin-bottom: 8px; font-size: 15px; }
+    svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    [hidden] { display: none !important; }
+    :focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; box-shadow: 0 0 0 2px var(--color-surface); }
+    .mono, .metric-value, .decision-value, .candidate-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    .muted { color: var(--color-ink-muted); }
+    .small { font-size: 12px; line-height: 1.5; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .skip-link { position: fixed; z-index: 100; top: 8px; left: 8px; padding: 8px 16px; transform: translateY(-160%); background: var(--color-surface); border: 2px solid var(--color-focus); border-radius: 8px; }
+    .skip-link:focus { transform: translateY(0); }
+
+    .app-shell { min-height: 100vh; }
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      z-index: 20;
+      width: var(--sidebar-width);
+      display: flex;
+      flex-direction: column;
+      padding: 24px 16px 16px;
+      background: var(--color-surface);
+      border-right: 1px solid var(--color-border);
+    }
+    .brand { display: flex; gap: 12px; align-items: center; padding: 0 8px 24px; }
+    .brand-mark { width: 40px; height: 40px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 10px; background: var(--color-accent); color: white; }
+    .brand-mark svg { width: 23px; height: 23px; }
+    .brand-name { display: block; font-weight: 700; font-size: 17px; }
+    .brand-subtitle { display: block; color: var(--color-ink-muted); font-size: 12px; }
+    .nav-label { margin: 0 8px 8px; color: var(--color-ink-muted); font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+    .primary-nav { display: grid; gap: 4px; }
+    .nav-button { width: 100%; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--color-ink-muted); text-align: left; }
+    .nav-button:hover { background: var(--color-canvas); color: var(--color-ink); }
+    .nav-button[aria-current="page"] { background: #E4F0F1; color: var(--color-accent); font-weight: 700; }
+    .nav-button svg { flex: 0 0 auto; }
+    .support-nav { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--color-border); }
+    .sidebar-footer { margin-top: auto; padding: 16px 8px 0; }
+    .prototype-note { padding: 12px; background: var(--color-canvas); border-radius: 8px; color: var(--color-ink-muted); font-size: 12px; line-height: 1.55; }
+
+    .app-main { min-height: 100vh; margin-left: var(--sidebar-width); }
+    .topbar { min-height: 88px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 32px 12px; }
+    .page-context { color: var(--color-ink-muted); font-size: 12px; }
+    .topbar-actions { display: flex; align-items: center; gap: 12px; }
+    .connection-badge { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-ink-muted); font-size: 12px; white-space: nowrap; }
+    .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-unknown); }
+    .mobile-menu { display: none; }
+    .scenario-control { display: flex; align-items: center; gap: 8px; color: var(--color-ink-muted); font-size: 12px; }
+    .scenario-control select { max-width: 174px; padding: 6px 28px 6px 10px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-ink); }
+
+    .status-wrap { padding: 0 32px; }
+    .solver-status { display: grid; grid-template-columns: minmax(190px, auto) minmax(200px, 1fr) auto auto; align-items: center; gap: 20px; padding: 14px 16px; background: var(--color-surface); border: 1px solid var(--color-border); border-left: 4px solid var(--color-accent); border-radius: var(--radius-card); }
+    .status-primary { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .status-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; background: #E4F0F1; color: var(--color-accent); }
+    .status-title { display: block; font-weight: 700; }
+    .status-code { display: block; color: var(--color-ink-muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: .04em; }
+    .status-action { min-width: 0; color: var(--color-ink-muted); font-size: 12px; }
+    .status-action span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .status-time { min-width: 72px; text-align: right; }
+    .status-time strong { display: block; font-family: var(--font-mono); font-size: 15px; }
+    .stage-track { display: flex; gap: 5px; grid-column: 1 / -1; }
+    .stage { height: 4px; flex: 1; border-radius: 2px; background: var(--color-surface-subtle); }
+    .stage.done { background: #8DB9BD; }
+    .stage.current { background: var(--color-accent); }
+    .solver-status[data-tone="paused"] { border-left-color: var(--color-warning); }
+    .solver-status[data-tone="paused"] .status-icon { background: #F5ECD9; color: var(--color-warning); }
+    .solver-status[data-tone="error"], .solver-status[data-tone="lost"] { border-left-color: var(--color-danger); }
+    .solver-status[data-tone="error"] .status-icon, .solver-status[data-tone="lost"] .status-icon { background: #F8D7D2; color: var(--color-danger); }
+    .solver-status[data-tone="success"] { border-left-color: var(--color-success); }
+    .solver-status[data-tone="success"] .status-icon { background: #D5F0E4; color: var(--color-success); }
+
+    main { max-width: 1600px; margin: 0 auto; padding: 24px 32px 48px; }
+    .page { animation: page-enter 160ms ease-out both; }
+    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    .page-heading p { margin-bottom: 0; color: var(--color-ink-muted); }
+    .heading-actions { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .field { display: grid; gap: 6px; }
+    .field > span, .field > label { color: var(--color-ink-muted); font-size: 12px; font-weight: 600; }
+    .input, .select { width: 100%; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); }
+    .input.compact { width: 104px; }
+    .input:invalid { border-color: var(--color-danger); }
+    .button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-ink); font-weight: 600; text-decoration: none; }
+    .button:hover:not(:disabled) { background: var(--color-canvas); border-color: var(--color-border-strong); }
+    .button:active:not(:disabled) { transform: translateY(1px); }
+    .candidate-preview:hover, .chip:hover { border-color: var(--color-accent); }
+    .button.primary:active:not(:disabled), .button.danger:active:not(:disabled) { transform: translateY(1px); }
+    .button.primary { min-height: 44px; background: var(--color-accent); border-color: var(--color-accent); color: white; }
+    .button.primary:hover:not(:disabled) { background: var(--color-accent-hover); border-color: var(--color-accent-hover); }
+    .button.danger { color: var(--color-danger); border-color: #D9A49E; }
+    .button.danger:hover:not(:disabled) { background: #FFF4F2; border-color: var(--color-danger); }
+    .button.subtle { border-color: transparent; background: transparent; color: var(--color-accent); }
+    .button.icon-only { width: 40px; padding: 8px; }
+    .button svg { width: 17px; height: 17px; }
+    .button-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); }
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px 20px 0; }
+    .card-header h2, .card-header h3 { margin-bottom: 0; }
+    .card-body { padding: 20px; }
+    .eyebrow { margin-bottom: 5px; color: var(--color-ink-muted); font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 3px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-canvas); color: var(--color-ink-muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .badge.safe { background: #D5F0E4; border-color: #A9D7C3; color: #0C5138; }
+    .badge.warning { background: #F7F0DF; border-color: #DDC68C; color: #6B4800; }
+    .badge.danger { background: #F8D7D2; border-color: #E6AAA2; color: #8F1D14; }
+    .badge.accent { background: #E4F0F1; border-color: #A9CDD1; color: var(--color-accent); }
+    .badge.unknown { background: #E3E7EA; color: #46515A; }
+
+    .auto-decision { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: center; margin-bottom: 20px; padding: 20px 24px; border-top: 3px solid var(--color-accent); }
+    .decision-main { display: flex; align-items: center; gap: 20px; min-width: 0; }
+    .decision-coordinate { min-width: 106px; padding-right: 20px; border-right: 1px solid var(--color-border); }
+    .decision-coordinate strong { display: block; font-family: var(--font-mono); font-size: 23px; line-height: 1.35; }
+    .decision-value { font-size: 30px; font-weight: 700; line-height: 1.2; }
+    .decision-copy { min-width: 0; }
+    .decision-copy p { margin: 5px 0 0; color: var(--color-ink-muted); font-size: 12px; }
+    .decision-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .decision-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; color: var(--color-ink-muted); font-size: 11px; }
+
+    .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+    .board-column { min-width: 0; display: grid; gap: 20px; }
+    .inspector-column { min-width: 0; display: grid; gap: 20px; position: sticky; top: 16px; }
+    .board-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+    .board-title { display: flex; align-items: center; gap: 10px; }
+    .board-title h2 { margin: 0; }
+    .toolbar-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .toolbar-group .select { width: auto; min-height: 36px; padding: 5px 28px 5px 9px; font-size: 12px; }
+    .zoom-controls { display: flex; align-items: center; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+    .zoom-controls .button { min-height: 34px; width: 34px; padding: 4px; border: 0; border-radius: 0; }
+    .zoom-value { min-width: 49px; text-align: center; font-family: var(--font-mono); font-size: 11px; }
+    .board-scroll { max-width: 100%; overflow: auto; padding: 16px; background: #F8FAFB; scrollbar-color: var(--color-border-strong) var(--color-surface-subtle); }
+    .fit-compact { --cell-base: 20px; --cell-zoom: 1; }
+    @media (min-width: 1280px) {
+      .fit-compact { --sidebar-width: 184px; }
+    }
+    .fit-compact .topbar { min-height: 60px; padding: 10px 20px 6px; }
+    .fit-compact .solver-status { padding: 8px 12px; gap: 12px; }
+    .fit-compact .status-icon { width: 28px; height: 28px; }
+    .fit-compact main { padding: 12px 20px 16px; }
+    .fit-compact .page-heading { margin-bottom: 12px; }
+    .fit-compact .auto-decision { margin-bottom: 12px; padding: 12px 16px; }
+    .fit-compact .decision-value { font-size: 24px; }
+    .fit-compact .workspace-grid { gap: 14px; grid-template-columns: minmax(0, 1fr) 292px; }
+    .fit-compact .board-column, .fit-compact .inspector-column { gap: 12px; }
+    .fit-compact .board-scroll { padding: 8px; }
+    .fit-compact .card-header { padding: 12px 14px 0; }
+    .fit-compact .card-body { padding: 12px 14px; }
+    .fit-compact .candidate { min-height: 42px; padding: 4px 6px; }
+    .fit-compact .candidate-preview { width: 26px; min-height: 26px; padding: 3px; }
+    .fit-compact .board-grid { gap: 1px; padding: 2px; }
+    .fit-compact .board-cell { font-size: 10px; }
+    .fit-compact .cell-order { min-width: 10px; height: 10px; font-size: 7px; line-height: 10px; }
+    .fit-compact .board-caption { padding: 6px 12px; font-size: 10px; }
+    .fit-compact .board-scroll { padding: 6px; }
+    .fit-compact .legend { padding: 10px 14px 12px; }
+    .fit-compact .stat { padding: 10px 14px; }
+    .fit-compact .metric-value { font-size: 18px; }
+    .fit-compact .details { margin-top: 10px; padding-top: 10px; }
+    .board-grid { --cell-size: calc(var(--cell-base) * var(--cell-zoom)); display: grid; grid-template-columns: 32px repeat(30, var(--cell-size)); grid-auto-rows: var(--cell-size); width: max-content; min-width: 100%; gap: 2px; padding: 4px; user-select: none; }
+    .board-corner, .column-header, .row-header { display: grid; place-items: center; color: var(--color-ink-muted); font-family: var(--font-mono); font-size: 10px; line-height: 1; }
+    .board-corner { position: sticky; top: 0; left: 0; z-index: 5; background: #F8FAFB; }
+    .column-header { position: sticky; top: 0; z-index: 3; height: 24px; align-self: start; background: #F8FAFB; }
+    .row-header { position: sticky; left: 0; z-index: 2; width: 32px; background: #F8FAFB; }
+    .board-row { display: contents; }
+    .board-cell { position: relative; width: var(--cell-size); height: var(--cell-size); min-height: 0; display: grid; place-items: center; padding: 0; border: 1px solid rgba(24,33,40,.11); border-radius: 3px; color: #26343D; font-family: var(--font-mono); font-size: 11px; font-weight: 700; line-height: 1; }
+    .board-cell:hover { filter: brightness(.96); }
+    .board-cell.open { background: #E4E9ED; border-color: #D5DDE2; }
+    .board-cell.covered { background: #C5CDD3; }
+    .board-cell.unknown { background-color: var(--color-unknown); background-image: repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(255,255,255,.17) 4px, rgba(255,255,255,.17) 7px); color: white; }
+    .board-cell.proven-safe { background: #D5F0E4; color: #0C5138; border-color: #76AF98; }
+    .board-cell.proven-mine { background: #F8D7D2; color: #8F1D14; border-color: #D99890; }
+    .board-cell.recommended::after { content: ""; position: absolute; inset: -2px; z-index: 1; border: 2px dashed #8A6800; border-radius: 4px; pointer-events: none; }
+    .board-cell.selected { z-index: 2; outline: 3px solid var(--color-accent); outline-offset: 1px; }
+    .board-cell.related::before { content: ""; position: absolute; inset: 1px; border: 2px solid transparent; border-top-color: #33414A; border-left-color: #33414A; clip-path: polygon(0 0, 45% 0, 0 45%); pointer-events: none; }
+    .cell-order { position: absolute; right: 1px; bottom: 1px; min-width: 12px; height: 12px; padding: 0 2px; border-radius: 3px; background: var(--color-ink); color: white; font-family: var(--font-ui); font-size: 8px; line-height: 12px; }
+    .cell-symbol { font-family: var(--font-ui); font-size: 13px; }
+    .board-cell:focus-visible { z-index: 6; outline-color: var(--color-focus); }
+    .board-caption { display: flex; justify-content: space-between; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--color-border); color: var(--color-ink-muted); font-size: 11px; flex-wrap: wrap; }
+    .toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; color: var(--color-ink-muted); font-size: 12px; cursor: pointer; }
+    .toggle input { width: 16px; height: 16px; min-height: 0; margin: 0; accent-color: var(--color-accent); }
+
+    .legend { padding: 16px 20px 18px; }
+    .legend h3 { margin-bottom: 12px; }
+    .legend-items { display: grid; grid-template-columns: repeat(5, minmax(100px, 1fr)); gap: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; color: var(--color-ink-muted); font-size: 11px; }
+    .legend-swatch { position: relative; width: 26px; height: 26px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--color-border-strong); border-radius: 3px; font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+    .legend-swatch.safe { background: #D5F0E4; color: #0C5138; }
+    .legend-swatch.mine { background: #F8D7D2; color: #8F1D14; }
+    .legend-swatch.estimate { background: #D2AD4A; color: #182128; }
+    .legend-swatch.recommend { background: #E4E9ED; border: 2px dashed #8A6800; }
+    .legend-swatch.unknown { background-color: var(--color-unknown); background-image: repeating-linear-gradient(135deg, transparent, transparent 4px, rgba(255,255,255,.17) 4px, rgba(255,255,255,.17) 7px); color: white; }
+    .heat-scale { display: grid; grid-template-columns: auto minmax(100px, 240px) auto; align-items: center; gap: 10px; max-width: 390px; margin-top: 14px; color: var(--color-ink-muted); font-family: var(--font-mono); font-size: 10px; }
+    .heat-gradient { height: 8px; border-radius: 4px; background: linear-gradient(90deg, #B42318 0%, #D56A24 25%, #D2AD4A 50%, #73A888 75%, #217A5B 100%); }
+
+    .candidate-list { display: grid; gap: 4px; margin-top: 12px; }
+    .candidate { width: 100%; display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: center; min-height: 54px; padding: 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--color-ink); text-align: left; }
+    .candidate:hover { background: var(--color-canvas); }
+    .candidate.selected { background: #E4F0F1; border-color: #A9CDD1; }
+    .candidate-rank { color: var(--color-ink-muted); font-family: var(--font-mono); font-size: 11px; }
+    .candidate-position { display: block; font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
+    .candidate-kind { display: block; color: var(--color-ink-muted); font-size: 10px; }
+    .candidate-value { font-size: 14px; font-weight: 700; }
+    .empty-state { padding: 24px 12px; color: var(--color-ink-muted); text-align: center; }
+    .details { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+    .details h3 { font-size: 13px; }
+    .details p { margin-bottom: 12px; color: var(--color-ink-muted); font-size: 12px; }
+    .detail-list { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; margin: 0; font-size: 12px; }
+    .detail-list dt { color: var(--color-ink-muted); }
+    .detail-list dd { margin: 0; text-align: right; font-family: var(--font-mono); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { min-height: 30px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-accent); font-family: var(--font-mono); font-size: 11px; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); }
+    .stat { padding: 16px 20px; border-right: 1px solid var(--color-border); }
+    .stat:last-child { border-right: 0; }
+    .stat-label { display: block; color: var(--color-ink-muted); font-size: 11px; }
+    .metric-value { display: block; margin: 3px 0; font-size: 22px; font-weight: 700; }
+    .stat-note { color: var(--color-ink-muted); font-size: 10px; }
+    .inline-actions { display: flex; gap: 8px; padding: 0 20px 18px; flex-wrap: wrap; }
+
+    .scan-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; padding: 16px 20px; }
+    .scan-copy { display: flex; align-items: center; gap: 12px; }
+    .scan-copy svg { color: var(--color-accent); }
+    .scan-copy p { margin: 2px 0 0; color: var(--color-ink-muted); font-size: 12px; }
+    .batch-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; }
+    .batch-summary strong { display: block; }
+    .batch-summary span { color: var(--color-ink-muted); font-size: 12px; }
+    .explanation-block { padding: 12px 0; border-bottom: 1px solid var(--color-border); }
+    .explanation-block:first-child { padding-top: 0; }
+    .explanation-block:last-child { border-bottom: 0; padding-bottom: 0; }
+    .explanation-block h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 12px; }
+    .explanation-block p { margin: 0; color: var(--color-ink-muted); font-size: 12px; }
+    .step-number { width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 50%; background: var(--color-surface-subtle); color: var(--color-ink); font-family: var(--font-mono); font-size: 10px; }
+
+    .overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .mode-card { padding: 24px; }
+    .mode-icon { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 10px; background: #E4F0F1; color: var(--color-accent); }
+    .mode-card p { min-height: 44px; color: var(--color-ink-muted); }
+    .mode-card .button { margin-top: 8px; }
+    .overview-lower { display: grid; grid-template-columns: 1.2fr .8fr; gap: 20px; margin-top: 20px; }
+    .health-list, .activity-list { margin: 0; padding: 0; list-style: none; }
+    .health-item, .activity-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--color-border); }
+    .health-item:last-child, .activity-item:last-child { border-bottom: 0; }
+    .health-name { display: flex; align-items: center; gap: 8px; }
+    .health-icon { color: var(--color-success); font-weight: 700; }
+    .activity-item { align-items: flex-start; }
+    .activity-item small { display: block; color: var(--color-ink-muted); }
+
+    .error-card { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; margin-bottom: 20px; padding: 16px 20px; border: 1px solid #E6AAA2; border-left: 4px solid var(--color-danger); border-radius: var(--radius-card); background: #FFF8F7; }
+    .error-card > svg { color: var(--color-danger); }
+    .error-card h2 { margin-bottom: 3px; font-size: 15px; }
+    .error-card p { margin: 0; color: #75433D; font-size: 12px; }
+    .error-actions { display: flex; gap: 8px; }
+
+    .form-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .form-section { padding: 24px; }
+    .form-section > p { color: var(--color-ink-muted); font-size: 12px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    .validation { min-height: 20px; margin: 5px 0 0; color: var(--color-danger); font-size: 12px; }
+    .advanced { grid-column: 1 / -1; }
+    .advanced summary { min-height: 44px; padding: 12px 16px; cursor: pointer; font-weight: 700; }
+    .advanced-content { padding: 0 20px 20px; }
+
+    .calibration-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 20px; }
+    .calibration-preview { min-height: 340px; display: grid; place-items: center; padding: 32px; background: #26343D; border-radius: 0 0 12px 12px; }
+    .preview-board { display: grid; grid-template-columns: repeat(8, 30px); gap: 3px; padding: 12px; background: #E4E9ED; border: 4px solid #83919C; }
+    .preview-cell { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 2px; background: #C5CDD3; color: #33414A; font-family: var(--font-mono); font-size: 12px; }
+    .preview-cell.open { background: white; }
+    .step-list { margin: 0; padding: 0; list-style: none; }
+    .step-item { position: relative; display: flex; gap: 12px; padding-bottom: 24px; color: var(--color-ink-muted); }
+    .step-item::after { content: ""; position: absolute; left: 13px; top: 30px; bottom: 2px; width: 1px; background: var(--color-border); }
+    .step-item:last-child::after { display: none; }
+    .step-marker { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-surface); font-family: var(--font-mono); font-size: 11px; }
+    .step-item.active { color: var(--color-ink); font-weight: 700; }
+    .step-item.active .step-marker { background: var(--color-accent); border-color: var(--color-accent); color: white; }
+    .step-item.done .step-marker { background: #D5F0E4; border-color: #A9D7C3; color: #0C5138; }
+
+    dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); color: var(--color-ink); box-shadow: 0 8px 30px rgba(24,33,40,.12); }
+    dialog::backdrop { background: rgba(24,33,40,.48); }
+    .dialog-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--color-border); }
+    .dialog-header h2 { margin: 0; }
+    .dialog-body { padding: 24px; overflow: auto; }
+    .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--color-border); }
+    .snapshot-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .snapshot-tabs .button.active { background: #E4F0F1; border-color: #A9CDD1; color: var(--color-accent); }
+    .snapshot-pre { max-height: 320px; overflow: auto; margin: 0; padding: 16px; border-radius: 8px; background: #182128; color: #E9EDF1; font-family: var(--font-mono); font-size: 11px; line-height: 1.65; white-space: pre-wrap; }
+    .confirm-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 16px 0; }
+    .confirm-item { padding: 16px; border-radius: 8px; background: var(--color-canvas); text-align: center; }
+    .confirm-item strong { display: block; font-family: var(--font-mono); font-size: 24px; }
+    .toast-region { position: fixed; right: 24px; bottom: 24px; z-index: 80; display: grid; gap: 8px; pointer-events: none; }
+    .toast { max-width: 360px; padding: 12px 16px; border: 1px solid #A9CDD1; border-radius: 8px; background: var(--color-surface); box-shadow: 0 8px 30px rgba(24,33,40,.12); color: var(--color-ink); }
+    .toast::before { content: "✓"; margin-right: 8px; color: var(--color-success); font-weight: 700; }
+
+    .high-contrast { --color-ink-muted: #3D4850; --color-border: #9AA7B0; --color-border-strong: #596670; }
+    .high-contrast .board-cell { border-color: #596670; }
+
+    .transition-overlay { position: fixed; z-index: 70; left: 16px; top: 16px; width: min(500px, calc(100vw - 96px)); max-height: min(62vh, 420px); display: flex; flex-direction: column; border: 1px solid var(--color-border-strong); border-radius: var(--radius-card); background: var(--color-surface); box-shadow: 0 18px 44px rgba(24,33,40,.2); }
+    .transition-overlay-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; padding: 12px 14px 8px; border-bottom: 1px solid var(--color-border); }
+    .transition-overlay-head h2 { margin: 0; font-size: 15px; }
+    .transition-overlay-head p { margin: 2px 0 0; color: var(--color-ink-muted); font-size: 10px; }
+    .transition-overlay-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+    .transition-overlay-actions .button { min-height: 30px; width: 30px; padding: 4px; }
+    .transition-overlay-body { padding: 10px 12px 12px; overflow: auto; scrollbar-width: thin; }
+    .transition-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+    .transition-head p { margin: 4px 0 0; color: var(--color-ink-muted); font-size: 11px; }
+    .transition-outcomes { display: grid; gap: 10px; }
+    .outcome { border: 1px solid var(--color-border); border-radius: 9px; overflow: hidden; background: var(--color-surface); }
+    .outcome[data-kind="mine"] { border-color: #E6AAA2; }
+    .outcome[data-kind="blank"] { border-color: #A9CDD1; }
+    .outcome-toggle { width: 100%; display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 10px 12px; border: 0; background: var(--color-canvas); color: var(--color-ink); text-align: left; }
+    .outcome-toggle:hover { background: var(--color-surface-subtle); }
+    .outcome-name { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; }
+    .outcome-shape { width: 14px; height: 14px; display: inline-grid; place-items: center; flex: 0 0 auto; border: 1px solid currentColor; font-family: var(--font-mono); font-size: 9px; }
+    .outcome-shape.number { border-radius: 50%; color: var(--color-accent); }
+    .outcome-shape.blank { color: var(--color-success); }
+    .outcome-shape.mine { transform: rotate(45deg); color: var(--color-danger); }
+    .outcome-shape.mine span { transform: rotate(-45deg); }
+    .outcome-probability { font-family: var(--font-mono); font-size: 15px; font-weight: 700; }
+    .outcome-chevron { color: var(--color-ink-muted); transition: transform 120ms ease; }
+    .outcome.expanded .outcome-chevron { transform: rotate(90deg); }
+    .outcome-detail { padding: 12px; border-top: 1px solid var(--color-border); }
+    .mini-board-wrap { overflow: auto; padding: 4px; background: var(--color-canvas); border-radius: 6px; }
+    .mini-board { display: grid; grid-template-columns: repeat(7, 25px); grid-auto-rows: 25px; gap: 2px; width: max-content; margin: 0 auto; }
+    .mini-cell { display: grid; place-items: center; border: 1px solid #C3CDD4; border-radius: 2px; background: #E4E9ED; color: #33414A; font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+    .mini-cell.covered { background: #C5CDD3; color: #596670; }
+    .mini-cell.changed { outline: 2px solid var(--color-accent); outline-offset: -2px; background: #E4F0F1; color: var(--color-accent); }
+    .mini-cell.blank { background: #D5F0E4; color: #0C5138; }
+    .mini-cell.mine { background: #F8D7D2; color: #8F1D14; }
+    .outcome-facts { display: grid; gap: 8px; margin-top: 10px; font-size: 11px; }
+    .outcome-fact { display: grid; grid-template-columns: 58px 1fr; gap: 8px; }
+    .outcome-fact dt { color: var(--color-ink-muted); }
+    .outcome-fact dd { margin: 0; }
+    .outcome-recommendation { padding: 8px; border-left: 3px solid var(--color-accent); background: #F2F8F8; }
+    .transition-note { margin: 12px 0 0; color: var(--color-ink-muted); font-size: 10px; }
+    .preview-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .preview-position { font-family: var(--font-mono); font-weight: 700; }
+    .preview-live-hint { color: var(--color-ink-muted); font-size: 10px; }
+    .transition-overlay[data-pinned="true"] { border-color: var(--color-accent); box-shadow: 0 18px 44px rgba(0,109,119,.28); }
+    .candidate { grid-template-columns: 24px minmax(0, 1fr) auto auto; }
+    .candidate-preview { width: 32px; min-height: 32px; padding: 5px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-accent); }
+    .candidate-preview:hover { background: #E4F0F1; }
+    .candidate-preview svg { width: 15px; height: 15px; }
+    .result-banner { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; padding: 16px 20px; border-left: 4px solid var(--color-success); }
+    .result-banner.lost { border-left-color: var(--color-danger); }
+    .result-banner h2 { margin: 0 0 3px; }
+    .result-banner p { margin: 0; color: var(--color-ink-muted); font-size: 12px; }
+
+    @keyframes page-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 1279px) {
+      :root { --sidebar-width: 184px; }
+      .workspace-grid { grid-template-columns: 1fr; }
+      .inspector-column { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .inspector-column > .card:only-child { grid-column: 1 / -1; }
+      .legend-items { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+      .solver-status { grid-template-columns: minmax(180px, auto) 1fr auto; }
+      .solver-status > .button { grid-column: 1 / -1; justify-self: end; }
+    }
+    @media (max-width: 959px) {
+      :root { --sidebar-width: 0px; }
+      .sidebar { position: static; width: 100%; height: auto; padding: 12px 20px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+      .brand { padding: 0 0 12px; }
+      .brand-mark { width: 34px; height: 34px; }
+      .primary-nav { display: flex; overflow-x: auto; }
+      .nav-button { width: auto; flex: 0 0 auto; }
+      .nav-label, .sidebar-footer { display: none; }
+      .support-nav { margin: 8px 0 0; padding: 8px 0 0; }
+      .support-nav .primary-nav { display: flex; }
+      .app-main { margin-left: 0; }
+      .topbar { padding: 20px; }
+      .status-wrap { padding: 0 20px; }
+      main { padding: 20px 20px 40px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .stat:nth-child(2) { border-right: 0; }
+      .stat:nth-child(-n+2) { border-bottom: 1px solid var(--color-border); }
+      .overview-lower { grid-template-columns: 1fr; }
+      .auto-decision { grid-template-columns: 1fr; }
+      .decision-actions { justify-content: flex-start; }
+    }
+    @media (max-width: 599px) {
+      :root { --cell-base: 36px; }
+      h1 { font-size: 24px; }
+      .sidebar { padding: 10px 16px; }
+      .brand { padding-bottom: 8px; }
+      .brand-subtitle { display: none; }
+      .nav-button { padding: 8px 10px; font-size: 12px; }
+      .nav-button svg { display: none; }
+      .topbar { align-items: flex-start; padding: 16px; }
+      .connection-badge { display: none; }
+      .scenario-control { display: grid; gap: 2px; }
+      .scenario-control select { max-width: 150px; }
+      .status-wrap { padding: 0 16px; }
+      .solver-status { grid-template-columns: 1fr auto; gap: 10px; }
+      .status-action { grid-column: 1 / -1; grid-row: 2; }
+      .status-action span { white-space: normal; }
+      .status-time { grid-column: 2; grid-row: 1; }
+      .solver-status > .button { grid-column: 1 / -1; width: 100%; }
+      main { padding: 16px 16px 32px; }
+      .page-heading { display: grid; }
+      .heading-actions { align-items: end; }
+      .auto-decision { padding: 16px; }
+      .decision-main { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+      .decision-coordinate { min-width: 90px; padding-right: 12px; }
+      .decision-value { font-size: 25px; }
+      .decision-copy { flex-basis: 100%; }
+      .workspace-grid, .inspector-column, .overview-grid, .overview-lower, .form-layout, .calibration-layout { grid-template-columns: 1fr; }
+      .card-header, .card-body { padding-left: 16px; padding-right: 16px; }
+      .legend-items { grid-template-columns: repeat(2, minmax(110px, 1fr)); }
+      .scan-summary, .batch-bar { align-items: stretch; flex-direction: column; }
+      .scan-summary .button, .batch-bar .button { width: 100%; }
+      .form-grid { grid-template-columns: 1fr; }
+      .error-card { grid-template-columns: auto 1fr; }
+      .error-actions { grid-column: 1 / -1; }
+      .stat { padding: 14px 16px; }
+      .dialog-header, .dialog-body, .dialog-footer { padding-left: 16px; padding-right: 16px; }
+      .toast-region { left: 16px; right: 16px; bottom: 16px; }
+      .toast { max-width: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"></path></symbol>
+    <symbol id="icon-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9a2.6 2.6 0 1 1 4.3 2c-1 .8-1.8 1.2-1.8 2.5M12 17h.01"></path></symbol>
+    <symbol id="icon-scan" viewBox="0 0 24 24"><path d="M3 7V4a1 1 0 0 1 1-1h3M17 3h3a1 1 0 0 1 1 1v3M21 17v3a1 1 0 0 1-1 1h-3M7 21H4a1 1 0 0 1-1-1v-3M7 12h10"></path></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path></symbol>
+    <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"></rect></symbol>
+    <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"></path></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></symbol>
+    <symbol id="icon-alert" viewBox="0 0 24 24"><path d="M10.3 4.1 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 4.1a2 2 0 0 0-3.4 0Z"></path><path d="M12 9v4M12 17h.01"></path></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></symbol>
+    <symbol id="icon-snapshot" viewBox="0 0 24 24"><path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11H3V8a1 1 0 0 1 1-1Z"></path><circle cx="12" cy="13" r="4"></circle></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"></path></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="应用导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg><use href="#icon-grid"></use></svg></span>
+        <span><span class="brand-name">扫雷助手</span><span class="brand-subtitle">清晰决策，可信证据</span></span>
+      </div>
+      <p class="nav-label">工作区</p>
+      <nav class="primary-nav" aria-label="主导航">
+        <button class="nav-button" type="button" data-page="overview"><svg aria-hidden="true"><use href="#icon-grid"></use></svg>总览</button>
+        <button class="nav-button" type="button" data-page="auto" aria-current="page"><svg aria-hidden="true"><use href="#icon-play"></use></svg>自动运行</button>
+        <button class="nav-button" type="button" data-page="assist"><svg aria-hidden="true"><use href="#icon-help"></use></svg>获取建议</button>
+      </nav>
+      <div class="support-nav">
+        <p class="nav-label">支持</p>
+        <nav class="primary-nav" aria-label="支持导航">
+          <button class="nav-button" type="button" data-page="calibration"><svg aria-hidden="true"><use href="#icon-scan"></use></svg>识别校准</button>
+          <button class="nav-button" type="button" data-page="settings"><svg aria-hidden="true"><use href="#icon-settings"></use></svg>运行设置</button>
+        </nav>
+      </div>
+      <div class="sidebar-footer">
+        <div class="prototype-note"><strong>独立交互原型</strong><br>全部数据均为合成样例，不连接真实扫雷窗口，也不执行真实点击。</div>
+      </div>
+    </aside>
+
+    <div class="app-main">
+      <header class="topbar">
+        <div>
+          <div class="page-context">工作区 <span aria-hidden="true">/</span> <span id="breadcrumb">自动运行</span></div>
+          <h1 id="page-title">自动运行</h1>
+        </div>
+        <div class="topbar-actions">
+          <label class="scenario-control"><span>演示场景</span><select id="scenario-select" aria-label="注入演示场景"></select></label>
+          <span class="connection-badge" title="原型不连接真实程序"><span class="connection-dot" aria-hidden="true"></span>合成数据 · 未连接</span>
+        </div>
+      </header>
+
+      <div class="status-wrap">
+        <section class="solver-status" id="solver-status" data-tone="running" aria-label="求解器全局状态">
+          <div class="status-primary">
+            <span class="status-icon" id="status-icon" aria-hidden="true"><svg><use href="#icon-clock"></use></svg></span>
+            <span><span class="status-title" id="status-title">正在比较候选格</span><span class="status-code" id="status-code">DECIDING</span></span>
+          </div>
+          <div class="status-action"><strong>最近动作</strong><span id="last-action">已完成边界枚举，正在比较 4 个候选格</span></div>
+          <div class="status-time"><strong id="elapsed-time">183 ms</strong><span class="small muted">本阶段耗时</span></div>
+          <button class="button danger" id="global-stop" type="button"><svg aria-hidden="true"><use href="#icon-stop"></use></svg>停止</button>
+          <div class="stage-track" id="stage-track" aria-label="扫描、推理、决策、执行、确认五个阶段"></div>
+        </section>
+        <div class="sr-only" id="state-announcer" aria-live="polite" aria-atomic="true"></div>
+      </div>
+
+      <main id="main-content" tabindex="-1">
+        <section class="error-card" id="error-card" role="alert" hidden>
+          <svg aria-hidden="true"><use href="#icon-alert"></use></svg>
+          <div><h2 id="error-title" tabindex="-1">无法确认棋盘，因此未执行点击</h2><p id="error-message"></p></div>
+          <div class="error-actions"><button class="button" id="error-rescan" type="button">重新扫描</button><button class="button" id="error-calibrate" type="button">打开校准</button></div>
+        </section>
+
+        <section class="page" id="page-overview" data-title="总览" aria-labelledby="overview-heading" hidden>
+          <div class="page-heading"><div><h2 id="overview-heading">今天想完成什么？</h2><p>选择一个任务入口。运行状态与停止入口在任何页面都保持可见。</p></div></div>
+          <div id="overview-content"></div>
+        </section>
+
+        <section class="page" id="page-auto" data-title="自动运行" aria-labelledby="auto-heading">
+          <div class="page-heading">
+            <div><h2 id="auto-heading">自动运行</h2><p>观察运行、暂停查看证据，或随时安全停止。棋盘在运行中始终只读。</p></div>
+            <div class="heading-actions">
+              <label class="field"><span>连续运行局数</span><input class="input compact" id="run-count" type="number" min="1" max="10000" value="1" inputmode="numeric"></label>
+              <div class="button-row" id="auto-controls"></div>
+            </div>
+          </div>
+          <div id="auto-decision"></div>
+          <div class="workspace-grid">
+            <div class="board-column">
+              <section class="card" aria-label="自动运行棋盘"><div id="auto-board"></div></section>
+              <section class="card legend" id="auto-legend" aria-label="热力图图例"></section>
+              <section class="card" aria-label="运行统计"><div id="auto-stats"></div></section>
+            </div>
+            <aside class="inspector-column" aria-label="决策检查器">
+              <section class="card"><div class="card-header"><div><p class="eyebrow">候选排序</p><h2>下一步候选</h2></div><span class="badge">最多 5 项</span></div><div class="card-body" id="auto-candidates"></div></section>
+              <section class="card"><div class="card-header"><div><p class="eyebrow">证据详情</p><h2>决策依据</h2></div></div><div class="card-body" id="auto-inspector"></div></section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-assist" data-title="获取建议" aria-labelledby="assist-heading" hidden>
+          <div class="page-heading"><div><h2 id="assist-heading">扫描棋盘，理解下一步</h2><p>建议不会自动执行。只有经过你确认的已证明操作才会进入批量执行。</p></div></div>
+          <section class="card scan-summary" id="assist-scan-summary"></section>
+          <div class="workspace-grid">
+            <div class="board-column">
+              <section class="card" aria-label="帮助模式棋盘"><div id="assist-board"></div></section>
+              <section class="card legend" id="assist-legend" aria-label="热力图图例"></section>
+              <section class="card batch-bar" id="assist-batch"></section>
+            </div>
+            <aside class="inspector-column" aria-label="建议解释">
+              <section class="card"><div class="card-header"><div><p class="eyebrow">当前选中</p><h2 id="assist-detail-title">建议详情</h2></div><span id="assist-detail-badge"></span></div><div class="card-body" id="assist-inspector"></div></section>
+              <section class="card"><div class="card-header"><div><p class="eyebrow">候选排序</p><h2>全部建议</h2></div></div><div class="card-body" id="assist-candidates"></div></section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-calibration" data-title="识别校准" aria-labelledby="calibration-heading" hidden>
+          <div class="page-heading"><div><h2 id="calibration-heading">校准棋盘识别</h2><p>逐步确认边界与数字模板。原型仅演示流程，不读取屏幕。</p></div></div>
+          <div id="calibration-content"></div>
+        </section>
+
+        <section class="page" id="page-settings" data-title="运行设置" aria-labelledby="settings-heading" hidden>
+          <div class="page-heading"><div><h2 id="settings-heading">运行设置</h2><p>修改仅在点击保存后生效。危险与高级配置独立分组。</p></div></div>
+          <form id="settings-form" novalidate><div id="settings-content"></div></form>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="snapshot-dialog" aria-labelledby="snapshot-title">
+    <div class="dialog-header"><div><p class="eyebrow">快照与解释抽屉</p><h2 id="snapshot-title">棋盘快照</h2></div><button class="button icon-only" type="button" data-close-dialog="snapshot-dialog" aria-label="关闭快照"><svg aria-hidden="true"><use href="#icon-close"></use></svg></button></div>
+    <div class="dialog-body" id="snapshot-content"></div>
+    <div class="dialog-footer"><button class="button" id="download-snapshot" type="button">下载合成快照</button><button class="button primary" type="button" data-close-dialog="snapshot-dialog">完成</button></div>
+  </dialog>
+
+  <dialog id="batch-dialog" aria-labelledby="batch-dialog-title">
+    <div class="dialog-header"><div><p class="eyebrow">执行前确认</p><h2 id="batch-dialog-title">应用已证明的操作</h2></div><button class="button icon-only" type="button" data-close-dialog="batch-dialog" aria-label="取消并关闭"><svg aria-hidden="true"><use href="#icon-close"></use></svg></button></div>
+    <div class="dialog-body" id="batch-confirm-content"></div>
+    <div class="dialog-footer"><button class="button" type="button" data-close-dialog="batch-dialog">取消</button><button class="button primary" id="confirm-batch" type="button">确认应用</button></div>
+  </dialog>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <div class="transition-overlay" id="transition-overlay" role="dialog" aria-label="状态转移浮层" aria-modal="false" data-pinned="false" hidden>
+    <div class="transition-overlay-head"><div><p class="eyebrow">状态转移预览 · 浮层</p><h2 id="transition-overlay-title">点击候选格之后</h2></div><div class="transition-overlay-actions"><button class="button" id="preview-pin" type="button" aria-pressed="false" aria-label="固定预览" title="固定预览">固定</button><button class="button icon-only" id="preview-close" type="button" aria-label="关闭预览"><svg aria-hidden="true"><use href="#icon-close"></use></svg></button></div></div>
+    <div class="transition-overlay-body" id="transition-preview"></div>
+  </div>
+
+  <script>
+    "use strict";
+    (() => {
+      const ROWS = 16;
+      const COLS = 30;
+      const KIND_LABELS = Object.freeze({
+        exact_safety: "安全概率 · 精确解",
+        heuristic_win_rate: "策略胜率 · 启发式",
+        uniform_prior: "均匀先验 · 非精确解"
+      });
+      const SHORT_KINDS = Object.freeze({
+        exact_safety: "安全概率",
+        heuristic_win_rate: "策略胜率",
+        uniform_prior: "均匀先验"
+      });
+      const STATE_TEXT = Object.freeze({
+        IDLE: ["就绪", "等待明确操作，不会自行点击"],
+        STARTING_GAME: ["正在启动扫雷窗口", "正在准备合成目标窗口"],
+        CALIBRATING: ["正在校准棋盘", "校准步骤 1/2：确认棋盘边界"],
+        SCANNING: ["正在读取棋盘", "正在生成合成棋盘快照"],
+        DEDUCING: ["正在推理确定格", "已扫描 480 格，正在应用确定规则"],
+        DECIDING: ["正在比较候选格", "已完成边界枚举，正在比较候选格"],
+        WAITING_BOARD: ["等待棋盘画面稳定", "等待下一次稳定的合成快照"],
+        CLICKING: ["正在执行点击", "正在演示目标格操作；无真实点击"],
+        CHECKING_RESULT: ["正在确认本局结果", "正在比较操作前后的快照"],
+        PAUSED: ["已暂停，不会继续点击", "保留最后可信快照与当前证据"],
+        STOPPING: ["正在安全停止", "已禁止新动作，等待完成事件"],
+        WON: ["本局已完成：胜利", "本局演示结果已确认"],
+        LOST: ["本局已完成：失败", "本局演示结果已确认"],
+        ERROR: ["已停止自动操作", "无法确认棋盘，因此未执行点击"]
+      });
+      const SCENARIOS = Object.freeze({
+        normal: "正常运行 · DECIDING",
+        idle: "就绪 · IDLE",
+        scanning: "扫描中 · SCANNING",
+        deducing: "确定推理 · DEDUCING",
+        waiting: "等待稳定 · WAITING_BOARD",
+        clicking: "执行点击 · CLICKING",
+        checking: "确认结果 · CHECKING_RESULT",
+        paused: "已暂停 · PAUSED",
+        stopping: "停止中 · STOPPING",
+        error: "识别失败 · ERROR",
+        stale: "快照过期",
+        empty: "本轮无可证明操作",
+        won: "胜利 · WON",
+        lost: "失败 · LOST"
+      });
+      const STAGES = Object.freeze([
+        ["扫描", ["STARTING_GAME", "CALIBRATING", "SCANNING"]],
+        ["推理", ["DEDUCING"]],
+        ["决策", ["DECIDING", "WAITING_BOARD"]],
+        ["执行", ["CLICKING"]],
+        ["确认", ["CHECKING_RESULT", "WON", "LOST"]]
+      ]);
+      const POSITIONS = Object.freeze({
+        safe: [7, 3],
+        mine: [7, 4],
+        primary: [12, 8],
+        heuristic: [4, 6],
+        prior: [20, 14]
+      });
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+      const keyOf = (position) => `${position[0]},${position[1]}`;
+      const posText = (position) => `(${position[0]}, ${position[1]})`;
+      const percent = (value) => `${Math.round(value * 100)}%`;
+      const timeText = (ms) => ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+      const icon = (name) => `<svg aria-hidden="true"><use href="#icon-${name}"></use></svg>`;
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+      function makeCandidates() {
+        return [
+          { position: [...POSITIONS.safe], value: 1, value_kind: "exact_safety", is_proven_safe: true, is_proven_mine: false, is_recommended: true, rule: "单格约束", explanation: "相邻已开数字 1 的其余邻格均已标雷，因此此格已证明安全。", related_positions: [[6, 3], [6, 4]], world_count: 1, elapsed_ms: 9 },
+          { position: [...POSITIONS.primary], value: 0.875, value_kind: "exact_safety", is_proven_safe: false, is_proven_mine: false, is_recommended: true, rule: "边界精确枚举", explanation: "该格受相邻数字 2 与数字 1 的共同约束；128 个候选世界中有 112 个世界安全。", related_positions: [[11, 8], [12, 7], [13, 8]], world_count: 128, elapsed_ms: 183 },
+          { position: [...POSITIONS.prior], value: 0.71, value_kind: "uniform_prior", is_proven_safe: false, is_proven_mine: false, is_recommended: false, rule: "非边界均匀先验", explanation: "该格不在已知边界内，仅按剩余雷数与未开格数计算均匀先验，不代表精确解。", related_positions: [[19, 14], [21, 14]], world_count: null, elapsed_ms: 2 },
+          { position: [...POSITIONS.heuristic], value: 0.62, value_kind: "heuristic_win_rate", is_proven_safe: false, is_proven_mine: false, is_recommended: true, rule: "启发式前瞻", explanation: "在合成前瞻样本中，选择此格后的策略胜率估计为 62%；它不是安全概率。", related_positions: [[3, 6], [4, 5], [5, 6]], world_count: 64, elapsed_ms: 96 }
+        ];
+      }
+
+      function buildCells() {
+        const cells = [];
+        const openNumbers = new Map();
+        for (let y = 13; y <= 16; y += 1) {
+          for (let x = 1; x <= 30; x += 1) openNumbers.set(`${x},${y}`, (x + y) % 4);
+        }
+        for (let y = 9; y <= 12; y += 1) {
+          for (let x = 1; x <= 5; x += 1) openNumbers.set(`${x},${y}`, (x * 2 + y) % 3);
+        }
+        [[5, 2], [6, 2], [8, 2], [9, 3], [6, 5], [8, 5], [9, 4], [10, 7], [11, 7], [12, 6], [13, 7], [14, 8], [10, 9], [11, 9], [13, 9], [14, 9], [3, 5], [4, 4], [5, 7], [3, 7]].forEach((position, index) => openNumbers.set(keyOf(position), index % 3 + 1));
+        const candidates = makeCandidates();
+        const estimateMap = new Map(candidates.map((candidate) => [keyOf(candidate.position), candidate]));
+        for (let y = 1; y <= ROWS; y += 1) {
+          for (let x = 1; x <= COLS; x += 1) {
+            const key = `${x},${y}`;
+            const candidate = estimateMap.get(key);
+            if (openNumbers.has(key)) {
+              cells.push({ position: [x, y], fact: "open", number: openNumbers.get(key) });
+            } else if (key === keyOf(POSITIONS.mine)) {
+              cells.push({ position: [x, y], fact: "covered", is_proven_mine: true });
+            } else if (candidate) {
+              cells.push({ position: [x, y], fact: "covered", estimate: candidate.value, value_kind: candidate.value_kind, is_proven_safe: candidate.is_proven_safe, is_recommended: candidate.is_recommended });
+            } else if ((x >= 6 && x <= 15 && y >= 1 && y <= 10) || (x >= 1 && x <= 8 && y >= 3 && y <= 8)) {
+              const value = clamp(0.16 + (((x * 37 + y * 29) % 79) / 100), 0.08, 0.96);
+              cells.push({ position: [x, y], fact: "covered", estimate: value, value_kind: "exact_safety" });
+            } else {
+              cells.push({ position: [x, y], fact: "covered" });
+            }
+          }
+        }
+        return cells;
+      }
+
+      function makeTransitions(candidate) {
+        const p = candidate.position;
+        const heuristic = candidate.value_kind === "heuristic_win_rate";
+        const prior = candidate.value_kind === "uniform_prior";
+        const proven = Boolean(candidate.is_proven_safe);
+        const mineProbability = proven ? 0 : prior ? 0.21 : heuristic ? 0.19 : 0.12;
+        const openTotal = 1 - mineProbability;
+        const weights = prior ? [0.31, 0.28, 0.2] : heuristic ? [0.34, 0.29, 0.18] : [0.43, 0.27, 0.18];
+        const weightSum = weights.reduce((sum, value) => sum + value, 0);
+        return [
+          { id: "number-one", type: "打开数字 1", shape: "1", kind: "number1", probability: openTotal * weights[0] / weightSum, value_kind: "exact_safety", center: 1, next: [clamp(p[0] + 2, 1, COLS), p[1]], note: "出现一个确定约束，可继续应用单格规则。" },
+          { id: "number-two", type: "打开数字 2", shape: "2", kind: "number2", probability: openTotal * weights[1] / weightSum, value_kind: "exact_safety", center: 2, next: [clamp(p[0] - 2, 1, COLS), clamp(p[1] + 1, 1, ROWS)], note: "两个未开邻格共同受约束，下一步仍需概率比较。" },
+          { id: "blank", type: "展开空白", shape: "□", kind: "blank", probability: openTotal * weights[2] / weightSum, value_kind: "heuristic_win_rate", center: 0, next: [clamp(p[0] + 1, 1, COLS), clamp(p[1] + 2, 1, ROWS)], note: "连锁打开局部空白，边界向外扩展，重新扫描后再决策。" },
+          { id: "mine", type: "踩雷", shape: "×", kind: "mine", probability: mineProbability, value_kind: "exact_safety", center: -1, next: null, note: proven ? "已证明安全，此分支概率为 0，列出以说明状态转移集合的完整性。" : "本局终止。此结果是状态转移分支，不表示当前格已证明是雷。" }
+        ];
+      }
+
+      const initialCandidates = makeCandidates();
+      const app = {
+        page: "auto",
+        scenario: "normal",
+        state: "DECIDING",
+        lastAction: STATE_TEXT.DECIDING[1],
+        elapsed: 183,
+        snapshotId: "snap-demo-001",
+        snapshotStatus: "current",
+        capturedAt: "2026-11-06T22:16:00+08:00",
+        cells: buildCells(),
+        candidates: initialCandidates,
+        selected: [...POSITIONS.primary],
+        related: [],
+        showOrder: true,
+        zoom: 100,
+        stats: { played: 12, won: 7 },
+        error: null,
+        previewPosition: [...POSITIONS.primary],
+        overlayAnchorRect: null,
+        pinned: false,
+        expandedOutcomes: new Set(["number-one"]),
+        assistApplied: false,
+        calibrationStep: 0,
+        timer: null,
+        scenarioTimer: null,
+        batching: false,
+        autoSession: 0,
+        settings: { rows: 16, columns: 30, mines: 99, budget: 500, program: "扫雷（演示目标）", backend: "C++ 原生（演示）", contrast: false }
+      };
+
+      function candidateAt(position) {
+        return app.candidates.find((candidate) => keyOf(candidate.position) === keyOf(position));
+      }
+      function cellAt(position) {
+        return app.cells.find((cell) => keyOf(cell.position) === keyOf(position));
+      }
+      function isActiveState() {
+        return ["STARTING_GAME", "CALIBRATING", "SCANNING", "DEDUCING", "DECIDING", "WAITING_BOARD", "CLICKING", "CHECKING_RESULT", "PAUSED"].includes(app.state);
+      }
+      function executionBlockReason() {
+        if (app.state === "ERROR") return "识别不确定，请先重新扫描或校准";
+        if (app.snapshotStatus === "stale") return "快照已过期，请先重新扫描";
+        if (app.state === "STOPPING") return "正在安全停止，暂不能执行新动作";
+        if (app.state === "SCANNING") return "正在读取棋盘，请等待扫描完成";
+        if (app.batching) return "正在应用操作并重新扫描";
+        return "";
+      }
+      function heatColor(value) {
+        const anchors = [[0, [180, 35, 24]], [0.25, [213, 106, 36]], [0.5, [210, 173, 74]], [0.75, [115, 168, 136]], [1, [33, 122, 91]]];
+        const v = clamp(value, 0, 1);
+        for (let i = 1; i < anchors.length; i += 1) {
+          if (v <= anchors[i][0]) {
+            const left = anchors[i - 1];
+            const right = anchors[i];
+            const t = (v - left[0]) / (right[0] - left[0]);
+            const rgb = left[1].map((channel, index) => Math.round(channel + (right[1][index] - channel) * t));
+            return `rgb(${rgb.join(",")})`;
+          }
+        }
+        return "rgb(33,122,91)";
+      }
+
+      function renderStatus(announce = true) {
+        const text = STATE_TEXT[app.state] || STATE_TEXT.IDLE;
+        $("#status-title").textContent = text[0];
+        $("#status-code").textContent = app.state;
+        $("#last-action").textContent = app.lastAction || text[1];
+        $("#elapsed-time").textContent = timeText(app.elapsed);
+        const tone = app.state === "ERROR" ? "error" : app.state === "LOST" ? "lost" : app.state === "WON" ? "success" : ["PAUSED", "STOPPING"].includes(app.state) ? "paused" : app.state === "IDLE" ? "idle" : "running";
+        $("#solver-status").dataset.tone = tone;
+        const stop = $("#global-stop");
+        stop.hidden = !isActiveState() || app.state === "STOPPING";
+        stop.disabled = app.state === "STOPPING";
+        stop.innerHTML = `${icon("stop")}${app.state === "PAUSED" ? "停止并退出" : "停止"}`;
+        const currentStage = STAGES.findIndex((stage) => stage[1].includes(app.state));
+        $("#stage-track").innerHTML = STAGES.map((stage, index) => `<span class="stage ${index < currentStage || ["WON", "LOST"].includes(app.state) ? "done" : index === currentStage ? "current" : ""}" title="${stage[0]}${index === currentStage ? `：${text[0]}` : ""}"><span class="sr-only">${stage[0]}</span></span>`).join("");
+        const errorCard = $("#error-card");
+        errorCard.hidden = !app.error;
+        if (app.error) {
+          $("#error-title").textContent = app.error.title;
+          $("#error-message").textContent = `${app.error.message} 影响范围：${app.error.impact}。错误码：${app.error.code}。`;
+        }
+        if (announce) $("#state-announcer").textContent = `${text[0]}。${app.lastAction}`;
+      }
+
+      function boardCellLabel(cell) {
+        const base = `第 ${cell.position[1]} 行，第 ${cell.position[0]} 列`;
+        if (cell.fact === "unknown") return `${base}，无法识别`;
+        if (cell.fact === "open") return `${base}，已开数字 ${cell.number}`;
+        if (cell.is_proven_mine) return `${base}，已证明是雷`;
+        if (cell.is_proven_safe) return `${base}，已证明安全${cell.is_recommended ? "，推荐" : ""}`;
+        if (typeof cell.estimate === "number") return `${base}，${SHORT_KINDS[cell.value_kind]} ${percent(cell.estimate)}${cell.is_recommended ? "，推荐但未证明" : ""}`;
+        return `${base}，未开，暂无估值`;
+      }
+
+      function renderBoard(containerId, interactive) {
+        const selectedKey = keyOf(app.selected);
+        const relatedKeys = new Set(app.related.map(keyOf));
+        const cellsByKey = new Map(app.cells.map((cell) => [keyOf(cell.position), cell]));
+        let html = `<div class="board-toolbar"><div class="board-title"><h2>棋盘热力图</h2><span class="badge ${app.snapshotStatus === "stale" ? "warning" : ""}">${app.snapshotStatus === "stale" ? "已过期" : "当前快照"}</span></div><div class="toolbar-group"><label class="sr-only" for="${containerId}-kind">数值视图</label><select class="select" id="${containerId}-kind" disabled title="原型按格保留各自数值类型，不混排换算"><option>按来源显示数值类型</option></select><div class="zoom-controls" aria-label="棋盘缩放"><button class="button" type="button" data-action="zoom-out" aria-label="缩小棋盘">−</button><span class="zoom-value" id="${containerId}-zoom">${app.zoom}%</span><button class="button" type="button" data-action="zoom-in" aria-label="放大棋盘">+</button></div></div></div>`;
+        html += `<div class="board-scroll"><div class="board-grid" role="grid" aria-label="30 列 16 行扫雷棋盘" aria-rowcount="16" aria-colcount="30" style="--cell-zoom:${(app.zoom / 100).toFixed(2)}"><span class="board-corner" aria-hidden="true">列/行</span>`;
+        for (let x = 1; x <= COLS; x += 1) html += `<span class="column-header" role="columnheader" aria-label="第 ${x} 列">${x}</span>`;
+        for (let y = 1; y <= ROWS; y += 1) {
+          html += `<div class="board-row" role="row"><span class="row-header" role="rowheader" aria-label="第 ${y} 行">${y}</span>`;
+          for (let x = 1; x <= COLS; x += 1) {
+            const cell = cellsByKey.get(`${x},${y}`);
+            const key = keyOf(cell.position);
+            const classes = ["board-cell", cell.fact];
+            if (cell.is_proven_safe) classes.push("proven-safe");
+            if (cell.is_proven_mine) classes.push("proven-mine");
+            if (cell.is_recommended && !cell.is_proven_safe) classes.push("recommended");
+            if (key === selectedKey) classes.push("selected");
+            if (relatedKeys.has(key)) classes.push("related");
+            const candidate = candidateAt(cell.position);
+            const order = candidate && app.showOrder ? `<span class="cell-order" aria-hidden="true">${app.candidates.indexOf(candidate) + 1}</span>` : "";
+            let content = "—";
+            if (cell.fact === "open") content = String(cell.number);
+            else if (cell.fact === "unknown") content = "?";
+            else if (cell.is_proven_mine) content = '<span class="cell-symbol" aria-hidden="true">旗</span>';
+            else if (cell.is_proven_safe) content = '<span class="cell-symbol" aria-hidden="true">✓</span>';
+            else if (typeof cell.estimate === "number") content = percent(cell.estimate);
+            const style = cell.fact === "covered" && !cell.is_proven_safe && !cell.is_proven_mine && typeof cell.estimate === "number" ? `background-color:${heatColor(cell.estimate)};color:${cell.estimate < 0.22 ? "#FFFFFF" : "#182128"}` : "";
+            const tabindex = key === selectedKey ? "0" : "-1";
+            html += `<button type="button" class="${classes.join(" ")}" style="${style}" role="gridcell" aria-label="${esc(boardCellLabel(cell))}" aria-selected="${key === selectedKey}" tabindex="${tabindex}" data-position="${key}" data-interactive="${interactive}">${content}${order}</button>`;
+          }
+          html += "</div>";
+        }
+        html += `</div></div><div class="board-caption"><span>坐标：（列，行），从 1 开始 · 方向键移动，Enter 查看</span><label class="toggle"><input type="checkbox" data-action="show-order" ${app.showOrder ? "checked" : ""}>显示推理次序</label><span class="mono">${esc(app.snapshotId)}</span></div>`;
+        $(`#${containerId}`).innerHTML = html;
+      }
+
+      function renderLegend(containerId) {
+        $(`#${containerId}`).innerHTML = `<h3>图例与数值语义</h3><div class="legend-items"><div class="legend-item"><span class="legend-swatch safe">✓</span><span>已证明安全</span></div><div class="legend-item"><span class="legend-swatch mine">旗</span><span>已证明是雷</span></div><div class="legend-item"><span class="legend-swatch estimate">75%</span><span>概率估计</span></div><div class="legend-item"><span class="legend-swatch recommend">87%</span><span>推荐但未证明</span></div><div class="legend-item"><span class="legend-swatch unknown">?</span><span>未知 / 无数据</span></div></div><div class="heat-scale"><span>0% 安全</span><span class="heat-gradient" role="img" aria-label="安全概率从 0% 到 100% 的色带"></span><span>100% 安全</span></div><p class="small muted" style="margin:10px 0 0">格内百分比同时给出数值；策略胜率与均匀先验会在详情中单独标注，不与安全概率混称。</p>`;
+      }
+
+      function candidateListHtml() {
+        if (!app.candidates.length) return '<div class="empty-state"><strong>本轮没有可证明的操作</strong><p>仍可查看棋盘；不要据此推断系统错误。</p></div>';
+        return `<div class="candidate-list">${app.candidates.slice(0, 5).map((candidate, index) => {
+          const selected = keyOf(candidate.position) === keyOf(app.selected);
+          const proof = candidate.is_proven_safe ? "已证明安全" : KIND_LABELS[candidate.value_kind];
+          return `<div class="candidate ${selected ? "selected" : ""}"><button type="button" class="button subtle candidate-rank" data-select="${keyOf(candidate.position)}" aria-label="查看第 ${index + 1} 项 ${posText(candidate.position)}">#${index + 1}</button><button type="button" class="button subtle" style="display:block;text-align:left;padding:0;min-height:0" data-select="${keyOf(candidate.position)}"><span class="candidate-position">${posText(candidate.position)}</span><span class="candidate-kind">${proof}</span></button><span class="candidate-value">${percent(candidate.value)}</span><button type="button" class="candidate-preview" data-preview="${keyOf(candidate.position)}" aria-label="预览点击 ${posText(candidate.position)} 后的状态转移" title="预览多种状态转移">${icon("chevron")}</button></div>`;
+        }).join("")}</div>`;
+      }
+
+      function detailHtml(position, forAssist) {
+        const candidate = candidateAt(position);
+        const cell = cellAt(position);
+        if (candidate) {
+          const conclusion = candidate.is_proven_safe ? '<span class="badge safe">已证明安全</span>' : candidate.value_kind === "heuristic_win_rate" ? '<span class="badge warning">启发式建议 · 非安全概率</span>' : candidate.value_kind === "uniform_prior" ? '<span class="badge unknown">均匀先验 · 非精确解</span>' : '<span class="badge accent">概率估计 · 推荐但未证明</span>';
+          return `<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div><div class="mono" style="font-size:21px;font-weight:700">${posText(position)}</div><div class="decision-value">${percent(candidate.value)}</div></div>${conclusion}</div><p class="small muted">${KIND_LABELS[candidate.value_kind]}</p><div class="details"><h3>结论依据</h3><p>${esc(candidate.explanation)}</p><dl class="detail-list"><dt>决策路径</dt><dd>${esc(candidate.rule)}</dd><dt>候选世界数</dt><dd>${candidate.world_count === null ? "不适用" : candidate.world_count}</dd><dt>计算耗时</dt><dd>${timeText(candidate.elapsed_ms)}</dd><dt>快照</dt><dd>${app.snapshotStatus === "stale" ? "已过期" : "当前"}</dd></dl><h3 style="margin-top:16px">涉及格</h3><div class="chips">${candidate.related_positions.map((related) => `<button type="button" class="chip" data-select="${keyOf(related)}" title="定位 ${posText(related)}">${posText(related)}</button>`).join("")}</div>${forAssist ? `<div class="button-row" style="margin-top:16px"><button type="button" class="button" data-preview="${keyOf(position)}">${icon("chevron")}预览多种结果</button><button type="button" class="button primary" data-pin-preview="${keyOf(position)}">固定此格预览</button></div>` : ""}</div>`;
+        }
+        if (!cell) return '<div class="empty-state">没有此格数据。</div>';
+        const label = boardCellLabel(cell);
+        return `<div class="mono" style="font-size:21px;font-weight:700">${posText(position)}</div><p style="margin-top:12px">${esc(label)}</p><div class="details"><p>此格没有候选建议。棋盘事实与概率估值分开呈现；无估值不会被当作 0% 或 100%。</p><button type="button" class="button" data-action="open-snapshot">${icon("snapshot")}查看棋盘快照</button></div>`;
+      }
+
+      function renderAutoControls() {
+        let html = "";
+        if (app.state === "IDLE" || ["WON", "LOST", "ERROR"].includes(app.state)) {
+          html = `<button class="button primary" type="button" data-action="start-auto" ${app.state === "ERROR" ? "disabled" : ""}>${icon("play")}开始自动运行</button>`;
+        } else if (app.state === "PAUSED") {
+          html = `<button class="button primary" type="button" data-action="resume-auto">${icon("play")}继续</button><button class="button danger" type="button" data-action="stop-auto">${icon("stop")}停止</button>`;
+        } else if (app.state === "STOPPING") {
+          html = `<button class="button" type="button" disabled>正在等待停止完成</button>`;
+        } else {
+          html = `<button class="button primary" type="button" data-action="pause-auto">${icon("pause")}暂停</button><button class="button danger" type="button" data-action="stop-auto">${icon("stop")}停止</button>`;
+        }
+        $("#auto-controls").innerHTML = html;
+        $("#run-count").disabled = isActiveState() || app.state === "STOPPING";
+      }
+
+      function renderAutoDecision() {
+        const candidate = candidateAt(app.selected) || app.candidates[0];
+        const result = ["WON", "LOST"].includes(app.state) ? `<section class="card result-banner ${app.state === "LOST" ? "lost" : ""}"><span class="status-icon" aria-hidden="true">${icon(app.state === "WON" ? "check" : "alert")}</span><div><h2>${app.state === "WON" ? "本局胜利" : "本局失败"}</h2><p>以下为历史结果，不代表当前棋盘仍可操作。累计 ${app.stats.played} 局，胜 ${app.stats.won} 局。</p></div></section>` : "";
+        if (!candidate) {
+          $("#auto-decision").innerHTML = `${result}<section class="card auto-decision"><div><h2>当前没有可执行建议</h2><p class="muted">本轮没有可证明的操作。可查看棋盘、重新扫描或打开诊断。</p></div><button class="button" type="button" data-action="open-snapshot">查看快照</button></section>`;
+          return;
+        }
+        const block = executionBlockReason();
+        $("#auto-decision").innerHTML = `${result}<section class="card auto-decision" aria-label="当前决策卡"><div><div class="decision-main"><div class="decision-coordinate"><span class="small muted">建议点击</span><strong>${posText(candidate.position)}</strong></div><div><span class="small muted">${KIND_LABELS[candidate.value_kind]}</span><div class="decision-value">${percent(candidate.value)}</div></div><div class="decision-copy"><span class="badge ${candidate.is_proven_safe ? "safe" : candidate.value_kind === "heuristic_win_rate" ? "warning" : "accent"}">${candidate.is_proven_safe ? "已证明安全" : "推荐但未证明"}</span><p>${esc(candidate.explanation)}</p><div class="decision-meta"><span>路径：${esc(candidate.rule)}</span><span>世界数：${candidate.world_count === null ? "不适用" : candidate.world_count}</span><span>快照：${app.snapshotId}</span></div></div></div></div><div class="decision-actions"><button class="button" type="button" data-action="open-snapshot">${icon("snapshot")}查看快照</button><button class="button" type="button" data-action="copy-diagnostic">${icon("copy")}复制诊断</button>${block ? `<span class="badge warning">${esc(block)}</span>` : ""}</div></section>`;
+      }
+
+      function renderStats() {
+        const rate = app.stats.played ? percent(app.stats.won / app.stats.played) : "—";
+        $("#auto-stats").innerHTML = `<div class="card-header"><div><p class="eyebrow">运行统计</p><h2>累计结果</h2></div><span class="badge">合成统计</span></div><div class="stats-grid"><div class="stat"><span class="stat-label">累计完局</span><strong class="metric-value">${app.stats.played}</strong><span class="stat-note">仅完整确认的局</span></div><div class="stat"><span class="stat-label">累计胜局</span><strong class="metric-value">${app.stats.won}</strong><span class="stat-note">结果卡保留历史证据</span></div><div class="stat"><span class="stat-label">累计胜率</span><strong class="metric-value">${rate}</strong><span class="stat-note">零局时显示为 —</span></div><div class="stat"><span class="stat-label">最近决策耗时</span><strong class="metric-value">${timeText(app.elapsed)}</strong><span class="stat-note">不伪造完成率</span></div></div><div class="inline-actions"><button class="button" type="button" data-action="open-snapshot">${icon("snapshot")}查看棋盘快照</button><button class="button" type="button" data-action="copy-diagnostic">${icon("copy")}复制诊断</button></div>`;
+      }
+
+      function renderAuto() {
+        renderAutoControls();
+        renderAutoDecision();
+        renderBoard("auto-board", false);
+        renderLegend("auto-legend");
+        renderStats();
+        $("#auto-candidates").innerHTML = candidateListHtml();
+        $("#auto-inspector").innerHTML = detailHtml(app.selected, false);
+      }
+
+      function renderAssistSummary() {
+        const block = executionBlockReason();
+        const text = app.assistApplied ? "已演示应用并生成新快照" : app.state === "SCANNING" ? "正在扫描，棋盘骨架与上一可信证据保持可见" : "扫描与推理完成，等待你的选择";
+        $("#assist-scan-summary").innerHTML = `<div class="scan-copy">${icon("scan")}<div><strong>${esc(text)}</strong><p>快照 ${app.snapshotId} · ${app.snapshotStatus === "stale" ? "已过期，执行已禁用" : "480 格，30 列 × 16 行"}</p></div></div><button class="button primary" type="button" data-action="scan-assist" ${app.state === "SCANNING" || app.batching ? "disabled" : ""}>${icon("scan")}${app.state === "SCANNING" ? "正在扫描" : "扫描并获取建议"}</button>${block ? `<span class="small muted">${esc(block)}</span>` : ""}`;
+      }
+
+      function renderBatch() {
+        const safeCount = app.candidates.filter((candidate) => candidate.is_proven_safe).length;
+        const mineCell = cellAt(POSITIONS.mine);
+        const mineCount = mineCell && mineCell.is_proven_mine ? 1 : 0;
+        const block = executionBlockReason();
+        const disabled = block || safeCount + mineCount === 0;
+        $("#assist-batch").innerHTML = `<div class="batch-summary"><strong>应用已证明的操作</strong><span>将打开 ${safeCount} 格、标记 ${mineCount} 雷。概率推荐永不进入批量执行。</span>${disabled && block ? `<span class="badge warning" style="margin-top:6px">${esc(block)}</span>` : ""}</div><button class="button primary" type="button" data-action="open-batch" ${disabled ? "disabled" : ""}>${icon("check")}确认已证明操作</button>`;
+      }
+
+      function renderAssist() {
+        renderAssistSummary();
+        renderBoard("assist-board", true);
+        renderLegend("assist-legend");
+        renderBatch();
+        $("#assist-candidates").innerHTML = candidateListHtml();
+        $("#assist-inspector").innerHTML = detailHtml(app.selected, true);
+        const candidate = candidateAt(app.selected);
+        $("#assist-detail-title").textContent = candidate ? `建议点击 ${posText(app.selected)}` : `格子 ${posText(app.selected)}`;
+        $("#assist-detail-badge").innerHTML = candidate ? `<span class="badge ${candidate.is_proven_safe ? "safe" : "accent"}">${SHORT_KINDS[candidate.value_kind]}</span>` : '<span class="badge">棋盘事实</span>';
+        if (!$("#transition-overlay").hidden) renderTransitionPreview();
+      }
+
+      function miniBoardHtml(outcome, position) {
+        let html = '<div class="mini-board-wrap"><div class="mini-board" role="img" aria-label="以所选格为中心的 7 列 7 行局部结果棋盘">';
+        for (let dy = -3; dy <= 3; dy += 1) {
+          for (let dx = -3; dx <= 3; dx += 1) {
+            const x = position[0] + dx;
+            const y = position[1] + dy;
+            const center = dx === 0 && dy === 0;
+            const changedBlank = outcome.kind === "blank" && Math.abs(dx) + Math.abs(dy) <= 3;
+            const outside = x < 1 || x > COLS || y < 1 || y > ROWS;
+            const original = outside ? null : cellAt([x, y]);
+            let content = original && original.fact === "open" ? original.number : "·";
+            let cls = original && original.fact === "open" ? "mini-cell" : "mini-cell covered";
+            if (center) {
+              cls = `mini-cell changed ${outcome.kind === "mine" ? "mine" : outcome.kind === "blank" ? "blank" : ""}`;
+              content = outcome.kind === "mine" ? "×" : outcome.center;
+            } else if (changedBlank) {
+              cls = "mini-cell changed blank";
+              content = (x + y) % 3 === 0 ? 1 : 0;
+            }
+            html += `<span class="${cls}" aria-hidden="true">${content}</span>`;
+          }
+        }
+        return `${html}</div></div>`;
+      }
+
+      function renderTransitionPreview() {
+        const position = app.previewPosition || app.selected;
+        const candidate = candidateAt(position) || { position, value: 0.64, value_kind: "exact_safety", explanation: "此格使用局部合成状态转移样例。" };
+        const transitions = makeTransitions(candidate);
+        const changedByKind = { number1: [[...position]], number2: [[...position]], blank: [[...position], [clamp(position[0] + 1, 1, COLS), position[1]], [position[0], clamp(position[1] + 1, 1, ROWS)], [clamp(position[0] + 1, 1, COLS), clamp(position[1] + 1, 1, ROWS)]], mine: [[...position]] };
+        const overlay = $("#transition-overlay");
+        overlay.dataset.pinned = String(app.pinned);
+        overlay.dataset.position = keyOf(position);
+        overlay.hidden = false;
+        $("#transition-overlay-title").textContent = `点击 ${posText(position)} 之后`;
+        $("#preview-pin").textContent = app.pinned ? "已固定" : "固定";
+        $("#preview-pin").setAttribute("aria-pressed", String(app.pinned));
+        $("#transition-preview").innerHTML = `<div class="preview-actions"><button class="button ${app.pinned ? "" : "primary"}" type="button" data-action="toggle-pin">${icon(app.pinned ? "close" : "check")}${app.pinned ? "取消固定" : "固定预览"}</button><span class="preview-live-hint">${app.pinned ? "已固定，移开鼠标仍显示" : "悬停或聚焦候选格显示；Esc 关闭"}</span></div><div class="transition-outcomes">${transitions.map((outcome) => {
+          const expanded = app.expandedOutcomes.has(outcome.id);
+          const changed = changedByKind[outcome.kind];
+          return `<article class="outcome ${expanded ? "expanded" : ""}" data-kind="${outcome.kind}"><button class="outcome-toggle" type="button" data-outcome="${outcome.id}" aria-expanded="${expanded}" aria-controls="outcome-${outcome.id}"><span class="outcome-name"><span class="outcome-shape ${outcome.kind === "mine" ? "mine" : outcome.kind === "blank" ? "blank" : "number"}"><span>${outcome.shape}</span></span>${outcome.type}</span><span class="outcome-probability">${percent(outcome.probability)}</span><span class="outcome-chevron" aria-hidden="true">›</span></button><div class="outcome-detail" id="outcome-${outcome.id}" ${expanded ? "" : "hidden"}>${miniBoardHtml(outcome, position)}<dl class="outcome-facts"><div class="outcome-fact"><dt>变化格</dt><dd class="mono">${changed.map(posText).join("、")}${outcome.kind === "blank" ? "等局部连锁格" : ""}</dd></div><div class="outcome-fact"><dt>结果类型</dt><dd>${outcome.type} · 转移概率 ${percent(outcome.probability)}</dd></div><div class="outcome-fact"><dt>下一步</dt><dd class="outcome-recommendation">${outcome.next ? `建议查看 ${posText(outcome.next)}；${outcome.note}` : `本局结束；${outcome.note}`}</dd></div><div class="outcome-fact"><dt>来源</dt><dd><span class="badge ${outcome.value_kind === "exact_safety" ? "accent" : "warning"}">${KIND_LABELS[outcome.value_kind]}</span></dd></div></dl></div></article>`;
+        }).join("")}</div><p class="transition-note">局部棋盘为 7×7 合成结果。概率仅用于展示分支交互，不是真实求解读数；当前输入来源：${KIND_LABELS[candidate.value_kind]}。</p>`;
+        positionTransitionOverlay();
+      }
+
+      function positionTransitionOverlay() {
+        const overlay = $("#transition-overlay");
+        if (!overlay || overlay.hidden) return;
+        const anchor = app.overlayAnchorRect;
+        const margin = 12;
+        const width = overlay.offsetWidth || 460;
+        const height = overlay.offsetHeight || 320;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let left;
+        let top;
+        if (anchor) {
+          const spaceRight = vw - anchor.right - margin;
+          left = spaceRight >= width ? anchor.right + margin : anchor.left - width - margin;
+          if (left < margin) left = anchor.right + margin;
+          left = clamp(left, margin, Math.max(margin, vw - width - margin));
+          top = anchor.top;
+          const spaceBelow = vh - anchor.bottom - margin;
+          if (spaceBelow < height && anchor.top > height + margin) top = anchor.top - height;
+          top = clamp(top, margin, Math.max(margin, vh - height - margin));
+        } else {
+          left = clamp(vw - width - 24, margin, Math.max(margin, vw - width - margin));
+          top = clamp(vh - height - 24, margin, Math.max(margin, vh - height - margin));
+        }
+        overlay.style.left = `${Math.round(left)}px`;
+        overlay.style.top = `${Math.round(top)}px`;
+        const anchorCenter = anchor ? (anchor.left + anchor.right) / 2 : vw / 2;
+        overlay.dataset.placement = (left + width / 2) < anchorCenter ? "left" : "right";
+        overlay.dataset.flipX = String(Boolean(anchor) && left + width <= anchor.left);
+        overlay.dataset.flipY = String(Boolean(anchor) && top + height <= anchor.top);
+        overlay.dataset.clamped = String(top <= margin || top + height >= vh - margin || left <= margin || left + width >= vw - margin);
+      }
+
+      function previewPosition(position, pin = false, anchor = null) {
+        if (!position) return;
+        app.previewPosition = [...position];
+        app.overlayAnchorRect = anchor ? anchor.getBoundingClientRect() : app.overlayAnchorRect;
+        if (pin) app.pinned = true;
+        renderTransitionPreview();
+      }
+
+      function closePreview() {
+        const overlay = $("#transition-overlay");
+        if (overlay) overlay.hidden = true;
+        app.pinned = false;
+        app.overlayAnchorRect = null;
+      }
+
+      function selectCell(position) {
+        if (!position) return;
+        app.selected = [...position];
+        const candidate = candidateAt(position);
+        app.related = candidate ? candidate.related_positions.map((item) => [...item]) : [];
+        if (!app.pinned) app.previewPosition = [...position];
+        if (app.page === "assist") renderAssist();
+        else renderAuto();
+        const selected = $(`.board-cell[data-position="${keyOf(position)}"]`, $(app.page === "assist" ? "#assist-board" : "#auto-board"));
+        if (selected) selected.focus({ preventScroll: true });
+      }
+
+      function applyFitMode() {
+        const compact = window.innerHeight <= 800 || window.innerWidth <= 1440;
+        document.documentElement.classList.toggle("fit-compact", compact);
+        return compact;
+      }
+
+      function renderAll(announce = false) {
+        renderStatus(announce);
+        renderAuto();
+        renderAssist();
+      }
+
+      function navigate(page) {
+        if (!["overview", "auto", "assist", "calibration", "settings"].includes(page)) return;
+        app.page = page;
+        $$(".page").forEach((section) => { section.hidden = section.id !== `page-${page}`; });
+        $$(".nav-button").forEach((button) => {
+          if (button.dataset.page === page) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        });
+        const title = $(`#page-${page}`).dataset.title;
+        $("#page-title").textContent = title;
+        $("#breadcrumb").textContent = title;
+        if (page === "overview") renderOverview();
+        if (page === "calibration") renderCalibration();
+        if (page === "settings") renderSettings();
+        window.scrollTo({ top: 0, behavior: "auto" });
+      }
+
+      function setState(state, lastAction, elapsed = app.elapsed) {
+        app.state = state;
+        app.lastAction = lastAction || STATE_TEXT[state][1];
+        app.elapsed = elapsed;
+        renderStatus(true);
+        renderAutoControls();
+        renderAutoDecision();
+        renderAssistSummary();
+        renderBatch();
+      }
+
+      function clearRunTimer() {
+        if (app.timer) clearTimeout(app.timer);
+        app.timer = null;
+      }
+
+      function scheduleState(state, delay, action) {
+        clearRunTimer();
+        app.timer = setTimeout(() => {
+          if (app.state === "PAUSED" || app.state === "STOPPING" || app.state === "IDLE") return;
+          if (action) action();
+          else setState(state);
+        }, delay);
+      }
+
+      function guardedAfter(delay, action) {
+        app.timer = setTimeout(() => {
+          if (app.state === "PAUSED" || app.state === "STOPPING" || app.state === "IDLE") return;
+          action();
+        }, delay);
+      }
+
+      function startAuto() {
+        const count = Number($("#run-count").value);
+        if (!Number.isInteger(count) || count < 1 || count > 10000) {
+          toast("局数须为 1 至 10000 的整数");
+          $("#run-count").focus();
+          return;
+        }
+        clearRunTimer();
+        app.autoSession += 1;
+        app.error = null;
+        app.snapshotStatus = "current";
+        setState("SCANNING", `正在启动 ${count} 局合成自动运行`, 0);
+        app.timer = setTimeout(() => {
+          if (app.state === "PAUSED" || app.state === "STOPPING" || app.state === "IDLE") return;
+          setState("DEDUCING", "规则推理完成：1 格安全、1 格是雷", 42);
+          guardedAfter(900, () => setState("DECIDING", "候选比较完成，等待演示执行", 183));
+        }, 900);
+      }
+
+      function pauseAuto() {
+        clearRunTimer();
+        setState("PAUSED", `已暂停；保留快照 ${app.snapshotId}，继续前需确认快照仍有效`, app.elapsed);
+      }
+
+      function resumeAuto() {
+        if (app.snapshotStatus === "stale") {
+          setState("SCANNING", "旧快照已过期，继续前正在重新扫描", 0);
+        } else {
+          setState("DECIDING", "已继续；正在重新比较当前候选", app.elapsed);
+        }
+        scheduleState("CLICKING", 1200, () => setState("CLICKING", `演示点击 ${posText(app.selected)}；未执行真实点击`, 0));
+      }
+
+      function stopAuto() {
+        clearRunTimer();
+        app.autoSession += 1;
+        setState("STOPPING", "已禁止新点击，等待合成完成事件；尚未显示已停止", 0);
+        const session = app.autoSession;
+        app.timer = setTimeout(() => {
+          if (session !== app.autoSession) return;
+          setState("IDLE", "已收到完成事件：任务已停止，未再执行点击", 0);
+        }, 1400);
+      }
+
+      function scanAssist(afterBatch = false) {
+        clearRunTimer();
+        app.error = null;
+        app.snapshotStatus = "current";
+        setState("SCANNING", afterBatch ? "操作已演示应用，正在自动重扫" : "正在读取合成棋盘；旧证据不作为最新结果", 0);
+        app.scenarioTimer = setTimeout(() => {
+          app.state = "IDLE";
+          app.lastAction = "扫描与推理完成，等待你的选择";
+          app.elapsed = 183;
+          app.snapshotId = `snap-demo-${String(Number(app.snapshotId.split("-").pop()) + 1).padStart(3, "0")}`;
+          app.capturedAt = "2026-11-06T22:18:00+08:00";
+          app.assistApplied = afterBatch;
+          renderAll(true);
+          toast(afterBatch ? "已应用已证明操作并完成重扫" : "扫描完成，已生成新快照");
+        }, 900);
+      }
+
+      function openBatch() {
+        const block = executionBlockReason();
+        if (block) { toast(block); return; }
+        const safe = app.candidates.filter((candidate) => candidate.is_proven_safe);
+        const mine = cellAt(POSITIONS.mine);
+        $("#batch-confirm-content").innerHTML = `<p>仅包含已证明项。概率推荐 ${posText(POSITIONS.primary)} 不在请求载荷中。</p><div class="confirm-summary"><div class="confirm-item"><strong>${safe.length}</strong><span>打开安全格</span></div><div class="confirm-item"><strong>${mine && mine.is_proven_mine ? 1 : 0}</strong><span>标记确定雷</span></div></div><dl class="detail-list"><dt>打开位置</dt><dd>${safe.map((item) => posText(item.position)).join("、") || "无"}</dd><dt>标雷位置</dt><dd>${mine && mine.is_proven_mine ? posText(mine.position) : "无"}</dd><dt>快照</dt><dd>${app.snapshotId}</dd></dl>`;
+        $("#batch-dialog").showModal();
+      }
+
+      function confirmBatch() {
+        if (executionBlockReason()) { $("#batch-dialog").close(); toast("快照或状态已变化，未执行操作"); return; }
+        app.batching = true;
+        $("#batch-dialog").close();
+        const safe = cellAt(POSITIONS.safe);
+        if (safe) { safe.fact = "open"; safe.number = 0; delete safe.estimate; delete safe.is_proven_safe; }
+        app.candidates = app.candidates.filter((candidate) => !candidate.is_proven_safe);
+        app.selected = [...POSITIONS.primary];
+        app.previewPosition = [...POSITIONS.primary];
+        renderAll(false);
+        scanAssist(true);
+        app.batching = false;
+      }
+
+      function openSnapshot() {
+        const payload = diagnosticPayload();
+        $("#snapshot-content").innerHTML = `<div class="snapshot-tabs"><button class="button active" type="button" data-snapshot-tab="summary">快照摘要</button><button class="button" type="button" data-snapshot-tab="json">结构化数据</button></div><div id="snapshot-summary"><dl class="detail-list"><dt>快照 ID</dt><dd>${app.snapshotId}</dd><dt>快照状态</dt><dd>${app.snapshotStatus === "stale" ? "已过期" : "当前"}</dd><dt>捕获时间</dt><dd>${app.capturedAt}</dd><dt>棋盘规格</dt><dd>30 × 16 / 99 雷</dd><dt>最近动作</dt><dd>${esc(app.lastAction)}</dd><dt>选中坐标</dt><dd>${posText(app.selected)}</dd></dl><div class="details"><h3>选中格解释</h3>${detailHtml(app.selected, false)}</div></div><pre class="snapshot-pre" id="snapshot-json" hidden>${esc(JSON.stringify(payload, null, 2))}</pre>`;
+        $("#snapshot-dialog").showModal();
+      }
+
+      function diagnosticPayload() {
+        return {
+          prototype: true,
+          state: app.state,
+          last_action: app.lastAction,
+          elapsed_ms: app.elapsed,
+          snapshot: { id: app.snapshotId, status: app.snapshotStatus, captured_at: app.capturedAt, rows: 16, columns: 30, mine_count: 99 },
+          selected: app.selected,
+          candidates: app.candidates,
+          config: { rows: app.settings.rows, columns: app.settings.columns, mines: app.settings.mines, budget_ms: app.settings.budget, backend: app.settings.backend, target: "演示目标（已脱敏）" },
+          error: app.error,
+          boundaries: "合成演示数据；无真实窗口、点击或求解结果"
+        };
+      }
+
+      async function copyDiagnostic() {
+        const text = JSON.stringify(diagnosticPayload(), null, 2);
+        try {
+          if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+          else {
+            const area = document.createElement("textarea");
+            area.value = text;
+            area.style.position = "fixed";
+            area.style.opacity = "0";
+            document.body.appendChild(area);
+            area.select();
+            const copied = document.execCommand("copy");
+            area.remove();
+            if (!copied) throw new Error("copy unavailable");
+          }
+          toast("诊断已复制：状态、快照与脱敏配置");
+        } catch (error) {
+          openSnapshot();
+          $('[data-snapshot-tab="json"]').click();
+          toast("浏览器未允许剪贴板；已打开可复制诊断数据");
+        }
+      }
+
+      function downloadSnapshot() {
+        const blob = new Blob([JSON.stringify(diagnosticPayload(), null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${app.snapshotId}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        toast("合成快照已准备下载");
+      }
+
+      function toast(message) {
+        const node = document.createElement("div");
+        node.className = "toast";
+        node.textContent = message;
+        $("#toast-region").appendChild(node);
+        setTimeout(() => node.remove(), 3200);
+      }
+
+      function renderOverview() {
+        const health = app.error ? '<span class="badge danger">需要处理</span>' : '<span class="badge safe">演示配置正常</span>';
+        $("#overview-content").innerHTML = `<div class="overview-grid"><section class="card mode-card"><span class="mode-icon">${icon("help")}</span><h2>获取下一步建议</h2><p>扫描当前棋盘，比较多个候选，并预览每个点击可能产生的多个局部结果。</p><button class="button primary" type="button" data-navigate="assist">扫描并获取建议${icon("chevron")}</button></section><section class="card mode-card"><span class="mode-icon">${icon("play")}</span><h2>开始自动运行</h2><p>明确启动、暂停与停止；在决策卡中随时查看当前建议、快照和诊断。</p><button class="button" type="button" data-navigate="auto">配置自动运行${icon("chevron")}</button></section></div><div class="overview-lower"><section class="card"><div class="card-header"><div><p class="eyebrow">配置健康检查</p><h2>开始前确认</h2></div>${health}</div><div class="card-body"><ul class="health-list"><li class="health-item"><span class="health-name"><span class="health-icon">✓</span>棋盘规格</span><span>30 × 16，99 雷</span></li><li class="health-item"><span class="health-name"><span class="health-icon">✓</span>目标程序</span><span class="muted">演示目标，未连接</span></li><li class="health-item"><span class="health-name"><span class="health-icon">✓</span>计算后端</span><span class="muted">C++ 原生（合成标签）</span></li><li class="health-item"><span class="health-name"><span class="health-icon">${app.error ? "!" : "✓"}</span>识别状态</span><button class="button subtle" type="button" data-navigate="calibration">查看识别校准</button></li></ul></div></section><section class="card"><div class="card-header"><div><p class="eyebrow">最近活动</p><h2>上次可信结果</h2></div></div><div class="card-body"><ul class="activity-list"><li class="activity-item"><div><strong>建议点击 ${posText(POSITIONS.primary)}</strong><small>安全概率 87.5% · 精确边界</small></div><span class="badge accent">当前建议</span></li><li class="activity-item"><div><strong>最近一局：胜利</strong><small>历史结果 · 累计 12 局</small></div><span class="badge safe">已确认</span></li><li class="activity-item"><div><strong>合成快照 ${app.snapshotId}</strong><small>${app.capturedAt}</small></div><button class="button subtle" type="button" data-action="open-snapshot">查看</button></li></ul></div></section></div>`;
+      }
+
+      function renderCalibration() {
+        const step = app.calibrationStep;
+        $("#calibration-content").innerHTML = `<div class="calibration-layout"><section class="card"><div class="card-header"><div><p class="eyebrow">合成校准预览</p><h2>${step === 0 ? "确认棋盘边界" : "采集数字模板"}</h2></div><span class="badge accent">步骤 ${step + 1} / 2</span></div><div class="calibration-preview"><div class="preview-board" aria-label="8 列 5 行合成校准棋盘">${Array.from({ length: 40 }, (_, index) => `<span class="preview-cell ${index > 24 ? "open" : ""}">${index > 24 ? (index % 3) : ""}</span>`).join("")}</div></div></section><section class="card"><div class="card-header"><div><p class="eyebrow">校准步骤</p><h2>清晰进度，不靠等待猜测</h2></div></div><div class="card-body"><ol class="step-list"><li class="step-item ${step === 0 ? "active" : "done"}"><span class="step-marker">${step === 0 ? "1" : "✓"}</span><div>确认棋盘边界<p class="small">覆盖完整 30 × 16 棋盘，不包含窗口边框。</p></div></li><li class="step-item ${step === 1 ? "active" : ""}"><span class="step-marker">2</span><div>采集数字模板<p class="small">确认 0 至 8 与未开格样式，保留无法识别分支。</p></div></li></ol><div class="button-row"><button class="button primary" type="button" data-action="calibration-next">${step === 0 ? "确认边界并继续" : "完成合成校准"}</button><button class="button" type="button" data-action="calibration-reset">重新采集</button><button class="button subtle" type="button" data-navigate="auto">取消</button></div></div></section></div>`;
+      }
+
+      function renderSettings() {
+        $("#settings-content").innerHTML = `<div class="form-layout"><section class="card form-section"><h2>棋盘与计算</h2><p>保存前检查棋盘容量、雷数与预算。修改不会改变当前合成棋盘。</p><div class="form-grid"><label class="field"><span>棋盘列数</span><input class="input" name="columns" type="number" min="2" max="60" value="${app.settings.columns}" required></label><label class="field"><span>棋盘行数</span><input class="input" name="rows" type="number" min="2" max="40" value="${app.settings.rows}" required></label><label class="field"><span>总雷数</span><input class="input" name="mines" type="number" min="1" max="2399" value="${app.settings.mines}" required></label><label class="field"><span>单步计算预算（毫秒）</span><input class="input" name="budget" type="number" min="10" max="60000" value="${app.settings.budget}" required></label></div></section><section class="card form-section"><h2>目标与显示</h2><p>目标路径仅以脱敏演示名称呈现。高对比模式立即预览，但仅在保存后保留。</p><div class="form-grid"><label class="field"><span>目标程序</span><input class="input" name="program" type="text" value="${esc(app.settings.program)}" required></label><label class="field"><span>计算后端</span><select class="select" name="backend"><option>C++ 原生（演示）</option><option>Python 回退（演示）</option></select></label><label class="toggle" style="grid-column:1/-1"><input type="checkbox" name="contrast" ${app.settings.contrast ? "checked" : ""}>增强边框与次级文字对比度</label><span class="small muted" style="grid-column:1/-1">减少动态效果由系统的 prefers-reduced-motion 设置控制。</span></div></section><details class="card advanced"><summary>危险与高级配置</summary><div class="advanced-content"><p class="muted">真实应用中的路径与线程策略属于高风险配置。本原型不提供强制终止入口，也不会修改生产配置。</p><span class="badge warning">演示只读</span></div></details></div><p class="validation" id="settings-validation" role="alert"></p><div class="form-actions"><button class="button" type="button" data-action="settings-reset">取消未保存修改</button><button class="button primary" type="submit">保存运行设置</button></div>`;
+      }
+
+      function saveSettings(event) {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        const rows = Number(data.get("rows"));
+        const columns = Number(data.get("columns"));
+        const mines = Number(data.get("mines"));
+        const budget = Number(data.get("budget"));
+        let error = "";
+        if (![rows, columns, mines, budget].every(Number.isFinite)) error = "请填写完整的数值配置。";
+        else if (mines >= rows * columns) error = "总雷数必须小于棋盘格数。";
+        else if (budget < 10 || budget > 60000) error = "计算预算须在 10 至 60000 毫秒之间。";
+        else if (!String(data.get("program")).trim()) error = "目标程序不能为空。";
+        if (error) { $("#settings-validation").textContent = error; return; }
+        app.settings = { rows, columns, mines, budget, program: String(data.get("program")).trim(), backend: String(data.get("backend")), contrast: data.get("contrast") === "on" };
+        document.body.classList.toggle("high-contrast", app.settings.contrast);
+        $("#settings-validation").textContent = "";
+        toast("设置已保存到本次原型会话，不写入生产配置");
+      }
+
+      function applyScenario(scenario) {
+        clearRunTimer();
+        if (app.scenarioTimer) clearTimeout(app.scenarioTimer);
+        app.autoSession += 1;
+        app.scenario = scenario;
+        app.cells = buildCells();
+        app.candidates = makeCandidates();
+        app.selected = [...POSITIONS.primary];
+        app.previewPosition = [...POSITIONS.primary];
+        app.related = [];
+        app.pinned = false;
+        app.snapshotStatus = "current";
+        app.error = null;
+        app.assistApplied = false;
+        app.batching = false;
+        app.state = "IDLE";
+        app.elapsed = 183;
+        app.lastAction = STATE_TEXT.IDLE[1];
+        if (scenario === "normal") app.state = "DECIDING";
+        else if (["scanning", "deducing", "waiting", "clicking", "checking"].includes(scenario)) {
+          app.state = { scanning: "SCANNING", deducing: "DEDUCING", waiting: "WAITING_BOARD", clicking: "CLICKING", checking: "CHECKING_RESULT" }[scenario];
+        } else if (["paused", "stopping", "won", "lost"].includes(scenario)) app.state = scenario.toUpperCase();
+        else if (scenario === "error") {
+          app.state = "ERROR";
+          const unknown = cellAt([14, 8]);
+          if (unknown) { unknown.fact = "unknown"; delete unknown.estimate; }
+          app.error = { code: "RECOGNITION_UNCERTAIN", title: "无法确认棋盘，因此未执行点击", message: "第 8 行第 14 列的模板得分不足，存在无法识别格；旧概率未标为最新结果。", impact: "自动与批量执行均已禁用，其他页面仍可查看" };
+          app.snapshotStatus = "stale";
+        } else if (scenario === "stale") {
+          app.state = "PAUSED";
+          app.snapshotStatus = "stale";
+          app.lastAction = "窗口内容已变化，最后可信快照已过期；继续前需要重扫";
+        } else if (scenario === "empty") {
+          app.candidates = [];
+          app.cells.forEach((cell) => { delete cell.is_proven_safe; delete cell.is_proven_mine; delete cell.is_recommended; });
+        }
+        app.lastAction = scenario === "normal" ? STATE_TEXT.DECIDING[1] : app.error ? app.error.message : STATE_TEXT[app.state][1];
+        renderAll(true);
+        if (scenario === "stopping") {
+          const session = app.autoSession;
+          app.timer = setTimeout(() => {
+            if (session !== app.autoSession) return;
+            app.scenario = "idle";
+            $("#scenario-select").value = "idle";
+            setState("IDLE", "已收到延迟完成事件：任务已停止", 0);
+          }, 2200);
+        }
+      }
+
+      function handleBoardKey(event) {
+        const cell = event.target.closest(".board-cell");
+        if (!cell) return;
+        const position = cell.dataset.position.split(",").map(Number);
+        let next = [...position];
+        if (event.key === "ArrowLeft") next[0] -= 1;
+        else if (event.key === "ArrowRight") next[0] += 1;
+        else if (event.key === "ArrowUp") next[1] -= 1;
+        else if (event.key === "ArrowDown") next[1] += 1;
+        else if (event.key === "Home" && event.ctrlKey) next = [1, 1];
+        else if (event.key === "End" && event.ctrlKey) next = [COLS, ROWS];
+        else if (event.key === "Home") next[0] = 1;
+        else if (event.key === "End") next[0] = COLS;
+        else if (event.key === "Enter") { event.preventDefault(); selectCell(position); return; }
+        else return;
+        event.preventDefault();
+        next = [clamp(next[0], 1, COLS), clamp(next[1], 1, ROWS)];
+        selectCell(next);
+      }
+
+      function bindEvents() {
+        document.addEventListener("click", (event) => {
+          const nav = event.target.closest("[data-page], [data-navigate]");
+          if (nav) { navigate(nav.dataset.page || nav.dataset.navigate); return; }
+          const close = event.target.closest("[data-close-dialog]");
+          if (close) { $(`#${close.dataset.closeDialog}`).close(); return; }
+          const select = event.target.closest("[data-select]");
+          if (select) { selectCell(select.dataset.select.split(",").map(Number)); return; }
+          const preview = event.target.closest("[data-preview]");
+          if (preview) { previewPosition(preview.dataset.preview.split(",").map(Number), false, preview); return; }
+          const pinPreview = event.target.closest("[data-pin-preview]");
+          if (pinPreview) { previewPosition(pinPreview.dataset.pinPreview.split(",").map(Number), true, pinPreview); return; }
+          const cell = event.target.closest(".board-cell");
+          if (cell) { selectCell(cell.dataset.position.split(",").map(Number)); return; }
+          const outcome = event.target.closest("[data-outcome]");
+          if (outcome) {
+            const id = outcome.dataset.outcome;
+            if (app.expandedOutcomes.has(id)) app.expandedOutcomes.delete(id); else app.expandedOutcomes.add(id);
+            renderTransitionPreview();
+            return;
+          }
+          const tab = event.target.closest("[data-snapshot-tab]");
+          if (tab) {
+            $$("[data-snapshot-tab]").forEach((button) => button.classList.toggle("active", button === tab));
+            $("#snapshot-summary").hidden = tab.dataset.snapshotTab !== "summary";
+            $("#snapshot-json").hidden = tab.dataset.snapshotTab !== "json";
+            return;
+          }
+          const actionNode = event.target.closest("[data-action]");
+          if (!actionNode) return;
+          const actions = {
+            "zoom-in": () => { app.zoom = clamp(app.zoom + 10, 80, 140); renderAuto(); renderAssist(); },
+            "zoom-out": () => { app.zoom = clamp(app.zoom - 10, 80, 140); renderAuto(); renderAssist(); },
+            "open-snapshot": openSnapshot,
+            "copy-diagnostic": copyDiagnostic,
+            "start-auto": startAuto,
+            "pause-auto": pauseAuto,
+            "resume-auto": resumeAuto,
+            "stop-auto": stopAuto,
+            "scan-assist": () => scanAssist(false),
+            "open-batch": openBatch,
+            "toggle-pin": () => { app.pinned = !app.pinned; if (!app.pinned) app.previewPosition = [...app.selected]; renderTransitionPreview(); },
+            "close-preview": closePreview,
+            "calibration-next": () => { if (app.calibrationStep === 0) { app.calibrationStep = 1; renderCalibration(); } else { app.calibrationStep = 0; renderCalibration(); toast("合成校准已完成，未写入真实模板"); } },
+            "calibration-reset": () => { app.calibrationStep = 0; renderCalibration(); toast("已重置到边界确认步骤"); },
+            "settings-reset": renderSettings
+          };
+          if (actions[actionNode.dataset.action]) actions[actionNode.dataset.action]();
+        });
+        document.addEventListener("change", (event) => {
+          if (event.target.matches('[data-action="show-order"]')) { app.showOrder = event.target.checked; renderAuto(); renderAssist(); }
+        });
+        document.addEventListener("keydown", (event) => {
+          handleBoardKey(event);
+          if (event.key === "Escape") {
+            const overlay = $("#transition-overlay");
+            if (overlay && !overlay.hidden) {
+              event.preventDefault();
+              closePreview();
+              toast("已关闭状态转移预览");
+              return;
+            }
+            if (app.pinned) { app.pinned = false; app.previewPosition = [...app.selected]; renderTransitionPreview(); toast("已取消固定预览"); }
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            const cell = event.target.closest && event.target.closest(".board-cell");
+            if (cell && cell.dataset.interactive === "true" && app.page === "assist") {
+              const position = cell.dataset.position.split(",").map(Number);
+              if (candidateAt(position)) { event.preventDefault(); previewPosition(position, false, cell); }
+            }
+          }
+          const tag = event.target.tagName;
+          const editing = ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(tag) || event.target.isContentEditable || $("dialog[open]");
+          if (event.code === "Space" && !editing && app.page === "auto") {
+            event.preventDefault();
+            if (app.state === "PAUSED") resumeAuto(); else if (isActiveState() && app.state !== "STOPPING") pauseAuto();
+          }
+          if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "p") {
+            event.preventDefault();
+            navigate("auto");
+            if (!isActiveState() && app.state !== "STOPPING" && app.state !== "ERROR") startAuto();
+          }
+        });
+        document.addEventListener("mouseover", (event) => {
+          if (app.page !== "assist" || app.pinned) return;
+          const cell = event.target.closest(".board-cell");
+          if (!cell || cell.dataset.interactive !== "true") return;
+          const position = cell.dataset.position.split(",").map(Number);
+          if (candidateAt(position)) previewPosition(position, false, cell);
+        });
+        document.addEventListener("focusin", (event) => {
+          if (app.page !== "assist" || app.pinned) return;
+          const cell = event.target.closest(".board-cell");
+          if (!cell || cell.dataset.interactive !== "true") return;
+          const position = cell.dataset.position.split(",").map(Number);
+          if (candidateAt(position)) previewPosition(position, false, cell);
+        });
+        $("#preview-pin").addEventListener("click", () => { app.pinned = !app.pinned; if (!app.pinned) app.previewPosition = [...app.selected]; renderTransitionPreview(); });
+        $("#preview-close").addEventListener("click", () => { closePreview(); toast("已关闭状态转移预览"); });
+        window.addEventListener("resize", () => positionTransitionOverlay());
+        document.addEventListener("scroll", () => { if (!$("#transition-overlay").hidden) positionTransitionOverlay(); }, true);
+        $("#scenario-select").addEventListener("change", (event) => applyScenario(event.target.value));
+        $("#global-stop").addEventListener("click", stopAuto);
+        $("#confirm-batch").addEventListener("click", confirmBatch);
+        $("#download-snapshot").addEventListener("click", downloadSnapshot);
+        $("#error-rescan").addEventListener("click", () => { applyScenario("normal"); navigate("assist"); scanAssist(false); });
+        $("#error-calibrate").addEventListener("click", () => navigate("calibration"));
+        $("#settings-form").addEventListener("submit", saveSettings);
+        $$("dialog").forEach((dialog) => dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); }));
+      }
+
+      function init() {
+        applyFitMode();
+        window.addEventListener("resize", () => { applyFitMode(); positionTransitionOverlay(); });
+        $("#scenario-select").innerHTML = Object.entries(SCENARIOS).map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
+        $("#scenario-select").value = "normal";
+        bindEvents();
+        renderAll(false);
+        renderOverview();
+        renderCalibration();
+        renderSettings();
+        window.MinesweeperPrototype = Object.freeze({ ready: true, version: "1.1.0", data: "synthetic", layout: "fit-1366x768", overlay: "transition-preview" });
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>

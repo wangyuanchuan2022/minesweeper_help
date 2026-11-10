@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "path": "main.py",
+      "status": "reviewed",
+      "reason": "阶段1+阶段2、源码/调用方核对及 offscreen 测试"
+    },
+    {
+      "path": "ui/preview_popup.py",
+      "status": "reviewed",
+      "reason": "阶段1+阶段2、源码/调用方核对及 offscreen 测试"
+    },
+    {
+      "path": "tests/test_ui_preview_popup.py",
+      "status": "reviewed",
+      "reason": "阶段1+阶段2、源码/调用方核对及 offscreen 测试"
+    },
+    {
+      "path": "review/ui-migration-implementation.md",
+      "status": "reviewed",
+      "reason": "阶段1+阶段2、源码/调用方核对及 offscreen 测试"
+    }
+  ]
+}

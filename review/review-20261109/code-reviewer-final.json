@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "terminal": "complete",
+  "counts": {
+    "reviewed": 23,
+    "skipped": 0,
+    "blocked": 0,
+    "waived": 0,
+    "failed_unknown": 0
+  },
+  "coverage_rate": 1,
+  "errors": []
+}

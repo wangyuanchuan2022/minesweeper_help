@@ -1,0 +1,3 @@
+FAIL: test_stats_line_content (tests.test_ui_heatmap.TestHeatmapUI)
+Ran 122 tests in 5.384s
+FAILED (failures=1)

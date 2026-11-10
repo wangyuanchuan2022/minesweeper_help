@@ -1,0 +1,54 @@
+{
+  "schema_version": "1",
+  "mode": "manual-task-scope",
+  "reason": "crgate include is additive not exclusive; task scope is these four artifacts",
+  "head_sha": "d390b4e87e8334b1acf1c0f29d3437fa69e0277c",
+  "files": [
+    {
+      "path": "main.py",
+      "sha256": "0bd3d193ccff58bc4feb71cd1879d07830748a948072f64b0f5c989be14c5717"
+    },
+    {
+      "path": "ui/preview_popup.py",
+      "sha256": "eba9bd992ff2f99adfae7521d13095036d17e5689643d0af77f00c2f5456ddf8"
+    },
+    {
+      "path": "tests/test_ui_preview_popup.py",
+      "sha256": "8b9bd09041e6688f902458038b36294a4fef8ba08b437e7b4c583204d55241ae"
+    },
+    {
+      "path": "review/ui-migration-implementation.md",
+      "sha256": "9462a3ac5694bbecc20a6b702a6b224a452c495b0972cbde0378f8e7baa21eb7"
+    }
+  ],
+  "selection_hash": "f653e757ac52c2a419ddb67b0131ea7d914ccf0aae427a39a28aa8888175c6cd",
+  "reviewable_files": [
+    {
+      "path": "main.py",
+      "status": "snapshot",
+      "sha256": "0bd3d193ccff58bc4feb71cd1879d07830748a948072f64b0f5c989be14c5717"
+    },
+    {
+      "path": "ui/preview_popup.py",
+      "status": "snapshot",
+      "sha256": "eba9bd992ff2f99adfae7521d13095036d17e5689643d0af77f00c2f5456ddf8"
+    },
+    {
+      "path": "tests/test_ui_preview_popup.py",
+      "status": "snapshot",
+      "sha256": "8b9bd09041e6688f902458038b36294a4fef8ba08b437e7b4c583204d55241ae"
+    },
+    {
+      "path": "review/ui-migration-implementation.md",
+      "status": "snapshot",
+      "sha256": "9462a3ac5694bbecc20a6b702a6b224a452c495b0972cbde0378f8e7baa21eb7"
+    }
+  ],
+  "reviewable_count": 4,
+  "excluded_files": [],
+  "excluded_count": 0,
+  "total_files": 4,
+  "crgate_fallback": "include is additive; task envelope frozen manually; anchor/finalize remain deterministic",
+  "supersedes_snapshot": "044ee5a8ebb1adacdf25efd29f64065e9006f440353489d37e2c47da05620dc1",
+  "drift_note": "main.py changed during review; conclusions below reread against this latest snapshot"
+}

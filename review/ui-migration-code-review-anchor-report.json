@@ -1,0 +1,109 @@
+{
+  "schema_version": "1",
+  "report": "review\\ui-migration-code-review.md",
+  "at": "",
+  "total": 10,
+  "tally": {
+    "anchored": 8,
+    "anchored-fuzzy": 1,
+    "drifted": 1,
+    "refiled": 0,
+    "ambiguous": 0,
+    "unanchored": 0,
+    "no-evidence": 0,
+    "unverifiable": 0
+  },
+  "critical_high_unanchored": 0,
+  "findings": [
+    {
+      "claim_path": "main.py",
+      "claim_line": 80,
+      "raw_index": 27,
+      "evidence": "(\"C++ 三层决策\", VALUE_KIND_EXACT)",
+      "severity": "HIGH",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 737,
+      "raw_index": 35,
+      "evidence": "id(button) in self._preview_buttons",
+      "severity": "HIGH",
+      "verdict": "drifted",
+      "detail": "snippet exists in file but not at line 737"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 186,
+      "raw_index": 43,
+      "evidence": "if abs(cell_value - value) <= _BEST_CONF_EPS:",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "main.py",
+      "claim_line": 597,
+      "raw_index": 51,
+      "evidence": "self.candidate_list = QtWidgets.QListWidget(self.candidate_card)",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/preview_popup.py",
+      "claim_line": 482,
+      "raw_index": 59,
+      "evidence": "self.popup.hide_if_unpinned()",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "tests/test_ui_preview_popup.py",
+      "claim_line": 268,
+      "raw_index": 67,
+      "evidence": "handled = self.popup.eventFilter(self.popup, ev) ",
+      "severity": "MEDIUM",
+      "verdict": "anchored-fuzzy",
+      "detail": "whitespace-normalized hit near line 276"
+    },
+    {
+      "claim_path": "review/ui-migration-implementation.md",
+      "claim_line": 67,
+      "raw_index": 75,
+      "evidence": "self._preview_buttons",
+      "severity": "MEDIUM",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/preview_popup.py",
+      "claim_line": 108,
+      "raw_index": 83,
+      "evidence": "for item in transitions or []:",
+      "severity": "LOW",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/preview_popup.py",
+      "claim_line": 304,
+      "raw_index": 91,
+      "evidence": "self.note_label = QtWidgets.QLabel(NO_TRANSITION_HINT, self)",
+      "severity": "LOW",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    },
+    {
+      "claim_path": "ui/preview_popup.py",
+      "claim_line": 59,
+      "raw_index": 99,
+      "evidence": "pct = f\"{float(value) * 100:.2f}%\"",
+      "severity": "LOW",
+      "verdict": "anchored",
+      "detail": "exact hit at claimed line window"
+    }
+  ]
+}

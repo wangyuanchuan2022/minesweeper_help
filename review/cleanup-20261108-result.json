@@ -1,0 +1,72 @@
+{
+  "timestamp": "2026-11-08T12:04:17.471049",
+  "removed_files": 266,
+  "removed_groups": 2,
+  "removed_bytes": 623378203,
+  "failed": [],
+  "before": {
+    "pyd_backups": [
+      "mscore.cp310-win_amd64.pyd.bak",
+      "mscore.cp310-win_amd64.pyd.bak2",
+      "mscore.cp310-win_amd64.pyd.bak_ab_verify",
+      "mscore.cp310-win_amd64.pyd.bak_baseline",
+      "mscore.cp310-win_amd64.pyd.bak_before_optimal_fix",
+      "mscore.cp310-win_amd64.pyd.bak_before_transitions",
+      "mscore.cp310-win_amd64.pyd.bak_decision_preflight",
+      "mscore.cp310-win_amd64.pyd.bak_decision_primitives",
+      "mscore.cp310-win_amd64.pyd.bak_packed_diag",
+      "mscore.cp310-win_amd64.pyd.bak_prehelp",
+      "mscore.cp310-win_amd64.pyd.bak_smoke",
+      "mscore.cp310-win_amd64.pyd.incoming",
+      "mscore.cp310-win_amd64.pyd.new",
+      "mscore.cp310-win_amd64.pyd.old_locked"
+    ],
+    "bench_json_count": 42,
+    "bench_json_bytes": 60224653,
+    "review_md_count": 68,
+    "state_files": [
+      579,
+      65587977
+    ],
+    "src_files": {
+      "ui": 31,
+      "utils": 80,
+      "cpp": 159,
+      "tests": 65,
+      "sim": 14
+    }
+  },
+  "after": {
+    "pyd_backups": [
+      "mscore.cp310-win_amd64.pyd.bak",
+      "mscore.cp310-win_amd64.pyd.bak2",
+      "mscore.cp310-win_amd64.pyd.bak_ab_verify",
+      "mscore.cp310-win_amd64.pyd.bak_baseline",
+      "mscore.cp310-win_amd64.pyd.bak_before_optimal_fix",
+      "mscore.cp310-win_amd64.pyd.bak_before_transitions",
+      "mscore.cp310-win_amd64.pyd.bak_decision_preflight",
+      "mscore.cp310-win_amd64.pyd.bak_decision_primitives",
+      "mscore.cp310-win_amd64.pyd.bak_packed_diag",
+      "mscore.cp310-win_amd64.pyd.bak_prehelp",
+      "mscore.cp310-win_amd64.pyd.bak_smoke",
+      "mscore.cp310-win_amd64.pyd.incoming",
+      "mscore.cp310-win_amd64.pyd.new",
+      "mscore.cp310-win_amd64.pyd.old_locked"
+    ],
+    "bench_json_count": 42,
+    "bench_json_bytes": 60224653,
+    "review_md_count": 68,
+    "state_files": [
+      579,
+      65587977
+    ],
+    "src_files": {
+      "ui": 31,
+      "utils": 80,
+      "cpp": 159,
+      "tests": 65,
+      "sim": 14
+    }
+  },
+  "retained_intact": true
+}

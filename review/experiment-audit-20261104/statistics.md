@@ -364,7 +364,7 @@
 
 ## 8. E12 性能：win_rate 14x 加速
 
-- [事实] 口径：`bench/bench_wr_speed.py:8-12` 用 `bench/data/wr_cases_big.json` 的 **33 个生产真实决策点**；加速比 = **sum(ms) 之比**（`:91-95`、`:137-139`）；`--repeat` 默认 **1**（`:153`），即每个用例**只测一次**，取"多次中的最小值"（`:80-82`）——默认只跑 1 次时该机制无效。
+- [事实] 口径：`bench/bench_wr_speed.py（已随 win_rate API 删除）:8-12` 用 `bench/data/wr_cases_big.json` 的 **33 个生产真实决策点**；加速比 = **sum(ms) 之比**（`:91-95`、`:137-139`）；`--repeat` 默认 **1**（`:153`），即每个用例**只测一次**，取"多次中的最小值"（`:80-82`）——默认只跑 1 次时该机制无效。
 - [计算] 独立重算三组读数（逐用例比值）：
   | 对比 | 加总加速 | 逐用例比值 中位/均值/范围 | 中位耗时加速 |
   |---|---:|---|---:|
@@ -383,7 +383,7 @@
   1. **P1-j｜单次测量、无重复、无方差**：`--repeat 1` 默认下，33 个用例各测 1 次，加总比值没有任何不确定度。这一条与 `HANDOFF.md:53-60` 自己发现的"同进程耗时漂移 2.4–5.4x"**直接冲突**：既然同进程调用可以漂移 5 倍，那么单次测得的 14.12x 里有多少是漂移？报告在 `HANDOFF.md:60` 规定"任何同进程内耗时对比不得用于策略排序"，但**加速比本身仍是同进程内对比**。
   2. **P1-k｜加速比口径未声明**：加总 / 中位 / 逐用例中位三个数分别是 14.12x / 5.97x / 8.76x，差 2.4 倍。报告只给加总，且标题写"目标 10x 已达成"。
   3. **P2｜用例集筛选偏差**：`wr_cases_big.json` 的 33 个用例 limitation 范围 **1.00–7.60**（中位 2.80），是"能进 win_rate"的筛选样本（`cap扫描…md:117` 自己也说"bench 用例是按能进 win_rate 专门筛出来的极端样本"）。用它做加速比是合理的（比的是同一批输入），但**不能外推成"整局快 14 倍"**——报告 `review/2000局胜率结果.md:108-111` 已正确指出这点。
-- 【改进点】报三个数（加总 / 中位 / 逐用例中位）+ 重复 ≥5 次取中位与极差；对 before/after 做**交替随机**测量（`bench/timing_protocol.py` 已有，但 `bench_wr_speed.py` 未使用）；单独报 case13 与其余 32 用例两组，避免单点支配。
+- 【改进点】报三个数（加总 / 中位 / 逐用例中位）+ 重复 ≥5 次取中位与极差；对 before/after 做**交替随机**测量（`bench/timing_protocol.py` 已有，但 `bench_wr_speed.py`（已随 win_rate API 删除） 未使用）；单独报 case13 与其余 32 用例两组，避免单点支配。
 
 ---
 
@@ -457,7 +457,7 @@
 
 - 真配对（可机检）：E4 规则差异 **600/600 同 seed 同结果**（deferred 臂 vs 2000 局基线）——这是最强的配对证据；E6 破平局两轮逐局 `seed→won` 可重建；E2 首点 120/500 共用同 seed 序列；E15 两臂 0 独赢对。
 - 无法核验（P0-a）：E3 P2 两轮 —— 见 §2.3。
-- 口径混用（P1-n）：`bench/ab_first_click_corner.py:96` 用**非配对** MDE 公式而检验是**配对** McNemar；`bench/eval_depth_policy_games.py:71` 同样用非配对公式（该处设计也是配对）。两处都是"检验用配对、MDE 用非配对"，方向一致地**高估** MDE。
+- 口径混用（P1-n）：`bench/ab_first_click_corner.py:96` 用**非配对** MDE 公式而检验是**配对** McNemar；`bench/eval_depth_policy_games.py（已随 win_rate API 删除）:71` 同样用非配对公式（该处设计也是配对）。两处都是"检验用配对、MDE 用非配对"，方向一致地**高估** MDE。
 - 另注（P2）：项目在 `docs/胜率测试套件说明.md:76-80` 与 `HANDOFF.md` 正确地把"同 seed 是否唯一确定一局"列为 S2a 硬门线（`verify_seed_determinism.py --games 60`），这是"seed 配对合法性"的前置条件，方法论正确。
 
 ### 10.6 额外的设计层问题（本席主动发现）
@@ -496,11 +496,11 @@
 | P1-g | 验证集合格点数预判 140，实测三套口径给出 20 / 186 / 287，MDE 预判失去基础 | `P1预注册…md:86-93`；`metric_matrix.json`（20 验证点） |
 | P1-h | 用 MDE 28% + p=1.000 论证"效应太小"；且 `metric_subsets.json` 未存逐点 regret ⇒ 不可复算 | `HANDOFF.md:107`；`state/ab/metric_subsets.json`（只有聚合值） |
 | P1-i | 预注册否决的"位置奇偶切分"被实际使用 | `bench/layered_weights.py:180-186` vs `P1预注册…md:27-34` |
-| P1-j | 14x 加速为单次测量、无重复、无方差，与项目自己发现的"同进程漂移 2.4–5.4x"冲突 | `bench/bench_wr_speed.py:62-89,150-155`；`HANDOFF.md:53-60` |
+| P1-j | 14x 加速为单次测量、无重复、无方差，与项目自己发现的"同进程漂移 2.4–5.4x"冲突 | `bench/bench_wr_speed.py（已随 win_rate API 删除）:62-89,150-155`；`HANDOFF.md:53-60` |
 | P1-k | 加速比口径未声明：加总 14.12x / 中位 5.97x / 逐用例中位 8.76x，差 2.4 倍 | 本席对 `wr_speed_before/boardpacked.json` 的重算 |
 | P1-l | "本机无法复现"⇒"撤回"缺陷（应为条件性未复现，DPI 依赖未排除） | `review/UI_P1修复.md:9,17`；`视觉域.md:9`（本机 DPI=144） |
 | P1-m | 奇偶切分无法排除"同一局相邻决策点"泄漏（快照无 seed/game_id，脚本自述） | `bench/layered_weights.py:181`；三批 2286 case 无任何身份字段（0/2286） |
-| P1-n | MDE 公式与检验不匹配：配对设计用非配对 MDE（两处） | `ab_first_click_corner.py:96`；`eval_depth_policy_games.py:71` |
+| P1-n | MDE 公式与检验不匹配：配对设计用非配对 MDE（两处） | `ab_first_click_corner.py:96`；`eval_depth_policy_games.py（已随 win_rate API 删除）:71` |
 | P1-o | 预注册与执行的三处偏离无"偏离登记" | `P1预注册…md:114-116` vs `layered_weights.py:142-158`；切分方式；验证点数 |
 | P1-p | **`node_100000.jsonl` 含 20 行重复（40 行/20 seed）**：`sweep_cap.py:184` 追加写 + `--resume` 只按 seed 去重不清旧行 ⇒ 若重复在 seed 上分布不均，`n_ok` 分母会被污染（本例恰好 35.00% 不变） | `bench/sweep_cap.py:122-130,184-185,202-204`；本席机检 40 行/20 seed |
 | P1-q | **`win_rate_calls` 字段名与语义相反**：它记的是 `prod_nodecap`（节点超限命中数），36 行全为 0，会误导成"win_rate 从未调用" | `bench/sweep_prod_params.py:218`；`bench/ab_policy.py:139-154` |
@@ -592,7 +592,7 @@ P0 = comb(479-nb, 99)/comb(479, 99)   # nb=3 角落 -> 0.498463 ; nb=8 中心 ->
 ### 立刻做（不改结论也能做，成本低）
 
 1. **给两轮 P2 A/B 补落盘逐局明细**：`ab_first_click_corner.py` 在 `json.dump` 里加 `per_game: [{seed,won,died,opened,first_num}]`，并把 `a_only/b_only/paired_ci/p` 写进 summary；`judge_p2_replication.py` 从明细重算。存量两轮若日志可解析，可从 `p2_v2.log`/`p2_repl.log` 的逐局行重建（当前日志只有进度行，**不可重建** ⇒ 需重跑，成本 2×2000 局 ≈ 2×35min）。
-2. **统一 MDE 公式**：把配对 MDE 收进 `bench/paired_eval.py` 单点，`ab_first_click_corner.py:96`、`eval_depth_policy_games.py:71` 改 import；同时把"MDE 只用于说明检出力，不进入采纳条件"写进脚本 docstring。
+2. **统一 MDE 公式**：把配对 MDE 收进 `bench/paired_eval.py` 单点，`ab_first_click_corner.py:96`、`eval_depth_policy_games.py（已随 win_rate API 删除）:71` 改 import；同时把"MDE 只用于说明检出力，不进入采纳条件"写进脚本 docstring。
 3. **统一覆盖率口径**：建 `state/ab/point_lifecycle.json`，记录 1830 → 1509（去重）→ 462（合格）→ 各 cap 下 ok（186 @30s/5e6；287 @另一口径）→ 有 picked（222）→ 有 q，并在 `F矩阵说明…md` 与 `HANDOFF.md` 引用同一张表。
 4. **撤回/改写三处结论**：`HANDOFF.md:106-107`（过拟合证据）、`2000局胜率结果.md:17-18`（加速没影响胜率）、`算法性能评估与优化方案.md:21,156`（120 局"吻合"⇒台架可信）。
 5. **给 `layered_weights.json` 加标记**：写明"41 点的 limitation 全在 [8.06,14.37]，与 edges=[20,60] 不匹配 ⇒ 分层退化为全局，本文件不构成分层实验证据"；或直接把该文件改名为 `layered_weights_DEGENERATE.json`。
@@ -605,7 +605,7 @@ P0 = comb(479-nb, 99)/comb(479, 99)   # nb=3 角落 -> 0.498463 ; nb=8 中心 ->
 9. **落盘身份字段**：`collect_wr_cases.py` / `dump_metric_matrix_ext.py` / `merge_and_eval_cases.py` 在 case 里加 `seed`、`game_id`、`step`（采集时已知，只是没存）。补齐后：(a) 可按局聚类；(b) 可做真正的发现/验证集切分；(c) 可复用现成的 `case_key` 之外再加 `(seed, step)` 唯一键。
 10. **修正 `case_key` 的碰撞**：当前键不含 `cell_value` 与 `picked`，导致 18 组不同棋盘被折叠（§10.4）。加 `hash(cell_value)` 后重复组会从 51 降到 33（真重复）。
 11. **分桶前先看分布**：`layered_weights.py` 在分桶后打印每桶 n，若某桶 < `min_per_bucket` 且另一桶为空，直接报 `DEGENERATE` 并拒绝写结果。
-12. **耗时测速改用现成协议**：`bench_wr_speed.py` 接 `bench/timing_protocol.py`（新进程/随机交替/极差>20% 标 unreliable），并默认 `--repeat 5`。
+12. **耗时测速改用现成协议**：`bench_wr_speed.py` 接 `bench/timing_protocol.py`（新进程/随机交替/极差>20% 标 unreliable），并默认 `--repeat 5`。（已随 win_rate API 删除）
 
 ### 需要重新设计（下一轮预注册时）
 
