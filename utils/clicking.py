@@ -40,6 +40,17 @@ def sort_clicks(clicks, cs):
             sorted_clicks = dfs(_p, mst, sorted_clicks)
         return sorted_clicks
 
-    degree_one_nodes = [node for node in mst.nodes() if mst.degree(node) == 1 or mst.degree(node) == 0]
-    sorted_clicks = dfs(degree_one_nodes[0], mst, [])
+    degree_one_nodes = [node for node in mst.nodes()
+                        if mst.degree(node) == 1 or mst.degree(node) == 0]
+    # 不连通/全孤立图里 degree_one_nodes 可能为空；且只从第一个连通分量
+    # 出发会漏掉其它分量的格子。逐个分量起点跑 dfs，最后按原序补齐残余，
+    # 保证返回值始终是 clicks 的一个排列（不丢格、不改算法排序语义）。
+    sorted_clicks = []
+    starts = degree_one_nodes or list(mst.nodes())
+    for start in starts:
+        if not flag.get(start):
+            sorted_clicks = dfs(start, mst, sorted_clicks)
+    for c in clicks:
+        if c not in sorted_clicks:
+            sorted_clicks.append(c)
     return sorted_clicks
