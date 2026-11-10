@@ -2632,21 +2632,21 @@ static py::dict decide_impl(
             filter_by(&SeqStats::s);
             filter_by(&SeqStats::e);
             filter_by(&SeqStats::q);
+            // 2026-11-10 确定性修复（真实盘面黄金测试抓出）：
+            // 原实现对残余平局用 thread_local xorshift 随机数，状态跨调用
+            // 累积 ⇒ 同一盘面重复 decide 返回不同坐标（实测 12/60 不稳定）。
+            // 这与 py_decide 注释「tie-break is deterministic」矛盾，会让
+            // 同 seed 复现 / A/B 对照 / 黄金基线全部失效。改用已有的
+            // deterministic_tie_break（按 (x,y) 字典序最小值），纯函数。
             if (!X.empty()) {
-                static thread_local uint64_t rs3 = 0x9E3779B97F4A7C15ull;
-                rs3 ^= rs3 << 13; rs3 ^= rs3 >> 7; rs3 ^= rs3 << 17;
-                chosen = X[(size_t)(rs3 % (uint64_t)X.size())];
+                chosen = deterministic_tie_break(X);
                 weighted_py = coords_to_pylist(X);
             } else {
-                static thread_local uint64_t rs4 = 0x9E3779B97F4A7C15ull;
-                rs4 ^= rs4 << 13; rs4 ^= rs4 >> 7; rs4 ^= rs4 << 17;
-                chosen = tied[(size_t)(rs4 % (uint64_t)tied.size())];
+                chosen = deterministic_tie_break(tied);
                 weighted_py = coords_to_pylist(tied);
             }
         } else {
-            static thread_local uint64_t rs5 = 0x9E3779B97F4A7C15ull;
-            rs5 ^= rs5 << 13; rs5 ^= rs5 >> 7; rs5 ^= rs5 << 17;
-            chosen = tied[(size_t)(rs5 % (uint64_t)tied.size())];
+            chosen = deterministic_tie_break(tied);
             weighted_py = coords_to_pylist(tied);
         }
     }
