@@ -249,13 +249,18 @@ def run_workload(mscore, cases, layouts, budget_games=300):
 
 def main():
     no_build = "--no-build" in sys.argv
-    py310 = os.environ.get("PY310_ROOT", "").strip() or r"D:\anaconda3\envs\py310"
+    # 路径一律由环境变量注入（本仓纪律：不硬编码任何本机绝对路径）。
+    # PY310_ROOT 缺省用当前解释器所在环境（sys.executable 的父父目录），
+    # 这样在任意机器上都能自解析，无需写死 C:\Users\... 或 D:\anaconda3。
+    py310 = os.environ.get("PY310_ROOT", "").strip()
+    if not py310:
+        py310 = str(Path(sys.executable).resolve().parent.parent)
     mingw = os.environ.get("MINGW_BIN", "").strip()
-    if not mingw:
-        # 本机实测路径（可用环境变量覆盖）
-        mingw = (r"C:\Users\ycwan\AppData\Local\Microsoft\WinGet\Packages"
-                 r"\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe"
-                 r"\mingw64\bin")
+    if not no_build and not mingw:
+        print("FATAL: 构建插桩 pyd 需要 MINGW_BIN 环境变量（含 g++.exe / gcov.exe）")
+        print("  示例：set MINGW_BIN=<你的 MinGW bin 目录>")
+        print("  本脚本不硬编码本机路径，避免写入仓库。")
+        return 1
     if not no_build:
         build(py310, mingw)
 
