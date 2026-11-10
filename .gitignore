@@ -28,3 +28,26 @@ bench/data/_paired_*.json
 bench/data/_baseline2000*.json
 bench/data/_corner2000.json
 bench/data/p2_repl.log
+
+# ── 首次提交把关：备份 / 二进制 / 临时产物一律不入库 ──
+# 备份（历史会话遗留，推送后删不回 git 历史）
+*.bak
+*.bak_*
+*.mojibake_bak
+*_bak
+*.old_locked
+# 编译产物与二进制（含 cpp/ 下生成的 pyd / exe）
+*.pyd
+*.exe
+*.zip
+# 临时日志与运行期诊断
+*.log
+output/
+agent-out/
+chat-export/
+course/
+.idea/
+# 一次性诊断/探针目录
+cpp/_diag/
+utils/trial_decide/
+utils/trial_wholegame/

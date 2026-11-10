@@ -3,6 +3,43 @@
 本文件记录本项目的重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，
 版本号遵循语义化版本。
 
+> ⚠️ **历史快照**。本文件 2026-11-08 及更早的条目描述的是旧实现
+> （含 `win_rate` / `part_solve` / `wr_threshold` / 三层 decide / 自适应阈值）。
+> 这些 API 已于 2026-11-09 删除，现行架构见 [docs/现行架构与测量.md](docs/现行架构与测量.md)。
+
+---
+
+## [Unreleased] - 2026-11-08
+
+### 文档（与实验总报告对齐）
+
+- 新增 `docs/实验总报告.md`（commit `afa3f4c`）：编年全景、可信度分级（【有效】/【有条件】/【作废】/
+  【未验证】/【口径隔离】）、40% 目标判定、**30 项作废读数清单**、复现索引与报告边界声明。
+- `README.md` 同步：
+  - 胜率由过时的「46%」更正为权威值 **39.85% ± 0.23pp**（178,690 局纯 C++ `decide` 循环口径），
+    注明 Arbiter 规则 / 离线模拟 / 口径隔离，并链接实验总报告。
+  - 环境更正为 **Python 3.10 (py310)**；补全项目结构目录树、依赖与快速开始步骤。
+  - 决策链更正：自动与帮助模式**都**唯一归属 C++ `decide`；Python 规则推理已从生产路径移除；
+    自适应阈值改为「步长 ±0.5、升档需边界采样且耗时 < 预算×25%、降档为真超预算」，
+    并标注 1.5GB 内存闸门与 `node_cap=200 万` 为不可调整硬约束。
+  - 新增帮助页 7×7 状态转移浮层、按悬停格计算转移、W/H 动态重建热力图、
+    `apply_native_fix.cmd` 安装流程与已知未闭合缺口索引。
+  - `cpp/build.bat` 产物改为 `cpp/mscore_new.pyd`（不再覆盖运行中的生产 pyd）。
+
+### 工程（本轮工作区改动，未全部纳入本次文档提交）
+
+- 帮助页状态转移：C++ 缓存本轮世界集 + 导出 `transitions_for(cv,a,w,h,x,y)`，
+  按**鼠标悬停格**算 `click_outcomes`，7×7 局面以该格为中心，不再共用最优格那一份。
+- 帮助模式候选表改以逐格 `prob` 全集为真源（`prob>=1` 确定安全、`prob<=0` 确定雷），
+  修复 win_rate 阶段 56 个确定安全格只显示 1 个的问题。
+- 自适应阈值链接回：`_wr_update` 此前零生产调用点且 `decide` 硬编码阈值 8；
+  现由 C++ 返回真实 `limitation`、Python 按 30s 预算升降档并持久化到 `state/time_budget.json`。
+- W/H 变更后自动页热力图网格自动重建（新增 `_rebuild_heatmap_grid`）。
+- 浮层渲染修复：棋盘外 `-1` 由全透明改为可见暗格、概率标签加宽防裁切、棋盘固定尺寸防挤压。
+- 模板尺寸不匹配的 INFO 日志删除（自动忽略）；清理 594.5MB 大日志与构建产物，
+  留痕见 `review/cleanup-20261108.md`。
+- 回归：**310 tests OK**、compileall OK。
+
 ---
 
 ## [Unreleased] - 2026-11-02
@@ -268,7 +305,7 @@
   也**不**让异常落到外层 `except`（会被当作"求解失败"→ 触发完整重扫，更糟）。
   只有含 `node cap exceeded` 的异常才降级，其他 `runtime_error` 保持原有
   "回退纯 Python"语义，不会被静默吞成贪心结果。
-- **取值标定**（`bench/calibrate_node_cap.py`，真实 RSS 峰值采样）：
+- **取值标定**（`bench/calibrate_node_cap.py`（已随 win_rate API 删除），真实 RSS 峰值采样）：
 
   | cap | ΔRSS |
   |---|---:|
@@ -295,20 +332,20 @@
 
 | 闸 | 脚本 | 结果 |
 |---|---|---|
-| 超限必抛 + 默认不变 | `bench/verify_node_cap.py` | PASS 7 / FAIL 0 |
-| 端到端降级 + 负向 | `bench/verify_node_cap_e2e.py` | PASS 20 / FAIL 0 |
-| 生产默认逐位一致 | `bench/verify_node_cap_default.py` | PASS 3 / FAIL 0 |
+| 超限必抛 + 默认不变 | `bench/verify_node_cap.py`（已随 win_rate API 删除） | PASS 7 / FAIL 0 |
+| 端到端降级 + 负向 | `bench/verify_node_cap_e2e.py`（已随 win_rate API 删除） | PASS 20 / FAIL 0 |
+| 生产默认逐位一致 | `bench/verify_node_cap_default.py`（已随 win_rate API 删除） | PASS 3 / FAIL 0 |
 
 要点：
 - 默认 cap=2e6 与不限制**逐位一致**（33 个用例，|Δ| < 1e-12）
 - 整局 10 局 `won/died/opened` 逐局一致，且默认 cap 下**零误降级**
 - 注入 cap=1：异常穿越调用链进入贪心降级、正常返回、`_wr_nodecap_hits` 递增
 - 普通 `RuntimeError` 不进入贪心、不增加计数（负向测试）
-- 一键复跑：`verify_node_cap.cmd`
+- 一键复跑：`verify_node_cap.cmd`（已随 win_rate API 删除）
 
 ### 新增
 
-- `bench/calibrate_node_cap.py`：真实 RSS 峰值 + 节点需求分布标定
+- `bench/calibrate_node_cap.py`（已随 win_rate API 删除）：真实 RSS 峰值 + 节点需求分布标定
 - `bench/mem_model.py`：内存容量模型（位集收益上限分析）
 - `bench/verify_node_cap{,_e2e,_default}.py`：三道验收闸
 - `bench/compare_all_arms.py` + `run_baselines.cmd`：多臂整局配对统计与测量入口
@@ -459,13 +496,13 @@ win_rate(c) = safety(c) × E[点击 c 后继续获胜的概率 | c 不是雷]  �
 
 | 结论 | 证据 |
 |---|---|
-| `win_rate ≤ safety` 恒成立 | `bench/verify_winrate_le_safety.py`：11 用例 **0 例违反** |
+| `win_rate ≤ safety` 恒成立 | `bench/verify_winrate_le_safety.py`（已随 win_rate API 删除）：11 用例 **0 例违反** |
 | 原剪枝 `cp[i] < running_max` 是**最紧上界的有效分支定界** | 由上式直接推出；无可改进空间 |
 | `win_rate` 与纯贪心（max-safety）在 **10/11** 局面选同一格 | `bench/_summary_gap.py`：不一致 1/11 = 9.1% |
 | 前瞻确有信息（1/11 局面选不同格；存在 safety=1.0 但 win_rate=0.25 的格） | 同上，用例 [3]/[5]/[9]/[10] |
 | 一步前瞻（2-ply）**无增益** | `bench/compare_2ply_vs_winrate.py`：11/11 与纯 safety 同格 |
 | 覆盖缺口：`limitation` 中位数 **61**，阈值仅 8 ⇒ 只有 **33.1%** 决策能进 win_rate | `bench/probe_limitation.py`：60 局 511 次决策 |
-| win_rate 单次最坏 **502ms** | `bench/bench_winrate_cases.py`：11 用例合计 708ms，单个占 70% |
+| win_rate 单次最坏 **502ms** | `bench/bench_winrate_cases.py`（已随 win_rate API 删除）：11 用例合计 708ms，单个占 70% |
 
 **判断**：骨架正确，不该换算法（与 `review/算法域.md` 的前沿调研结论一致：
 MDD 标"不确定/需原型基准"、SAT"求一解不等于概率分布"，均不推荐）。
@@ -501,12 +538,12 @@ MDD 标"不确定/需原型基准"、SAT"求一解不等于概率分布"，均�
 |---|---|
 | `bench/first_click_fidelity.py` | 首点规则保真度（7.7 格 vs 41.2 格） |
 | `bench/check_opening_shape.py` | 开局形态（83.8% 开局仅 1 格） |
-| `bench/verify_winrate_le_safety.py` | 验证 win_rate ≤ safety |
+| `bench/verify_winrate_le_safety.py`（已随 win_rate API 删除） | 验证 win_rate ≤ safety |
 | `bench/_summary_gap.py` | safety 最高格 vs win_rate 最高格 |
 | `bench/compare_2ply_vs_winrate.py` | 2-ply vs 完整 win_rate |
 | `bench/verify_wr_guard_gate.py` | 内存闸门负向自测 |
 | `bench/collect_wr_cases.py` | 采集 win_rate 固定用例（生产配置，安全） |
-| `bench/bench_winrate_cases.py` | win_rate 基准与逐位对拍 |
+| `bench/bench_winrate_cases.py`（已随 win_rate API 删除） | win_rate 基准与逐位对拍 |
 | `bench/probe_limitation.py` | limitation 分布与阈值覆盖率 |
 | `sim/eval_harness.py` | 算法极限胜率（复刻生产 `play()` 全流水线，**0.5s/局**，比旧脚本快 12x） |
 | `bench/measure_noise.py` | 评估台噪声地板（跨批 σ=3.66pp）与复现性（同 seed 必一致） |

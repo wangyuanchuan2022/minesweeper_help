@@ -1,5 +1,12 @@
 # 会话交接文档（Session Handoff）
 
+> ⚠️ **历史快照（2026-11-05 交接点）**。本文件记录的架构、`ab_policy` 台架、
+> `win_rate` / `part_solve` / `wr_threshold` 接线均为当时状态；这些 API 已于
+> 2026-11-09 删除，部分 bench 脚本与 `run_winrate_suite.cmd` 等启动器也已清理。
+> 接手时请先读 [docs/现行架构与测量.md](docs/现行架构与测量.md) 与
+> [README.md](README.md)，不要按本文的接线描述改代码。清理记录见
+> [state/audit/cleanup_exec.json](state/audit/cleanup_exec.json)。
+
 日期：2026-11-05（**本轮大改：第 2.11~2.16、五、六、七、八、九、十节全部重写，新增第十一节**）
 上一会话：`session-d88a2d3b-bc8b-4512-b930-6cba9a920020`
 本轮会话：`session-52163914-802f-4361-b991-f7a27b4ff18c`（上下文紧张，按用户生命周期规则交接）
@@ -20,7 +27,7 @@ git HEAD：`ff1fa52`（分支 main）
 - 原 Goal id：`goal-93401fa9-4dc0-42b2-af17-a0650f5bfd05`
   （⚠️ 新会话 `get_goal` 返回 null 属正常：goal 是会话级的，以 HANDOFF 记录为准）
 - 项目：`D:\python\projects\minesweeper_help`（扫雷助手，PyQt5 + C++ pybind11 加速）
-- 环境：Python `D:\anaconda3\envs\py310\python.exe`（3.10.16；3.12.7 会 DLL 报错）
+- 环境：Python `<PY310_PYTHON>`（3.10.16；3.12.7 会 DLL 报错）
 
 ### 关键背景：规则决定了难度
 - **Arbiter = 延迟布雷**：首点只保证**本格**安全，不保证 8 邻域（已逆向 `ms_arbiter.exe @0x4d9228`）
@@ -620,7 +627,7 @@ sha256sum utils/mscore.cp310-win_amd64.pyd
 # 若不符：cp utils/mscore.cp310-win_amd64.pyd.bak_baseline utils/mscore.cp310-win_amd64.pyd
 
 # Python 环境（3.10.16；3.12.7 会 DLL 报错）
-# D:\anaconda3\envs\py310\python.exe
+# <PY310_PYTHON>
 
 # 生产预算常量（从代码读，勿凭记忆）
 grep -n "DECISION_TIME_BUDGET\|_PS_RESERVE_S\|_WR_NODE_CAP_RECOMMENDED" utils/probability.py

@@ -1,5 +1,9 @@
 # 交接补充：C++ 推理桥接事故与生产代码组织形式建议
 
+> ⚠️ **历史快照（2026-11-05）**。本文描述的 `ab_policy` / C++ 桥接与
+> `win_rate` 编排链均属旧实现，相关 API 已于 2026-11-09 删除。现行决策链路见
+> [docs/现行架构与测量.md](docs/现行架构与测量.md)。
+
 日期：2026-11-05
 状态：**新增交接章节**，请与主 `HANDOFF.md` 一并阅读
 触发：用户指示「考察生产代码是否有更好的组织形式，兼顾点击与 C 语言推理」
@@ -67,7 +71,7 @@ build2: ECB294ADE3BC9C7C...
 
 正确判据：
 1. **导出符号集合**（已实现 `cpp/check_mscore_exports.cpp`，纯 C++ 检查器）
-   - 运行需设 `PYTHONHOME=D:\anaconda3\envs\py310` 且 PATH 含该 env 与 DLLs
+   - 运行需设 `PYTHONHOME=<PY310_ENV>` 且 PATH 含该 env 与 DLLs
    - 基线 vs B1 改后：8 个导出**逐行一致**（已通过）
 2. **数值对拍**（对同一输入比 `exact_eval` 输出）
    - 注意：两个 pyd 都导出 `PyInit_mscore`，**同一进程内不能按不同别名加载**
