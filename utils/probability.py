@@ -8,8 +8,12 @@
 ``w``/``h``/``a``/``p``/``limit``/``is_play``/``num``/``count``/``memory``/
 ``checked``/``pos_dict_list``/``appended_pos``/``bx``/``by``/``cell_width``，
 以及 ``cell_around``/``get_set_1``/``complete_scan``/``mine_clear1``/
-``mine_clear3_1``/``_locate``/``_load_stats``/``_flush_stats``/
-``_throttled_pv_signal_emit`` 与各 Qt 信号。
+``mine_clear3_1``/``rescan_after_click``/``_throttled_pv_signal_emit``
+与各 Qt 信号。
+
+⚠️ 本模块**不做任何逐点击的失败弹窗探测**（用户裁决 2026-11-07）：局末棋盘
+出现雷/失败弹窗时扫描不准属于正常节奏，不应打断自动循环——失败判定统一
+由 ``utils/solver.py`` 主循环的胜负弹窗检测接管。
 """
 import hashlib
 import json
@@ -25,8 +29,229 @@ import cv2 as cv
 from logger import get_logger
 from .combinatorics import A, C_num, combination_ratio, get_list
 from . import native
+from . import decide_trace
+from . import e2e_probe as probe
+from .vision import LowConfidenceScanError
 
 logger = get_logger(__name__)
+
+
+def _decide_diag(r):
+    """把 C++ decide 返回的 dict 摘要成可写入日志的诊断串。
+
+    背景（真机 2026-11-08 17:54 连续 6 次「decide 返回无效坐标」）：旧日志
+    只写「返回无效坐标」，不含 reason / world_upper / prob 规模，导致无法
+    区分「盘面识别错」「世界枚举不可行」还是「C++ 内部放弃」——排查卡死。
+    本函数只做**只读摘要**，不改变任何决策语义；r 为 None/非 dict 时安全返回。
+    """
+    if not isinstance(r, dict):
+        return f"decide 返回 {type(r).__name__}（非 dict）"
+    fields = []
+    for k in ("reason", "x", "y", "world_upper", "path", "confidence"):
+        if k in r:
+            fields.append(f"{k}={r.get(k)}")
+    prob = r.get("prob")
+    if hasattr(prob, "__len__"):
+        fields.append(f"prob格数={len(prob)}")
+    tied = r.get("tied")
+    if hasattr(tied, "__len__"):
+        fields.append(f"tied格数={len(tied)}")
+    return ", ".join(fields) if fields else "decide 返回空 dict"
+
+
+def _help_transition_meta(r):
+    """把 C++ decide 返回的转移元数据规整成 UI 契约。
+
+    帮助模式的精确前瞻若失败，C++ 会通过 ``transition_reason`` 给出真实原因
+    （如世界数超限）；这里把它并进 meta，供浮层显示准确文案而不是笼统的
+    「暂无」。成功时 meta 本身已带 basis/p_click_safe/world_count。
+    """
+    meta = dict(r.get("transition_meta") or {})
+    reason = r.get("transition_reason")
+    if reason and not (r.get("transitions")):
+        meta["reason"] = str(reason)
+    return meta or None
+
+
+# ---------------------------------------------------------------------------
+# 盘面逻辑一致性校验（用户指令 2026-11-08：C++ decide 之前必须先验证盘面）
+#
+# 背景：视觉扫描偶发错误（DPI/主题/遮挡/半透明叠加）会产出**逻辑上不可能**的
+# 盘面——例如某个「1」的邻域已标 2 个雷、或总雷数超过全部未开格数。用这种
+# 盘面求解只会得到错误的概率与点击建议，甚至让 C++ 侧抛异常/静默降级。
+# 因此在进入 decide 之前先做多项式时间（O(格数)）的可行性校验：
+#   ① 逐格邻域可满足性：已标雷数 ≤ 数字 ≤ 已标雷数 + 未开格数
+#   ② 总雷数可行性：已标雷数 ≤ a，且 a - 已标雷数 ≤ 全部未开格数
+# 只检查「不可能满足」的硬矛盾，不检查跨格全局一致性（那需要求解，交给
+# 枚举阶段；枚举无解时由调用方按"决策不可用"处理）。
+# 返回 (ok, problems)：problems 是 [(x, y, 说明)]，最多保留 8 条供弹窗展示。
+# ---------------------------------------------------------------------------
+MAX_REPORTED_BOARD_PROBLEMS = 8
+
+
+def validate_board_consistency(cell_value, a, w, h):
+    """校验扫描出的盘面是否存在逻辑矛盾。
+
+    参数（与 decide 同口径）：
+      cell_value —— (h+2, w+2) int32；1-based 内部区域，
+                    0-8=已开数字、9=未开、10=已标记雷、11=推理安全
+      a / w / h —— 总雷数 / 宽 / 高
+
+    返回 (ok, problems)：
+      ok=True  —— 未发现硬矛盾，可以进入 decide
+      ok=False —— problems 非空，列出具体格子与原因
+    """
+    problems = []
+    try:
+        cv = np.asarray(cell_value)
+    except Exception:  # noqa: BLE001 —— 非数组输入视为不可校验
+        return False, [(0, 0, f"cell_value 不是数组：{type(cell_value)}")]
+    if cv.ndim != 2:
+        return False, [(0, 0, f"cell_value 维度错误：{cv.ndim}")]
+    if cv.shape[0] < h + 2 or cv.shape[1] < w + 2:
+        return False, [(0, 0,
+                        f"cell_value 形状 {cv.shape} 小于期望 {(h+2, w+2)}")]
+    if a < 0:
+        return False, [(0, 0, f"总雷数 a={a} 为负")]
+
+    num10 = 0
+    num9 = 0
+    # ① 逐格邻域可满足性
+    for y in range(1, h + 1):
+        for x in range(1, w + 1):
+            v = int(cv[y, x])
+            if v == 10:
+                num10 += 1
+                continue
+            if v == 9:
+                num9 += 1
+                continue
+            if v == 11:
+                # 11 = 推理确定安全格：既不是已标雷，也不参与邻域雷数，
+                # 但它是**不可布雷**的格（否则与"已证明安全"矛盾）。
+                # 对邻域统计而言等价于已开格（不计入 closed），不报错。
+                continue
+            if not (0 <= v <= 8):
+                if len(problems) < MAX_REPORTED_BOARD_PROBLEMS:
+                    problems.append(
+                        (x, y, f"非法编码 {v}（应为 0-8/9/10/11）"))
+                continue
+            # 统计 8 邻域
+            flagged = 0
+            closed = 0
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nx, ny = x + dx, y + dy
+                    if not (1 <= nx <= w and 1 <= ny <= h):
+                        continue
+                    nv = int(cv[ny, nx])
+                    if nv == 10:
+                        flagged += 1
+                    elif nv == 9:
+                        # 只有真正「未开且未判定」的格才可能布雷。
+                        # 11=推理确定安全，不可布雷，不计入 closed。
+                        closed += 1
+            # 已标雷数已超过数字 ⇒ 不可能
+            if flagged > v:
+                if len(problems) < MAX_REPORTED_BOARD_PROBLEMS:
+                    problems.append(
+                        (x, y, f"数字 {v} 但邻域已标 {flagged} 个雷（超额）"))
+                continue
+            # 未开格不够凑满剩余雷数 ⇒ 不可能
+            if v - flagged > closed:
+                if len(problems) < MAX_REPORTED_BOARD_PROBLEMS:
+                    problems.append(
+                        (x, y,
+                         f"数字 {v} 需 {v - flagged} 个雷，但邻域只剩 "
+                         f"{closed} 个未开格"))
+
+    # ② 总雷数可行性
+    if num10 > a:
+        if len(problems) < MAX_REPORTED_BOARD_PROBLEMS:
+            problems.append((0, 0, f"已标雷 {num10} 个 > 总雷数 {a}"))
+    else:
+        remaining = a - num10
+        if remaining > num9:
+            if len(problems) < MAX_REPORTED_BOARD_PROBLEMS:
+                problems.append(
+                    (0, 0,
+                     f"剩余雷 {remaining} 个 > 未开格 {num9} 个"))
+        elif remaining > 0 and num9 > 0:
+            # ③ 未开格「可布雷性」（2026-11-08 实测补丁，含误报复盘）
+            # 必要判据：一个未开格 c **不能**布雷 ⟺ 存在某个数字邻居 v，
+            # 其剩余需求 (v - 已标雷数) 已为 0（c 再布雷会让 v 超额）。
+            # 反之：
+            #   · c 不在任何数字的 8 邻域内 ⇒ 可自由布雷（不受约束）
+            #   · c 的数字邻居都还有需求 ⇒ 可能布雷
+            # 可布雷格总数 < 剩余雷数 ⇒ 全局矛盾。
+            #
+            # ⚠️ 首版实现写成「只统计与仍有需求的数字相邻的未开格」，实测
+            # 240 个真实盘面误报 40 个（全在开局）：开局时绝大多数未开格远离
+            # 已开数字区、可自由布雷，却被漏计。以下为修正后的 O(n) 判据。
+            #
+            # 为什么必须加这条（真实故障根因）：抓图退化（黑屏/遮挡）时识别器
+            # 会把大片格子认成「数字 0」（实测黑图 → 142 个 0 + 338 个未开），
+            # 每个 0 的邻域自洽成立、单格校验全过；但所有相邻未开格都被那些
+            # 「已满足的 0」排除布雷资格，99 个雷无处可放。只查单格会漏掉这类
+            # 整盘矛盾，让错误盘面进入 decide（真机 17:54 连续 6 次失败）。
+            blocked = None  # 惰性创建的位图：True=该未开格被锁死为安全
+            for y in range(1, h + 1):
+                for x in range(1, w + 1):
+                    v = int(cv[y, x])
+                    if not (0 <= v <= 8):
+                        continue
+                    flagged = 0
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            if dx == 0 and dy == 0:
+                                continue
+                            nx, ny = x + dx, y + dy
+                            if not (1 <= nx <= w and 1 <= ny <= h):
+                                continue
+                            if int(cv[ny, nx]) == 10:
+                                flagged += 1
+                    if v - flagged != 0:
+                        continue        # 该数字仍需雷，不能锁死邻格
+                    if blocked is None:
+                        blocked = [[False] * (w + 2) for _ in range(h + 2)]
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            if dx == 0 and dy == 0:
+                                continue
+                            nx, ny = x + dx, y + dy
+                            if 1 <= nx <= w and 1 <= ny <= h \
+                                    and int(cv[ny, nx]) == 9:
+                                blocked[ny][nx] = True
+            # 可布雷格 = 未开格中未被锁死的
+            placeable = 0
+            for y in range(1, h + 1):
+                for x in range(1, w + 1):
+                    if int(cv[y, x]) != 9:
+                        continue
+                    if blocked is not None and blocked[y][x]:
+                        continue
+                    placeable += 1
+            if placeable < remaining:
+                if len(problems) < MAX_REPORTED_BOARD_PROBLEMS:
+                    problems.append(
+                        (0, 0,
+                         f"剩余雷 {remaining} 个，但只有 {placeable} 个未开格"
+                         f"可能布雷（其余被已满足的数字约束排除）"
+                         f"：盘面识别很可能有误"))
+    return (not problems), problems
+
+
+def format_board_problems(problems):
+    """把校验问题列表格式化成单行/多行文案（供弹窗与日志）。"""
+    if not problems:
+        return ""
+    lines = []
+    for (x, y, msg) in problems[:MAX_REPORTED_BOARD_PROBLEMS]:
+        lines.append(f"({x}, {y}) {msg}" if x or y else msg)
+    return "；".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # 决策耗时预算控制：把 number5_1 单次决策的总计算时间控制在 10 秒以内。
@@ -39,101 +264,63 @@ logger = get_logger(__name__)
 # MSW_NATIVE_TUNE=0）时启用，纯 Python 回退自动恢复原始静态行为。
 # ---------------------------------------------------------------------------
 DECISION_TIME_BUDGET = 30.0  # number5_1 单次决策总预算（秒，含视觉扫描）——用户确认的上限
+# 帮助模式预算乘数（用户指令 2026-11-06 与 2026-11-07「可以稍微把预算放高一点」）。
+# 由 utils/solver.py help() 设为该值并在结束时恢复；自动模式恒 1.0。
+# 取值 3.0 ⇒ 帮助模式单次决策 30s × 3 = 90s（自动模式仍为 30s 不变）。
+# 注意：模块级变量，帮助/自动线程并发时共享——当前 UI 两者不同页互斥使用，
+# 且 C++ decide 主路径不读预算（只影响 Python 回退链），泄漏后果仅是预算放宽。
+# 帮助模式 C++ decide 放宽参数（用户指令：「帮助人类的话可以适当提高推理的
+# 预算」「可以稍微把预算放高一点」）。
+#   wr_threshold: 自动基线 = 6 + LIMIT_BONUS_WIN_RATE(2) = 8；帮助 = 基线 + 10 = 18
+#                 （比自动多 10 ⇒ 更多局面进自适应前瞻层，深度随 limitation 自适应）
+#   node_cap:     自动 = 200 万；帮助 ×3 = 600 万（配合 90s 预算给前瞻更大内存余量）
+# 这两个值只影响 C++ 决策质量，不改任何正确性语义。
+HELP_NODE_CAP = 6_000_000
+# 帮助模式预算乘数（用户指令 2026-11-06 与 2026-11-07「可以稍微把预算放高一点」）。
+# 由 utils/solver.py help() 设为该值并在结束时恢复；自动模式恒 1.0。
+# 取值 3.0 ⇒ 帮助模式单次决策 30s × 3 = 90s（自动模式仍为 30s 不变）。
+# 注意：模块级变量，帮助/自动线程并发时共享——当前 UI 两者不同页互斥使用，
+# 且 C++ decide 主路径不读预算（只影响 Python 回退链），泄漏后果仅是预算放宽。
+_DECISION_BUDGET_MULT = 1.0
+HELP_BUDGET_MULT = 3.0
+# C++ decide 连续失败计数（成功后清零；ERROR 日志可见性用，见 _number5_1_core）
+_DECIDE_FAIL_SEQ = [0]
+# 「C++ decide 决策不可用」的统一文案（用户批准方案 A：失败必须可见、绝不静默
+# 回退到重复 Python 决策链）。{where} 由调用点填空，指明是哪一类失败。
+DECIDE_UNAVAILABLE_MSG = (
+    "C++ decide 决策不可用（{where}）：按「不回退重复 Python 决策链」策略处理，"
+    "本轮改为安全重扫（不点击任何格子）。请检查 settings 与 C++ 加速模块是否可用。"
+)
+
+
+def decision_budget():
+    """当前生效的决策预算秒数（帮助模式 ×2）。"""
+    return DECISION_TIME_BUDGET * _DECISION_BUDGET_MULT
 _PS_REF_SIZE = 33            # 模型参考组大小（实测标定点：C++ 2.3ms / Python 976ms）
 _PS_SAFETY = 2.0             # 预测安全系数（组形状差异可达 10x + 模型误差）
-_PS_RESERVE_S = 3.0          # 枚举阶段为之后的 win_rate / pbs / 决策输出预留的时间（秒）
 # win_rate 阈值调节（用户规则：步长 0.5，无上限，下限 0）——起点 6+2=8，
-# 见 _wr_update：升档需边界采样(|limitation-阈值|≤Δ)且耗时<预算×_WR_FAST_FRAC；
-# 降档为安全阀（耗时>预算×_WR_SLOW_FRAC，不要求边界，否则升上去收不回来）
-_WR_STEP = 0.5             # 每次升降 0.5
-_WR_EDGE_DELTA = 0.25      # 升档的“边界采样”邻域
-_WR_FAST_FRAC = 0.25       # 升档耗时上限（预算比例）
-_WR_SLOW_FRAC = 1       # 降档耗时下限（预算比例）；=1 即 win_rate 真超总预算才降档（安全阀，勿按旧版 75% 理解）
 
 # ---------------------------------------------------------------------------
-# win_rate 节点数硬上限（防内存爆炸的最小闸门）
+# win_rate 节点数硬上限的历史说明（**该机制已于 2026-11-09 随 win_rate 删除**）
 #
-# ==================== 为什么需要它、以及为什么"压缩世界表示"不够 ====================
-# win_rate 的内存结构有两项：
-#     ① 世界列表：nworlds × 2304B（每世界一整盘 (h+2)(w+2) int32）
-#     ② memo 缓存：live_nodes × ~200B（std::string 键 + unordered_map 节点）
-# 关键事实：**memo 只写不删**（cpp/mscore.cpp wr_f 末尾只赋值），
-# 所以 live_nodes == 累计访问节点数，且它随 (候选数 × 世界分叉 × 深度) 组合增长。
-# 用实测参数做的容量模型（bench/mem_model.py）显示：生产中位 4 世界时 ①②都是
-# 微秒级；但单用例实测到 1e5 节点时，②约占 19MB 而①不足 0.15MB —— 即
-# **节点开销完全主导**。把世界压到 64B（位集）在该场景几乎不省内存。
-# 因此真正的防爆手段是给节点数封顶，而不是压缩世界表示。
+# 保留本章注释只为追溯历史标定口径，勿据此恢复逻辑。
 #
-# ==================== 取值（按内存预算标定）====================
-# 默认**启用**（防爆闸门默认关闭等于没有防护）。
+# 原机制：win_rate 的内存有两项 ——① 世界列表 nworlds × 2304B；
+# ② memo 缓存 live_nodes × ~200B（memo 只写不删，随候选数×分叉×深度组合增长）。
+# 实测节点开销完全主导（1e5 节点时 memo ≈19MB、世界列表 <0.15MB），
+# 因此原始防爆手段是给**节点数**封顶。
 #
-# 标定唯一依据 = 内存预算 + 实测每节点字节：
-#   实测每节点内存（bench/calibrate_node_cap.py，真实 RSS 峰值采样）：
-#       cap=2e3    → ΔRSS 0.00 MB
-#       cap=1e4    → ΔRSS 0.10 MB
-#       cap=5e4    → ΔRSS 0.73 MB
-#       cap=2e5    → ΔRSS 4.04 MB
-#       不限制      → ΔRSS 8.25 MB
-#   ⇒ 每节点 **中位 15.2 B、最大 21.2 B**。取 25 B/节点（留余量）作口径：
-#       2e6 × 25B ≈ 48 MB
-#   对照 1.5GB 预算（与 _wr_memory_ok 同口径）/ 留 8x 余量 ⇒ 2e6 安全。
+# 原标定（真实 RSS 峰值采样，样本来自已删的 calibrate_node_cap.py）：
+#     cap=2e3 → ΔRSS 0.00MB / 1e4 → 0.10MB / 5e4 → 0.73MB / 2e5 → 4.04MB
+#     ⇒ 每节点中位 15.2B、最大 21.2B；取 25B/节点留余量 ⇒ 2e6 × 25B ≈ 48MB，
+#       对照 1.5GB 决策层硬上限留 8x 余量 ⇒ 2e6 安全。
 #
-# ⚠️ **不要**用"本机用例是否会触发"来反推 cap：
-#   防护器的预期行为就是**正常路径不触发、异常路径及时拦截**。
-#   实测（bench 用例逐例二分）本机最大节点需求仅 424,114，
-#   因此在 2e6 下零触发是**正确**的，不构成"闸门无效"的理由——
-#   无效与否由「强制超限负测 + 峰值 RSS」证明，见：
-#     bench/verify_node_cap.py        超限必抛、消息可辨识
-#     bench/verify_node_cap_e2e.py    异常穿越调用链进安全降级 + 计数可观测
-#     bench/calibrate_node_cap.py     真实 RSS：cap=2e5 时 ΔRSS 4.04MB
-# 若某天出现比实测最坏还大 4.7 倍的异常局面（>1e6 节点），闸门会拦截并降级，
-# 这正是它存在的意义。
-#
-# 生产参照：上一轮 12 局 win_rate 只触发 8 次、世界数中位 4，
-# 单次节点数远低于 2e6 ⇒ **正常对局行为与加闸前逐位一致**（对拍为证）。
-#
-# ==================== 超限语义 ====================
-# C++ 抛 runtime_error("win_rate node cap exceeded ...") → 本文件**按消息子串**
-# 识别后转成 _WrNodeCapExceeded → number5_1 捕获后**降级走
-# process_bigger_situation（贪心）**。绝不回退到纯 Python（那里同样无上限）。
-# 注意：**只有**含 "node cap exceeded" 的异常才降级；其他 C++ runtime_error
-# 仍走原有的"回退纯 Python"语义，不会被静默吞成贪心结果
-# （负向测试 bench/verify_node_cap_e2e.py 第 I 节为证）。
-# 每次触发计数在 self._wr_nodecap_hits，可观测。
+# 现状态（2026-11-09）：C++ 决策链已无 py_win_rate / wr_f，节点预算改由
+# ExactEngine 的 node_cap 与时间闸在 C++ 内部自理（见 cpp/mscore.cpp）。
+# 本文件下方 _wr_node_cap / _WrNodeCapExceeded / _WR_NODECAP_TOTAL 仅为
+# 历史遗留符号：部分 bench 与测试仍导入它们，硬删会连锁破坏，
+# 故保留定义但**不再有生产消费路径**。
 # ---------------------------------------------------------------------------
-_WR_NODE_CAP_RECOMMENDED = 2000000
-
-
-def _wr_node_cap():
-    """读取 win_rate 节点数硬上限（默认 2e6，实测标定）。
-
-    环境变量 MSW_WR_NODE_CAP：正整数覆盖；**0 = 显式关闭**（仅对拍调试用）；
-    负值/非法值回落默认值并只警告一次。
-    """
-    global _WR_NODE_CAP_WARNED
-    raw = os.environ.get("MSW_WR_NODE_CAP", "").strip()
-    if not raw:
-        return _WR_NODE_CAP_RECOMMENDED
-    try:
-        v = int(raw)
-        if v < 0:
-            return _WR_NODE_CAP_RECOMMENDED
-        return v                     # 0 = 显式关闭（对拍用）
-    except ValueError:
-        if not _WR_NODE_CAP_WARNED:
-            _WR_NODE_CAP_WARNED = True
-            logger.warning("MSW_WR_NODE_CAP=%r 不是整数，按默认 %d 处理", raw,
-                           _WR_NODE_CAP_RECOMMENDED)
-        return _WR_NODE_CAP_RECOMMENDED
-
-
-_WR_NODE_CAP_WARNED = False
-
-
-class _WrNodeCapExceeded(Exception):
-    """win_rate 节点数超硬上限（用于与普通 C++ 失败区分，走不同降级路径）。"""
-
-
 def _ps_default_base_ms():
     """模型初值：33 格组在当前模式下的典型耗时（毫秒）。
 
@@ -148,9 +335,6 @@ def _ps_default_base_ms():
 # 每个 Solver 实例有自己的 _wr_nodecap_hits，跨局会随实例丢弃；
 # 这里用模块级单元素列表保留跨局累计，便于 bench 扫描 node_cap 时核对
 # "到底触发了几次"。bench 每局开头通过 ab_policy.reset_gate_stats() 清零。
-_WR_NODECAP_TOTAL = [0]
-
-
 def _ps_base_ms(state):
     """读取模型基准耗时；模式切换（C++↔纯 Python）时重置。
 
@@ -347,50 +531,9 @@ def _tb_save(state):
         logger.debug("模型状态落盘失败（忽略）: %s", e)
 
 
-def _budget_remaining(state, t_start):
-    """距决策预算截止的剩余秒数（扣除枚举后阶段预留）。"""
-    return t_start + DECISION_TIME_BUDGET - _PS_RESERVE_S - time.perf_counter()
 
 
-def _wr_current_threshold(tb):
-    """返回当前 win_rate 阈值（无观测时为起点 8；持久化在 tb["wr"]["t"]）。
 
-    仅 native.tuned() 的 number5_1 决策调用；纯 Python（native 不可用）阈值恒 6。
-    """
-    start = 6.0 + native.LIMIT_BONUS_WIN_RATE  # 起点：6+2=8
-    wr = tb.get("wr")
-    if wr is None:
-        return start
-    return float(wr.get("t", start))
-
-
-def _wr_update(tb, limitation, ms):
-    """按一次真实的 win_rate 观测更新阈值。
-
-    用户规则（每次只升降 0.5；无上限，下限 0）：
-      升档（须同时满足）：
-        - 本次真实 limitation 落在阈值 ±0.25 之内（边界采样：证明阈值临界处
-          win_rate 也很快，才敢把阈值外推覆盖更大局面）；
-        - 且本次 win_rate 耗时 < 预算×25%。
-        → 阈值 +0.5
-      降档（安全阀，任何情形）：
-        - 耗时 > 预算×_WR_SLOW_FRAC（当前 =1，真超预算）→ 阈值 −0.5（下限 0）。
-        注：降档不要求边界邻域——若降档也要求邻域，阈值被升上去后真实 limitation
-        分布一旦整体低于阈值就再也收不回来（升档只发生在被边界“碰到”时）。
-    其余情形阈值不变。返回更新后的阈值并写入 tb["wr"]（含 limitation 观测）。
-    """
-    budget_ms = DECISION_TIME_BUDGET * 1000.0
-    th = _wr_current_threshold(tb)
-    if ms < budget_ms * _WR_FAST_FRAC and abs(limitation - th) <= _WR_EDGE_DELTA:
-        th += 0.5
-    elif ms > budget_ms * _WR_SLOW_FRAC:
-        th = max(0.0, th - 0.5)
-    wr = tb.setdefault("wr", {})
-    wr["t"] = th
-    wr["limitation"] = limitation
-    wr["ms"] = ms
-    _tb_save(tb)
-    return th
 
 
 class ProbabilityMixin:
@@ -427,7 +570,7 @@ class ProbabilityMixin:
 
         stop = threading.Event()
         if predicted_s is None:
-            predicted_s = DECISION_TIME_BUDGET
+            predicted_s = decision_budget()
         t0 = time.perf_counter()
         slf = self
 
@@ -466,6 +609,136 @@ class ProbabilityMixin:
                 self._pv_state = None
                 self._throttled_pv_signal_emit(100)  # 决策收尾（特殊值直通节流器）
 
+    def _decide_unavailable(self, cell_value, exc=None, where="", detail=None):
+        """C++ decide 决策不可用的统一出口（自动/帮助共用；**绝不回退 Python 链**）。
+
+        用户批准方案 A 的硬约束：decide 失败 / 不可用 / 返回无效坐标时，行为必须
+        「可观测错误 + 全盘安全重扫 + 警告 + 显式返回」，不得静默回退到已被删除的
+        重复 Python 决策链（`utils/probability.py:706-709` 记录的「点一格两下/两个
+        弹窗」历史根因即该类静默回退）。
+
+        ``detail``（2026-11-08 新增诊断字段）：C++ 返回 dict 里的 reason /
+        world_upper / prob 规模等摘要。此前只记「返回无效坐标」，无法区分
+        是「盘面识别错」「世界枚举不可行」还是「C++ 内部放弃」——真机排查
+        （17:54 连续 6 次失败）卡在这里没有可判读数。
+
+        语义固定为六项：
+          ① ERROR 级日志，文案含「不回退」（`DECIDE_UNAVAILABLE_MSG`），有异常时
+             带 `exc_info`；
+          ② 递增模块级 `_DECIDE_FAIL_SEQ[0]`（连续失败计数，成功后由调用点清零）；
+          ③ 发 `warning_signal`（主窗口已接线到弹窗，见 `main.py:392-394`）；
+          ④ 重建全 9 棋盘后 `self.complete_scan(...)` 全盘安全重扫；
+          ⑤ `self.count += 1`（与空盘早退重扫 `:552` 同语义：本轮未产生决策，
+             主循环 `solver.py:283` 的 `count >= 3` 因此仍能识别「设置不正确」）；
+          ⑥ **返回重扫后的 `cell_value`**，调用方必须 `return` 它，把控制流交回
+             `play()` / `help()` 主循环下一轮重新决策。
+
+        本 helper 不点击、不写 `_last_heatmap` 新值——不在可疑盘面上产生动作。
+        """
+        msg = DECIDE_UNAVAILABLE_MSG.format(where=where or "unknown")
+        _DECIDE_FAIL_SEQ[0] += 1
+        # 【端到端探针】决策失败是可观测的功能事件：落盘以便分析器统计
+        # 「decide 失败率 / 失败类型」，而不是只靠翻日志。
+        probe.error("decide_unavailable", where or "unknown",
+                    seq=_DECIDE_FAIL_SEQ[0],
+                    exc=type(exc).__name__ if exc is not None else None)
+        # 诊断：把 C++ 返回的关键字段一并记录，否则「无效坐标」无任何可判读数。
+        _diag = ""
+        if detail:
+            try:
+                _diag = (" ｜ decide 返回: "
+                         + ", ".join(f"{k}={detail[k]}" for k in detail))
+            except Exception:  # noqa: BLE001 —— 诊断拼装失败不影响主流程
+                _diag = f" ｜ decide 返回: {detail!r}"
+        logger.error("%s（第 %d 次连续）%s", msg, _DECIDE_FAIL_SEQ[0], _diag,
+                     exc_info=exc is not None)
+        # 弹窗去重（方案 A 裁决 4 的防风暴约束）：只在**一次连续失败的首发**
+        # 弹一次 warning；后续同一串失败只留 ERROR 日志。否则帮助模式的
+        # `help()` 5 轮 number5_1 重试会连弹 5 次（`utils/solver.py:532-546`），
+        # 与「一次失败一次提示」的用户体验冲突。成功路径会把计数清零
+        # （`:DECIDE_FAIL_SEQ[0] = 0`），下一串失败重新弹一次。
+        if _DECIDE_FAIL_SEQ[0] == 1:
+            try:
+                self.warning_signal.emit(msg)
+            except Exception as e:  # noqa: BLE001 —— 发射失败不得掩盖决策失败
+                logger.debug("warning_signal 发射失败（忽略）: %s", e)
+        h = cell_value.shape[0] - 2
+        w = cell_value.shape[1] - 2
+        fresh = np.zeros((h + 2, w + 2), dtype="int32")
+        for i in range(1, w + 1):
+            for j in range(1, h + 1):
+                fresh[j, i] = 9
+        try:
+            fresh = self.complete_scan(fresh)
+        except LowConfidenceScanError as e:
+            # 安全重扫同样可能因局末失败弹窗而不可信。此时**不能**让异常继续
+            # 上抛（会绕过本次 helper 的失败语义、甚至直接掀掉自动循环线程）：
+            # 保留重建的全 9 棋盘并原样返回，交回主循环去做胜负弹窗判定。
+            logger.warning("决策不可用后的安全重扫不确定，返回未开棋盘交回主循环：%s", e)
+        self.count += 1
+        return fresh
+
+    def _click_decision_cell(self, cell):
+        """按统一 1-based (x,y) 契约点击一个 C++ 决策格。"""
+        x, y = int(cell[0]), int(cell[1])
+        if x < 1 or y < 1:
+            raise ValueError(f"invalid decision cell: {(x, y)}")
+        with probe.span("click.pyautogui"):
+            pyautogui.click(
+                self.bx + x * self.cell_width,
+                self.by + y * self.cell_width,
+            )
+
+    @staticmethod
+    def _parse_transitions(r):
+        """把 C++ decide 返回的 transitions 规整成 UI 契约列表。
+
+        帮助模式由 C++ 在决策出口统一产出（OPTIMAL 层自带，其余层补前瞻）。
+        值为**条件概率**：以「点击该格后安全」为前提，各可观测分支的概率
+        （同分支概率之和 = 1）。每个分支带 ``board`` = 点击后的完整 7×7
+        局部局面，供浮层画多个小棋盘。其它模式返回 None ⇒ UI 显示"暂无"。
+        绝不在此合成任何数值或局面。
+        """
+        raw = (r or {}).get("transitions")
+        if not raw:
+            return None
+        out = []
+        for item in raw:
+            try:
+                board = item.get("board")
+                out.append({
+                    "probability": float(item["probability"]),
+                    "new_cells": [tuple(int(v) for v in c)
+                                  for c in (item.get("new_cells") or [])],
+                    "label": str(item.get("label") or ""),
+                    "board": [[int(v) for v in row] for row in board]
+                             if board else None,
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out or None
+
+    def _emit_live_heatmap(self, cell_value, phase="decision"):
+        """在 C++ decide 内部每轮向 UI 推送最新决策，而不是等 number5_1 返回。
+
+        自动模式的 decide→click→rescan 循环可能持续很久；若只由 solver.play 在
+        number5_1 返回后发信号，界面下方文字和热力图会整段时间停在旧值。这里复用
+        solver 的唯一发射口，保持 payload 结构一致；played/win 从 play() 在进入
+        number5_1 前写入的短生命周期字段读取，不参与算法决策。
+        """
+        emit = getattr(self, "_emit_heatmap", None)
+        if not callable(emit):
+            return
+        try:
+            emit(
+                cell_value,
+                getattr(self, "_heatmap_played", 0),
+                getattr(self, "_heatmap_win", 0),
+                phase=phase,
+            )
+        except Exception as e:  # noqa: BLE001 —— UI 推送失败不得打断点击链
+            logger.debug("实时热力图发射失败（忽略）: %s", e)
+
     def _number5_1_core(self, cell_value):
         """
         5.1 数字统计
@@ -475,13 +748,20 @@ class ProbabilityMixin:
         confidence = 0
         w = cell_value.shape[1] - 2
         h = cell_value.shape[0] - 2
-        # 耗时预算控制（仅 tuned 模式启用；状态跨决策记忆，见模块级说明）
-        t_decision_start = time.perf_counter()
+        # 耗时预算状态初始化（仅 tuned 模式）。方案 A 删除自动模式 Python 决策链
+        # 后，**预算裁剪的消费点**（part_solve 枚举段的 limit 压缩、win_rate 阈值
+        # 读写）已随之移除；但这一层状态仍需初始化，原因有二：
+        #   ① `_ps_refit_k` 的拟合结果经 `_tb_save` 落盘 `state/time_budget.json`，
+        #      是跨进程持久行为（bench/verify_fitk_window.py 等据此验收）；
+        #   ② bench（`bench/sweep_prod_params.py`、`bench/ab_policy.py`）与
+        #      `sim/eval_harness.py` 直接读写实例属性 `_time_budget`。
         if native.tuned() and not hasattr(self, "_time_budget"):
             self._time_budget = _tb_load()
             _ps_refit_k(self._time_budget)   # 每次运行启动：用历史样本自动拟合 k
-        _tb = getattr(self, "_time_budget", None) if native.tuned() else None
-        # win_rate 内存降级警告去重集合（见 _wr_memory_ok）
+        # win_rate 内存降级警告去重集合。
+        # 注：产生该警告的 _wr_memory_ok 与 win_rate 方法已于 2026-11-09 按用户
+        # 裁决删除（C++ 决策链与 Python 生产侧均零调用）。集合本身保留，因为
+        # `_wr_mem_warned` 仍在若干历史 bench 脚本与测试的预置路径上被引用。
         if not hasattr(self, "_wr_mem_warned"):
             self._wr_mem_warned = set()
         # win_rate 节点数超限触发次数（可观测：降级是否发生过、发生几次）
@@ -533,1329 +813,463 @@ class ProbabilityMixin:
             for i in range(1, w + 1):
                 for j in range(1, h + 1):
                     cell_value[j, i] = 9
-            cell_value = self.complete_scan(cell_value)
+            try:
+                cell_value = self.complete_scan(cell_value)
+            except LowConfidenceScanError as e:
+                # 局末失败弹窗盖住棋盘时扫描不可信：本轮作废并返回未开棋盘，
+                # **不计 count、不弹警告**——否则 play() 的 `count >= 3` 会把
+                # 「刚死了一局」误判成「设置错误」而停掉自动循环（用户裁决
+                # 2026-11-07：扫描不确定不得影响自动循环执行）。
+                # 同时清空旧热力图，避免 UI 把上一局概率误显示成当前进度。
+                self._last_heatmap = {}
+                logger.warning("全盘扫描不确定，本轮作废（不影响自动循环）：%s", e)
+                return cell_value
             self.count += 1
             return cell_value
 
-        # ---- C++ 三层统一决策（OPTIMAL / 自适应前瞻 / pbs+PSEQ）----
-        # 2000 局角落基线 38.05%（vs 中心 24% 旧基线，+14pp 总提升）。
-        # 仅 MSW_TRIAL_DECIDE 构建可用；不可用时走下方原有 Python 决策链。
-        if native.has_decide():
-            try:
-                r = native.decide(cell_value, self.a, w, h)
-                if r and r["x"] >= 1 and r["y"] >= 1:
-                    rx, ry = int(r["x"]), int(r["y"])
-                    reason = str(r["reason"])
-                    confidence = float(r.get("confidence", 0))
-                    prob = r.get("prob") or {}
-                    tied = [(int(c[0]), int(c[1])) for c in (r.get("tied") or [])]
-                    # 概率热力图
-                    self._last_heatmap = {
-                        f"({k[0]},{k[1]})": {"pos": (int(k[0]), int(k[1])),
-                                              "confidence": round(float(v), 5)}
-                        for k, v in prob.items()
-                    }
-                    # 帮助/解释数据
-                    self.pos_dict_list.append({
-                        "pos": (rx, ry),
-                        "confidence": round(confidence, 5),
-                        "num": self.num,
-                        "is_mine": False,
-                        "is_best": True,
-                        "exp": f"C++ 三层决策 ({reason})",
-                        "is_recommend": True,
-                    })
-                    # certain_safe 批量：点全部确定安全格
-                    if reason == "certain_safe" and tied:
-                        for (bx, by) in tied[:64]:
-                            pyautogui.click(
-                                self.bx + (bx - 1) * self.cell_width,
-                                self.by + (by - 1) * self.cell_width
-                            )
-                            time.sleep(setting.sleep)
-                    else:
-                        pyautogui.click(
-                            self.bx + (rx - 1) * self.cell_width,
-                            self.by + (ry - 1) * self.cell_width
-                        )
-                        time.sleep(setting.sleep)
-                    return cell_value
-            except Exception:
-                logger.debug("C++ decide failed, falling back to Python chain", exc_info=True)
-        # ---- C++ 三层决策结束 ----
-
-        limitation = 12
-        # win_rate 触发阈值：C++ 提速后按实测放宽（原 6；纯 Python / MSW_NATIVE_TUNE=0 保持 6）
-        wr_threshold = 6 + (native.LIMIT_BONUS_WIN_RATE if native.tuned() else 0)
-        if len(clicks) == 0:  # 没有可以判断的格子
-            _prob = {}  # 随机分支无概率数据（热力图由界面浅灰底兜底）
-            total = 0
-            res = []
-            op_num = []
-            for i, j in clicks9:
-                op5x5_num = self.open_num5x5(cell_value, (i, j))
-                op_num.append(op5x5_num)
-
-            np_op_num = np.array(op_num)
-            np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
-            p = np_op_num / np_op_num.sum()
-            pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]  # 随机选择
-            confidence = 1 - (self.a - num10) / len(clicks9)  # 不是雷的概率
-            self.pos_dict_list.append(
-                {
-                    "pos": pos[0],
-                    "confidence": round(confidence, 5),
-                    "num": self.num,
-                    "is_mine": False,
-                    "is_best": False,
-                    "exp": "随机选择。",
-                    "is_recommend": False,
-                }
-            )
-        else:
-            # 将clicks分组，组与组之间没有公共区域（没有公共数字格）
-            click_list = [tuple([tuple(clicks[0])])]
-            set_list = [
-                self.get_set_1(clicks[0][0], clicks[0][1], cell_value)
-            ]  # click_list没一个坐标组对应的周边数字格
-            for pos in clicks[1:]:
-                pos = tuple(pos)
-                x, y = pos
-                indexes = []
-                se = self.get_set_1(x, y, cell_value)
-                for index in range(len(click_list)):
-                    if len(se & set_list[index]) > 0:  # &：交集 |：并集
-                        indexes.append(index)
-
-                if len(indexes) == 0:  # 与click_list中的任意一组都没有交集，单分一组
-                    set_list.append(se)
-                    click_list.append(tuple([pos]))
-                else:
-                    # 将所有与pos有交集的组合并
-                    temp = []
-                    b = 0
-                    for index in indexes:
-                        index -= b  # pop掉了b个，故要减去b
-                        for p in click_list.pop(index):
-                            temp.append(p)
-                        b += 1
-                    temp.append(pos)
-                    click_list.append(tuple(temp))
-
-                    # 更新set_list
-                    temp = set()
-                    b = 0
-                    for index in indexes:
-                        index -= b
-                        temp = temp | set_list.pop(index)  # |：并集运算符
-                        b += 1
-                    temp = temp | se
-                    set_list.append(temp)
-
-            # 同序化clicks与click_list
-            clicks = []
-            for poses in click_list:
-                for i, j in poses:
-                    clicks.append(tuple((i, j)))
-
-            # 计算limit
-            temp = np.zeros(len(click_list))
-            for i in range(len(click_list)):
-                temp[i] = len(click_list[i])
-            temp = temp >= 15
-            t_sum = temp.sum()
-            # C++ 提速 ~424x 后按同等墙钟预算放宽组枚举上限（纯 Python 保持原值）
-            base_limit = self.limit + (native.LIMIT_BONUS_PART_SOLVE if native.tuned() else 0)
-            limit = (
-                base_limit - int(math.log2(t_sum) / 2) if t_sum != 0 else base_limit
-            )  # 20大约20s 19 10s 18 5s（纯 Python 标定；C++ 下每 +1 约 2 倍算量但仅 ~1/424 耗时）
-            if _tb is not None:
-                # 预算控制：按指数模型预测各组耗时，压缩 limit 直到总预测 ≤ 剩余预算
-                _rem = _budget_remaining(_tb, t_decision_start)
-                _pred_total = float("nan")
-                while limit > 5:
-                    _pred_total = sum(
-                        _ps_predict_ms(_tb, s) / 1000.0
-                        for s in (len(g) for g in click_list)
-                        if s <= limit + 3
-                    )
-                    if _pred_total <= _rem:
-                        break
-                    limit -= 1
-                logger.debug("limit=%s（预算剩余 %.2fs，预测总耗时 %.2fs）",
-                             limit, _rem, _pred_total)
-                # 决策级进度：枚举段 [10,80) 按各组预测耗时加权（速度估计），
-                # 之后逐组把 _pv_state 区间设为该组的 [lo, hi)
-                _pv_sizes = [len(g) for g in click_list if len(g) <= limit + 3]
-                _pv_w = [_ps_predict_ms(_tb, s) for s in _pv_sizes]
-                _pv_wsum = sum(_pv_w) or 1.0
-                _pv_bounds = []
-                _pv_acc = 0.0
-                for wgt in _pv_w:
-                    lo = 10.0 + 70.0 * _pv_acc / _pv_wsum
-                    _pv_acc += wgt
-                    _pv_bounds.append((lo, 10.0 + 70.0 * _pv_acc / _pv_wsum))
-                _pv_k = 0  # 组指针（跳过被移除的组）
-            res_list = []
-            canopen_res = np.array([])
-            ck = []  # res_list中res的长度
-            total = 1
-
-            self.Visible_signal.emit(True)
-
-            is_removed = False
-            for index in range(len(click_list)):
-                # 运算
-                try:
-                    if _tb is not None and _pv_k < len(_pv_bounds):
-                        self._pv_state["lo"], self._pv_state["hi"] = _pv_bounds[_pv_k]
-                        _pv_k += 1
-                    self._pv_mapped_emit(0)
-                    _res, _canopen_res = self.checked[tuple(click_list[index])]
-                    _total = len(_res)
-                    canopen_res = np.hstack((canopen_res, _canopen_res))
-                    total *= _total
-                    res_list.append(_res)
-                    ck.append(_total)
-                    self._pv_mapped_emit(100)
-                except KeyError:
-                    _over_budget = (
-                        _tb is not None
-                        and _ps_predict_ms(_tb, len(click_list[index])) / 1000.0
-                        > t_decision_start + DECISION_TIME_BUDGET - _PS_RESERVE_S
-                        - time.perf_counter()
-                    )
-                    if (
-                        len(click_list[index]) > limit + 3 or _over_budget
-                    ):  # 大于limit/超出预算时因为算量过大而无法判断
-                        is_removed = True
-                        # ⚠️ 这里是 clicks → clicks9 的**语义迁移**：
-                        # 该组算量过大被放弃枚举，于是把它的前沿格**降级并入内部格**，
-                        # 当作"只受总雷数约束"处理（近似）。这不是排序，也不是过滤。
-                        # 后果：这些格失去局部约束信息，概率变粗，但避免指数爆炸。
-                        for pos in click_list[index]:
-                            clicks.remove(pos)
-                            clicks9.append(pos)
-                    else:
-                        if _tb is not None and _pv_k < len(_pv_bounds):
-                            self._pv_state["lo"], self._pv_state["hi"] = _pv_bounds[_pv_k]
-                            _pv_k += 1
-                        for li in list(self.checked.keys()):
-                            if len(set(li) & set(tuple(click_list[index]))) != 0:
-                                self.checked.pop(li)
-                        try:
-                            _t_ps = time.perf_counter()
-                            _res, _total, _canopen_res = self.part_solve(
-                                click_list[index],
-                                cell_value,
-                                num10,
-                                num9 - len(click_list[index]),
-                                set_list[index],
-                                False,
-                            )
-                            if _tb is not None:
-                                _ps_observe(_tb, len(click_list[index]),
-                                            (time.perf_counter() - _t_ps) * 1000.0)
-                        except KeyError:
-                            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
-                            for i in range(1, w + 1):
-                                for j in range(1, h + 1):
-                                    cell_value[j, i] = 9
-                            cell_value = self.complete_scan(cell_value)
-                            self.count += 1
-                            self.Visible_signal.emit(False)
-                            return cell_value
-
-                        if len(_res) == 0:
-                            cell_value = np.zeros((h + 2, w + 2), dtype="int32")
-                            for i in range(1, w + 1):
-                                for j in range(1, h + 1):
-                                    cell_value[j, i] = 9
-                            cell_value = self.complete_scan(cell_value)
-                            self.count += 1
-                            self.Visible_signal.emit(False)
-                            return cell_value
-
-                        canopen_res = np.hstack((canopen_res, _canopen_res))
-                        total *= _total
-                        res_list.append(_res)
-                        ck.append(_total)
-
-                        self.checked[tuple(click_list[index])] = (_res, _canopen_res)
-
-            # 阶段计时：辅助定位超预算耗时落在哪一段
-            logger.debug("枚举阶段：%d 组待解，距决策开始 %.0f ms（超时若发生在此段为 part_solve 枚举）",
-                         len(click_list),
-                         (time.perf_counter() - t_decision_start) * 1000.0)
-
-            if is_removed and (not self.is_play):
-                self.warning_signal_2.emit(
-                    "由于计算量的限制，一部分情况未枚举，结果可能不准确\n"
-                    "您可以通过增加设置中的limit使枚举更全面，但limit\n"
-                    "每增加1计算所需的时间增加1倍"
-                )
-
-            _prob = {}  # 兜底：候选格概率字典（1-based 坐标 → 不是雷概率），各决策分支会覆盖
-            # ⚠️ 不是死代码：外层 else（443 行）已保证 len(clicks) > 0，但分支中又对clicks进行了修改；
-            # 真正的随机分支在 419 行外层（曾因把 _prob 兜底误加在这里导致随机分支
-            # UnboundLocalError）。保留仅为避免误删历史逻辑。
-            if len(clicks) == 0:
-                self.Visible_signal.emit(False)
-                res = []
-                total = 0
-
-                op_num = []
-                for i, j in clicks9:
-                    op5x5_num = self.open_num5x5(cell_value, (i, j))
-                    op_num.append(op5x5_num)
-
-                np_op_num = np.array(op_num)
-                np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
-                p = np_op_num / np_op_num.sum()
-                pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]
-
-                confidence = 1 - (self.a - num10) / len(clicks9)
-                if not self.is_play:
-                    self.pos_dict_list.append(
-                        {
-                            "pos": pos[0],
-                            "confidence": round(confidence, 5),
-                            "num": self.num,
-                            "is_mine": False,
-                            "is_best": False,
-                            "exp": "随机选择。",
-                            "is_recommend": False,
-                        }
-                    )
-
-            else:
-                pos = []
-                # ⚠️ limitation 不是"限制值"，而是**局面难度代理指标**（越大越难算）：
-                #     len(clicks9) 项 = 无局部约束的内部格数（这些格会组合爆炸）
-                #     log2(total) 项 = 世界总数的量级
-                # 它与 wr_threshold（**策略参数**，"允许多难的局面上前瞻"）方向一致
-                # 但含义不同，切勿混为一谈。
-                # 另注：self.limit（不带 -ation）是完全不同的东西 = 组枚举上限；
-                # 超过它的组会被放弃并降级并入 clicks9（见上方 is_removed 分支）。
-                limitation = len(clicks9) * 0.8 + math.log2(total)
-                logger.debug("limitation: %s", limitation)
-
-                if _tb is not None:
-                    # win_rate 阈值读取（持久化于 _tb["wr"]["t"]；更新发生在观测记录点 _wr_update）
-                    wr_threshold = _wr_current_threshold(_tb)
-                    logger.debug("wr_threshold=%s（limitation=%.2f）", wr_threshold, limitation)
-                    # 决策级进度：进入决策段 [80,100]
-                    self._pv_state["lo"], self._pv_state["hi"] = 80.0, 100.0
-
-                if limitation <= wr_threshold and self._wr_memory_ok(
-                        clicks, clicks9, total):
-                    _t_wr = time.perf_counter()
-                    # 是否有可信的 clicks2p（只有真的跑完 win_rate 才有）。
-                    # node_cap 降级 / 走贪心时该变量不存在，后段会用到它算 confidence。
-                    _wr_have_c2p = False
-                    try:
-                        win_rate, clicks, total, clicks2p = self.win_rate(
-                            clicks, clicks9, res_list, cell_value, ck, num10)
-                    except _WrNodeCapExceeded:
-                        # 节点数超硬上限 → 本步降级为贪心分支（process_bigger_situation）。
-                        # 这是**有意的**精度降级：win_rate 的 memo 只写不删，
-                        # 节点数会组合爆炸；继续算就是把整机内存顶爆。
-                        # 绝不让它落到外层 except（那会被当作"求解失败"→ 触发
-                        # 完整重扫，反而更糟），也绝不回退纯 Python（同样无上限）。
-                        pos, confidence, total, _prob = self.process_bigger_situation(
-                            total, num9, num10, clicks, clicks9, res_list, ck,
-                            cell_value, pos)
-                        self.till_now_winrate *= confidence
-                        self._wr_nodecap_hits += 1
-                        _WR_NODECAP_TOTAL[0] += 1
-                    else:
-                        _wr_have_c2p = True
-                        if _tb is not None:
-                            # 实测反馈：边界采样且快 → +0.5；超时 → −0.5（见 _wr_update）
-                            wr_threshold = _wr_update(_tb, limitation,
-                                                      (time.perf_counter() - _t_wr) * 1000.0)
-                            logger.debug("win_rate 实测 %.0f ms @limitation=%.2f → 阈值 %.1f",
-                                         (time.perf_counter() - _t_wr) * 1000.0, limitation,
-                                         wr_threshold)
-                        win_rate = np.around(win_rate, decimals=5)
-                        where_max = np.where(win_rate == np.max(win_rate), 1, 0)
-                        p = where_max / where_max.sum()
-                        arg = np.random.choice(np.arange(len(clicks)), p=p)
-                        pos = [clicks[arg]]
-                        confidence = win_rate[arg]
-                        self.Visible_signal.emit(False)
-
-                        if not self.is_play:
-                            for p in range(len(clicks)):
-                                if tuple(clicks[p]) not in self.appended_pos:
-                                    if tuple(clicks[p]) == pos[0]:
-                                        self.pos_dict_list.append(
-                                            {
-                                                "pos": clicks[p],
-                                                "confidence": round(win_rate[p], 5),
-                                                "num": self.num,
-                                                "is_mine": False,
-                                                "is_best": False,
-                                                "exp": f"胜率计算得出",
-                                                "is_recommend": True
-                                            }
-                                        )
-                                        self.appended_pos.add(tuple(clicks[p]))
-                                    else:
-                                        self.pos_dict_list.append(
-                                            {
-                                                "pos": clicks[p],
-                                                "confidence": round(win_rate[p], 5),
-                                                "num": self.num,
-                                                "is_mine": False,
-                                                "is_best": False,
-                                                "exp": f"胜率计算得出",
-                                                "is_recommend": False,
-                                            }
-                                        )
-                                        self.appended_pos.add(tuple(clicks[p]))
-
-                        # 热力图：win_rate 的逐格"不是雷"概率（键与决策坐标同为 1-based）
-                        _prob = {tuple(k): float(v) for k, v in clicks2p.items()}
-
-                else:  # 大情况
-                    pos, confidence, total, _prob = self.process_bigger_situation(
-                        total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos)
-                    self.till_now_winrate *= confidence
-
-        logger.debug("决策完成：limitation=%.1f，总耗时 %.0f ms（预算 %.0fs；超时则检查上方各阶段）",
-                     limitation,
-                     (time.perf_counter() - t_decision_start) * 1000.0,
-                     DECISION_TIME_BUDGET)
-        # 组装热力图数据（自动模式界面渲染用）：候选格概率（1-based 坐标）
-        # + 最佳点击 + 总局面数。_prob 已由各决策分支就地设置：
-        #   win_rate 分支=clicks2p、pbs 分支=process_bigger_situation 第 4 元返回、
-        #   随机分支=空表（界面用均匀先验兜底）。
-        # ⚠️ 不要在这里重新判断 limitation <= wr_threshold：win_rate 观测会经
-        # _wr_update 实时升降阈值，组装段可能因此走到与决策分支不同的路径；
-        # 也不要从 zip(clicks, res) 重建——本作用域没有可靠的标量概率数组 res
-        # （曾致 TypeError: only size-1 arrays can be converted）。
-        self._last_heatmap = {
-            "prob": _prob,
-            "best": tuple(pos[0]) if len(pos) else None,
-            "best_conf": float(confidence) if len(pos) else None,  # 当前点击格不是雷的概率/胜率
-            "total": float(total),
-        }
-
-        for p in pos:
-            if self.is_play:
-                # pass
-                pyautogui.click(
-                    self.bx + p[0] * self.cell_width, self.by + p[1] * self.cell_width
-                )
-
-                time.sleep(0.1)
-
-                if limitation <= wr_threshold:
-                    # ⚠️ 只有真的走了 win_rate 分支才有 clicks2p。
-                    # node_cap 降级（或 _wr_memory_ok 拦下走贪心）时该变量不存在，
-                    # 直接下标会 UnboundLocalError（端到端负向测试实测抓到）。
-                    # 降级时保留上面 process_bigger_situation 给出的 confidence。
-                    if _wr_have_c2p and (p[0], p[1]) in clicks2p:
-                        confidence = clicks2p[(p[0], p[1])]
-
-                _index = confidence * 100
-                _index = round(_index)
-                _index = str(_index)
-                _lose, _, _ = self._locate("./image/lose.bmp")
-
-                data = self._load_stats()
-                try:
-                    if _lose:
-                        data[_index]["lose"] += 1
-                    else:
-                        data[_index]["win"] += 1
-                except KeyError:
-                    if _lose:
-                        data[_index] = {"lose": 1, "win": 0}
-                    else:
-                        data[_index] = {"lose": 0, "win": 1}
-
-                self._stats_updates += 1
-                if self._stats_updates >= 20:
-                    self._flush_stats()
-                    self._stats_updates = 0
-
-        self.count = 0
-
-        cell_value = np.zeros((h + 2, w + 2), dtype="int32")
-        for i in range(1, w + 1):
-            for j in range(1, h + 1):
-                cell_value[j, i] = 9
-        cell_value = self.complete_scan(cell_value)
-
-        return cell_value
-
-    def try_solve(self, i, j, cell_value, clicks, num9, num10):
-        res = 0
-
-        for mine_num in range(num10, num10 + num9 + 1):
-            if mine_num == 0:
-                res += 8 * (1 - self.p) ** num9
-                continue
-            test_value = cell_value.copy()
-            test_value[j, i] = mine_num
-
-            resolved_count = 0
-            try:
-                for _ in range(2):
-                    test_value = self.mine_clear1(test_value)
-                    test_value = self.mine_clear3_1(test_value)
-                test_value = self.mine_clear1(test_value)
-                # count cells resolved by deduction (no longer 9)
-                for n in range(j - 1, j + 2):
-                    for m in range(i - 1, i + 2):
-                        if cell_value[n, m] == 9 and test_value[n, m] != 9:
-                            resolved_count += 1
-            except Exception:
-                pass
-
-            # 计算结果
-            res += (
-                    resolved_count
-                    * (1 - self.p) ** (num9 - mine_num + num10)
-                    * (self.p) ** (mine_num - num10)
-                    * C_num(num9, mine_num - num10)
-            )
-
-        res /= num9 + 1
-        return res
-
-    @staticmethod
-    def _pbs_group_histograms(res_l):
-        """把一组的解矩阵转成雷数直方图。
-
-        返回 (H, Hc)：
-          H[m]      = 该组雷数为 m 的解数
-          Hc[c][m]  = 该组雷数为 m 且第 c 个格为雷的解数
-        """
-        n = 0 if len(res_l) == 0 else len(res_l[0])
-        H = {}
-        Hc = [{} for _ in range(n)]
-        for row in res_l:
-            r = np.asarray(row)
-            m = int(r.sum())
-            H[m] = H.get(m, 0) + 1
-            for c in range(n):
-                if r[c]:
-                    Hc[c][m] = Hc[c].get(m, 0) + 1
-        return H, Hc
-
-    @staticmethod
-    def _pbs_convolve(hists):
-        """把多组雷数直方图卷积成全局分布 T(t) = #{Σm_g = t} 的加权计数。"""
-        T = {0: 1}
-        for H in hists:
-            newT = {}
-            for t, wt in T.items():
-                for m, wm in H.items():
-                    newT[t + m] = newT.get(t + m, 0) + wt * wm
-            T = newT
-        return T
-
-    def _pbs_compute_dp(self, num10, clicks, clicks9, res_list):
-        """生成函数 DP：正确的跨组概率聚合（修复"各组雷数独立"错误假设）。
-
-        数学依据：全局可行世界的权重必须同时满足各组内部约束与"总雷数"耦合，
-        即 W(m_1..m_G) = ∏H_g(m_g) · C(U, R - Σm_g)，其中 U 是无约束内部格数、
-        R 是还需放置的雷数。旧的近似分支对每组独立归一化，丢掉了 C(U, R-Σm)
-        这一跨组项，在组间雷数分布不均时会产生系统性偏差（实测可达数十个百分点）。
-
-        返回 (res, mine_num, total)：
-          res[c]  = 第 c 个前沿格"不是雷"的概率
-          mine_num= 前沿期望雷数
-          total   = 归一化常数（0 表示无可行世界）
-        """
-        U = len(clicks9)                       # 无约束内部格
-        R = self.a - num10                     # 还需放置的雷数（含内部）
-        n_frontier = len(clicks)
-
-        hists = [self._pbs_group_histograms(rl) for rl in res_list]
-        if not hists:
-            return np.zeros(n_frontier, np.float32), 0.0, 0.0
-        Hs = [h[0] for h in hists]
-        Hcs = [h[1] for h in hists]
-        T = self._pbs_convolve(Hs)
-
-        def _feasible(t):
-            return 0 <= (R - t) <= U
-
-        denom = 0.0
-        for t, wt in T.items():
-            if _feasible(t):
-                denom += wt * math.comb(U, R - t) if (R - t) >= 0 else 0.0
-        if denom == 0.0:
-            return np.zeros(n_frontier, np.float32), 0.0, 0.0
-
-        res = np.zeros(n_frontier, np.float32)
-        est_mines = 0.0
-        pos = 0
-        for gi, (H, Hc) in enumerate(zip(Hs, Hcs)):
-            others = [h for k, h in enumerate(Hs) if k != gi]
-            Tm = self._pbs_convolve(others)
-            # 本组雷数期望（用于返回 mine_num）
-            for m, wm in H.items():
-                acc = 0.0
-                for t, wt in Tm.items():
-                    r = R - m - t
-                    if 0 <= r <= U:
-                        acc += wt * math.comb(U, r)
-                est_mines += m * wm * acc
-            for c in range(len(Hc)):
-                num = 0.0
-                for m, wmc in Hc[c].items():
-                    for t, wt in Tm.items():
-                        r = R - m - t
-                        if 0 <= r <= U:
-                            num += wmc * wt * math.comb(U, r)
-                res[pos] = np.float32(1.0 - (num / denom))
-                pos += 1
-        mine_num = est_mines / denom
-        return res, float(mine_num), float(denom)
-
-    def _pbs_compute_python(self, total, num10, clicks, clicks9, res_list, ck):
-        """process_bigger_situation 的纯 Python 计算核心（C++ 不可用/失败时的回退路径）。
-
-        与 C++ mscore.pbs_compute 语义逐位一致；返回 (res, mine_num, total)。
-
-        ⚠️ total > 10000 的"近似分支"历史上对每组独立归一化，忽略总雷数耦合，
-        在组间雷数分布不均时产生系统性偏差（本仓实测可达数十个百分点）。
-        现改为走 `_pbs_compute_dp` 的生成函数 DP（数学上精确，代价是 O(G·R²) 状态）。
-        """
-        if total > 10000:  # 组间笛卡尔积过大：不再逐世界枚举，改用生成函数 DP
-            self.Visible_signal.emit(False)
-            dp_res, dp_mine, dp_denom = self._pbs_compute_dp(
-                num10, clicks, clicks9, res_list)
-            if dp_denom == 0.0:
-                return np.array([]), 0.0, total
-            return dp_res, dp_mine, dp_denom
-
-        res = []
-        _total = 0
-        min_val = self.a - len(clicks9)
-        mine_num = []
-
-        o_value = 0
-        num = 0
-        self._pv_mapped_emit(0)
-        for index_list in A(ck):
-            _mine_num = 0  # 一个方案中的雷数
-            r = np.array([])
-            for i in range(len(index_list)):
-                _mine_num += res_list[i][index_list[i]].sum()
-                r = np.hstack([r, res_list[i][index_list[i]]])
-
-            if min_val <= (_mine_num + num10) <= self.a:
-                mine_num.append(_mine_num)
-                _total += 1
-                res.append(r)
-            n_value = int((num / total) * 100)
-            if n_value - o_value >= 1:
-                self._pv_mapped_emit(n_value)
-                o_value = n_value
-            num += 1
-
-        self._pv_mapped_emit(100)
-        self.Visible_signal.emit(False)
-        total = 0
-        estimated_mine_num = 0
-        if not mine_num:
-            # 兜底：A(ck) 的每一种组合都不满足雷数上下界 ⇒ 约束集自相矛盾
-            # （典型场景：残局中雷基本已被标记、内部未开格很少，或设置里总雷数填错）。
-            # 历史上这里直接 min([]) 抛 ValueError，且 C++ 回退路径抛同样的错，
-            # 导致整个决策崩溃而非降级。改为退回到"均匀先验"：
-            # 把剩余雷数均匀摊到全部未开格上，给出不偏不倚的建议并继续对局。
-            _unknown = len(clicks) + len(clicks9)
-            _p_mine = 0.0 if _unknown == 0 else min(
-                1.0, max(0.0, (self.a - num10) / _unknown))
+        # ---- 盘面逻辑一致性校验（用户指令 2026-11-08）----
+        # 视觉扫描偶发错误会产出逻辑上不可能的盘面（数字与邻域冲突、
+        # 总雷数超过未开格数等）。用这种盘面求解只会得到错误概率，
+        # 且 C++ 侧表现不一致（实测 empty_group / ValueError / no_closed_cell）。
+        # 策略（用户裁决）：矛盾则**退回重扫**，最多 3 次；仍矛盾才报错。
+        _BOARD_RETRY_MAX = 3
+        for _attempt in range(1, _BOARD_RETRY_MAX + 1):
+            _ok, _problems = validate_board_consistency(
+                cell_value, self.a, w, h)
+            if _ok:
+                break
+            _detail = format_board_problems(_problems)
             logger.warning(
-                "pbs 约束集自相矛盾（无可行雷数组合），退回均匀先验："
-                "未开格=%d 剩余雷=%d p_mine=%.4f", _unknown, self.a - num10, _p_mine)
-            return (np.full(len(clicks), 1.0 - _p_mine, dtype=np.float32),
-                    _p_mine * len(clicks), 0.0)
-        min_mine_cnt = min(mine_num)
-        x_min = self.a - min_mine_cnt - num10
-        __res = np.zeros(len(clicks), dtype=np.float32)
-
-        for i in range(len(mine_num)):
-            p = combination_ratio(self.a - mine_num[i] - num10, x_min, len(clicks9))
-            estimated_mine_num += p * mine_num[i]
-            if i == 0:
-                __res = res[i].astype(np.float32) * p
-            else:
-                __res += res[i].astype(np.float32) * p
-            total += p
-        res = __res.copy()
-        res = res / total
-        res = 1 - res
-        mine_num = estimated_mine_num / total
-
-        return res, mine_num, total
-
-    def process_bigger_situation(self, total, num9, num10, clicks, clicks9, res_list, ck, cell_value, pos):
-        confidence = 0
-
-        # 计算核心：优先 C++（mscore.pbs_compute），失败/不可用自动回退纯 Python
-        if native.available:
-            try:
-                res, mine_num, total = native.mscore.pbs_compute(
-                    total, num10, clicks, clicks9,
-                    native.as_groups(res_list), ck, self.a,
-                    self._pv_mapped_emit, self.Visible_signal.emit)
-            except Exception as e:
-                logger.warning("C++ pbs_compute 失败，回退纯 Python 实现：%s", e)
-                res, mine_num, total = self._pbs_compute_python(
-                    total, num10, clicks, clicks9, res_list, ck)
-        else:
-            res, mine_num, total = self._pbs_compute_python(
-                total, num10, clicks, clicks9, res_list, ck)
-
-        if 1 in res:  # 有确定不为雷的地方
-            for index in range(len(res)):
-                if res[index] >= 0.99:
-                    pos.append(clicks[index])
-                    confidence = 1
-                    if not self.is_play:
-                        if tuple(clicks[index]) not in self.appended_pos:
-                            self.pos_dict_list.append(
-                                {
-                                    "pos": clicks[index],
-                                    "num": self.num,
-                                    "confidence": 1,
-                                    "is_mine": False,
-                                    "is_best": True,
-                                    "exp": "枚举得出",
-                                    "is_recommend": False,
-                                }
-                            )
-                            self.appended_pos.add(tuple(clicks[index]))
-        else:
-            if len(res) == 0:
-                cell_value = np.zeros((self.h + 2, self.w + 2), dtype="int32")
-                for i in range(1, self.w + 1):
-                    for j in range(1, self.h + 1):
-                        cell_value[j, i] = 9
-                cell_value = self.complete_scan(cell_value)
+                "盘面逻辑矛盾（第 %d/%d 次校验）：%s",
+                _attempt, _BOARD_RETRY_MAX, _detail)
+            if _attempt >= _BOARD_RETRY_MAX:
+                # 3 次仍矛盾：本轮作废，交由上层弹窗提醒用户检查设置/校准。
+                msg = (f"盘面识别结果逻辑矛盾（已重扫 {_BOARD_RETRY_MAX} 次）："
+                       f"{_detail}。请检查设置中的总雷数/宽高，或重新校准窗口位置"
+                       f"与模板。")
+                logger.error("%s", msg)
+                try:
+                    self.warning_signal.emit(msg)
+                except Exception:  # noqa: BLE001 —— 告警失败不得掩盖原始问题
+                    pass
+                self._last_heatmap = {}
                 self.count += 1
                 return cell_value
+            # 退回重扫：清空全盘后重新识别（保留"全未开"作为扫描起点）
+            try:
+                _blank = np.zeros((h + 2, w + 2), dtype="int32")
+                for _i in range(1, w + 1):
+                    for _j in range(1, h + 1):
+                        _blank[_j, _i] = 9
+                cell_value = self.complete_scan(_blank, False)
+                self.cell_value = cell_value
+            except LowConfidenceScanError as e:
+                logger.warning("盘面矛盾后重扫不可信（第 %d 次）：%s",
+                               _attempt, e)
+                if _attempt >= _BOARD_RETRY_MAX:
+                    self._last_heatmap = {}
+                    self.count += 1
+                    return cell_value
+            except Exception as e:  # noqa: BLE001 —— 重扫故障不得杀死线程
+                logger.warning("盘面矛盾后重扫失败（第 %d 次）：%s",
+                               _attempt, e)
+                if _attempt >= _BOARD_RETRY_MAX:
+                    self._last_heatmap = {}
+                    self.count += 1
+                    return cell_value
 
-            max_loc = np.argmax(res)
-            max_val = res[max_loc]  # 最大值
-            _a = np.arange(len(clicks))
-            np.random.shuffle(_a)
-            poses = []
-            for p in _a:
-                if 0.0005 >= max_val - res[p] >= -0.0005:
-                    poses.append(clicks[p])
+        # ---- C++ 三层统一决策（OPTIMAL / 自适应前瞻 / pbs+PSEQ）----
+        # 2000 局角落基线 38.05%（vs 中心 24% 旧基线，+14pp 总提升）。
+        # **自动模式与帮助模式的唯一决策路径**（用户批准方案 A：C++ decide 可用时
+        # 不可达的重复 Python 决策链已删除；帮助模式的 mine_clear1/mine_clear3_1
+        # Python 规则推理链也已按用户指令 2026-11-07 移除）。
+        #
+        # 帮助模式（is_play=False）放宽（用户指令：「帮助人类的话可以适当
+        # 提高推理的预算」「可以稍微把预算放高一点」）。放宽值全部**相对自动
+        # 模式基线推导**，不另起炉灶：
+        #   wr_threshold: 自动基线 = 6 + LIMIT_BONUS_WIN_RATE(=2) = 8（见
+        #                 native.py 的 LIMIT_BONUS_WIN_RATE）；帮助 = 基线 +
+        #                 HELP_WR_BONUS(10) = 18（更多局面进自适应前瞻层）。
+        #   node_cap:     自动 = 200 万；帮助 = HELP_NODE_CAP(600 万)。
+        #   决策预算:     自动 = DECISION_TIME_BUDGET(30s)；帮助 ×3 = 90s
+        #                 （经 decision_budget()，由 solver.help() 设乘数）。
+        # 自动模式参数与 38.05% 基线完全一致，不受影响。
+        #
+        # ⚠️ 失败语义（用户硬裁决）：decide 抛异常 / 返回无效坐标 / has_decide()
+        # 为 False 一律走 _decide_unavailable（ERROR 日志 + warning_signal +
+        # 全盘安全重扫 + 显式 return），**绝不**静默回退到第二套 Python 决策实现。
+        if native.has_decide():
+            _help_mode = not self.is_play
+            # ⚠️ 2026-11-09：原先这里有一整套「自适应 wr_threshold 接线」
+            #   （读 state/time_budget.json → 传 C++ → 按 limitation + 耗时调阈值
+            #    → 写回 json）。用户裁决「wr_threshold winrate 分支都取消了，
+            #   应该取消这个参数」后，该链路已整体删除，理由链：
+            #     ① C++ 的 win_rate 准入 `limitation <= wr_threshold` 随 LAYER 2 删除；
+            #     ② wr_threshold 在 C++ 函数体内零消费（传了也被忽略）；
+            #     ③ 因此「读阈值→传参→据结果调阈值→写盘」是自我循环的空转，
+            #        日志看似自适应、实际零效果。
+            #   保留的放宽仍有效：node_cap（帮助模式 600 万）与决策预算（×3）。
+            # 内存闸门 1.5GB 与 node_cap 200万完全不动（用户硬约束）。
+            try:
+                # 先发一帧“正在计算下一步”，否则 C++ 决策期间自动页会继续
+                # 显示上一轮文字，用户误以为界面卡住或与真实进度脱节。
+                self._emit_live_heatmap(cell_value, phase="computing")
+                _t_decide = time.perf_counter()
+                r = native.decide(
+                    cell_value, self.a, w, h,
+                    node_cap=HELP_NODE_CAP if _help_mode else 2_000_000,
+                    is_play=self.is_play,
+                )
+                _decide_ms = (time.perf_counter() - _t_decide) * 1000.0
+                # 【记录点 1】首轮 decide：真实输入规模 + 输出 + 实测耗时。
+                # 只观测不改行为（异常内部吞掉），用于复核 limitation / 内存门
+                # 的争议结论。MSW_DECIDE_TRACE=0 可关闭。
+                decide_trace.record(
+                    cell_value, self.a, w, h, r, _decide_ms,
+                    node_cap=HELP_NODE_CAP if _help_mode else 2_000_000,
+                    is_play=self.is_play, tag="first")
+                # 【端到端探针】同一次 decide 的遥测（MSW_E2E_PROBE=1 才生效）。
+                probe.decision(r, _decide_ms, tag="first",
+                               help_mode=bool(_help_mode))
+                # （原「自适应阈值升降档」已删除：wr_threshold 参数本身已取消，
+                #   见上方说明。这里不再观测 limitation 去调任何东西。）
+                if r and r["x"] >= 1 and r["y"] >= 1:
+                    _DECIDE_FAIL_SEQ[0] = 0  # 成功即清零（连续失败计数语义）
 
-            op_num = []
-            for i, j in poses:
-                op5x5_num = self.open_num5x5(cell_value, (i, j))
-                op_num.append(op5x5_num)
-
-            np_op_num = np.array(op_num)
-            np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
-            p = np_op_num / np_op_num.sum()
-            pos = [poses[np.random.choice(np.arange(len(poses)), p=p)]]
-
-            mine9 = self.a - mine_num - num10  # 剩余雷数
-
-            is_recommend = True
-            confidence = round(max_val, 5)  # 不是雷的概率
-            if len(clicks9) != 0:
-                _confidence = round(1 - (mine9 / len(clicks9)), 5)
-                if _confidence > confidence:  # 剩余未开方格不是雷的概率大于最大概率
-                    is_recommend = False
-
-                    op_num = []
-                    for i, j in clicks9:
-                        op5x5_num = self.open_num5x5(cell_value, (i, j))
-                        op_num.append(op5x5_num)
-
-                    np_op_num = np.array(op_num)
-                    np_op_num = np.where(np_op_num == max(np_op_num), 1, 0)
-                    p = np_op_num / np_op_num.sum()
-                    pos = [clicks9[np.random.choice(np.arange(len(clicks9)), p=p)]]
-
-                    opennum_res = np.zeros(len(clicks9))
-
+                    # ================= decide 循环（用户拍板 2026-11-06）=================
+                    # 自动模式（is_play=True）：内嵌「decide → 点击 → rescan →
+                    # 再 decide」循环，复刻 40% 压测口径的决策节奏。
+                    # 背景（同 seed 对拍已证）：压测纯 decide 循环每步都调
+                    # decide → certain_safe 连锁批量点击（60% 命中率），100 局
+                    # 40%；而本函数原实现单次 decide 后返回主循环，decide 频率
+                    # 仅 410/百局、certain_safe 25/百局（压测 1424/百局），胜率
+                    # 只有 ~20%——免费推理（mine_clear）填不平节奏差。
+                    # 停止条件（防死循环）：① decide 返回无效坐标；② 一轮点击后
+                    # 盘面无任何变化（rescan 后 num9 未减少）；③ 无未开格（胜利）。
+                    # ⚠️ **不做逐点击踩雷检测**（用户裁决 2026-11-07）：局末棋盘
+                    # 出现雷/失败弹窗时扫描本来就不准，属正常节奏，不该打断循环；
+                    # 整局胜负由主循环的双弹窗检测接管。
+                    # 帮助模式（is_play=False）保持单次 decide（现状），不点击。
+                    # =====================================================================
                     if not self.is_play:
-                        for k, (i, j) in enumerate(clicks9):
-                            if (i, j) in pos:
-                                self.pos_dict_list.append(
-                                    {
-                                        "pos": (i, j),
-                                        "confidence": _confidence,
-                                        "num": self.num,
-                                        "is_mine": False,
-                                        "is_best": False,
-                                        "exp": f"枚举得出, 预计可以确定的方格数：{round(opennum_res[k], 2)}",
-                                        "is_recommend": True,
-                                    }
-                                )
-                            else:
-                                self.pos_dict_list.append(
-                                    {
-                                        "pos": (i, j),
-                                        "confidence": _confidence,
-                                        "num": self.num,
-                                        "is_mine": False,
-                                        "is_best": False,
-                                        "exp": f"枚举得出",
-                                        "is_recommend": False,
-                                    }
-                                )
-                    confidence = _confidence  # 剩余未开方格不是雷的概率
-                    if confidence == 1:
-                        pos = clicks9
-
-            if not self.is_play:
-                for p in range(len(clicks)):
-                    if 0.005 >= max_val - res[p] >= -0.005:
-                        if tuple(clicks[p]) not in self.appended_pos:
-                            if tuple(clicks[p]) == pos[0]:
-                                self.pos_dict_list.append(
-                                    {
-                                        "pos": clicks[p],
-                                        "confidence": round(res[p], 5),
-                                        "num": self.num,
-                                        "is_mine": False,
-                                        "is_best": False,
-                                        "exp": f"枚举得出",
-                                        "is_recommend": True
-                                        if is_recommend
-                                        else False,
-                                    }
-                                )
-                                self.appended_pos.add(tuple(clicks[p]))
-                            else:
-                                self.pos_dict_list.append(
-                                    {
-                                        "pos": clicks[p],
-                                        "confidence": round(res[p], 5),
-                                        "num": self.num,
-                                        "is_mine": False,
-                                        "is_best": False,
-                                        "exp": f"枚举得出",
-                                        "is_recommend": False,
-                                    }
-                                )
-                                self.appended_pos.add(tuple(clicks[p]))
-                    else:
-                        if tuple(clicks[p]) not in self.appended_pos:
-                            self.pos_dict_list.append(
-                                {
-                                    "pos": clicks[p],
-                                    "confidence": round(res[p], 5),
+                        # ---- 帮助模式：C++ decide 循环（只收集候选，不自动点击）----
+                        # 与自动模式共用**同一条** C++ decide 决策源；区别只在执行者：
+                        # 帮助模式由人类点「点击所有确定方格」执行，故此处绝不点击。
+                        #
+                        # 🔴 关键修复 1（用户实测「点击所有确定方格不能用」）：
+                        # decide 的 certain_safe 分支把**整批**已证明安全格放在
+                        # ``r["tied"]`` 里（C++ 注释：返回整批，调用方应逐个点击），
+                        # 而旧实现只取 ``r["x"], r["y"]`` 这**单格**，其余同批确定格
+                        # 被整体丢弃 ⇒ 候选表只有 1 格，按钮点下去只动一格。
+                        # 现在把整批写入候选表。
+                        #
+                        # 🔴 关键修复 2：帮助模式此前**不是循环**（decide 一次就
+                        # return），与自动模式的 decide 循环节奏不对称，用户要求
+                        # 「统一成为 C++ decide 循环」。现在循环调用 decide，每轮把
+                        # 新出现的候选并入 pos_dict_list，直到：
+                        #   ① decide 返回无效坐标；② 某轮没有任何新增候选（说明
+                        #   当前盘面的确定信息已被收集干净，继续只会重复同一批）。
+                        # 帮助模式不点击 ⇒ 盘面不变，故终止条件主要靠 ②。
+                        _help_loop_max = 16  # 防御性上限
+                        _rounds = 0
+                        _added_total = 0
+                        while _rounds < _help_loop_max:
+                            _rounds += 1
+                            rx, ry = int(r["x"]), int(r["y"])
+                            reason = str(r["reason"])
+                            confidence = float(r.get("confidence", 0))
+                            prob = r.get("prob") or {}
+                            tied = [(int(c[0]), int(c[1]))
+                                    for c in (r.get("tied") or [])]
+                            # 帮助页热力图：最近一次决策的逐格概率 + 最佳格
+                            _prob_hm = {}
+                            for k, v in prob.items():
+                                try:
+                                    _prob_hm[(int(k[0]), int(k[1]))] = float(v)
+                                except (TypeError, ValueError, IndexError):
+                                    continue
+                            self._last_heatmap = {
+                                "prob": _prob_hm,
+                                "best": (rx, ry),
+                                "best_conf": round(confidence, 5),
+                                "total": float(r.get("world_upper", 0) or 0),
+                                # 真实状态转移：帮助模式由 C++ 在决策出口统一
+                                # 补精确世界前瞻（OPTIMAL 层自带），其它模式为 None。
+                                "transitions": self._parse_transitions(r),
+                                "transition_meta": _help_transition_meta(r),
+                            }
+                            # 🔴 候选表真源 = 逐格安全概率 prob（与 main.py
+                            # _help_action_targets 完全一致），不再只收单点 (x,y)。
+                            # 用户实测「最后连推荐点击的格子都没有了」：win_rate
+                            # 阶段 C++ 返回 tied 56 个确定安全格、prob==1.0 也
+                            # 是 56 个，但旧逻辑只在 certain_safe 分支取整批，
+                            # win_rate/pbs/limitation 分支只收 (x,y) 一格 ⇒
+                            # 棋盘上只剩 1 个推荐标记，其余 55 格全部消失。
+                            # 现在把所有 prob>=1 的确定安全格都做成候选；
+                            # prob<=0 的确定雷也纳入（供「点击所有确定方格」标雷）。
+                            _safe_cells = set()
+                            _mine_cells = set()
+                            # proven_safe：仅「已证明安全」的格（prob>=1 或
+                            # certain_safe 的 tied）。P0-1 修复前把 decide 的
+                            # best 无条件塞进 _safe_cells，导致「点击所有确定
+                            # 方格」会点非确定格（review2 architect P0-1）。
+                            _proven_safe = set()
+                            for _k, _v in prob.items():
+                                try:
+                                    _kx, _ky = int(_k[0]), int(_k[1])
+                                    _p = float(_v)
+                                except (TypeError, ValueError, IndexError):
+                                    continue
+                                if _p >= 0.999999:
+                                    _safe_cells.add((_kx, _ky))
+                                    _proven_safe.add((_kx, _ky))
+                                elif _p <= 0.000001:
+                                    _mine_cells.add((_kx, _ky))
+                            # tied 里的确定安全格作为交叉补充（旧语义保留）
+                            if reason == "certain_safe":
+                                for _c in tied:
+                                    _safe_cells.add(_c)
+                                    _proven_safe.add(_c)
+                            # 至少给出决策单点，避免任何分支下候选为空：
+                            # best 只作为 UI 推荐标记（is_best），**不进入
+                            # 确定安全集合**，也不标 proven_safe；批量点击由
+                            # main._help_action_targets 只按 proven_safe 收集。
+                            _best_only = None
+                            if rx >= 1 and ry >= 1 and (rx, ry) not in _proven_safe:
+                                _best_only = (rx, ry)
+                                _safe_cells.add((rx, ry))
+                            # 不截断：expert 盘最多 480 格，全部候选都展示
+                            # 才不会再出现「推荐格只剩几个」的观感；64 上限
+                            # 是旧单点决策时代的防御值，已不适用。
+                            _batch = sorted(_safe_cells)
+                            _mine_batch = sorted(_mine_cells)
+                            _added_this_round = 0
+                            for (bx, by) in _batch:
+                                if (bx, by) in self.appended_pos:
+                                    continue
+                                # 每个候选必须拿到**唯一递增序号**：main.py 用它
+                                # 渲染候选格文字并据此绑定点击/预览。
+                                self.num += 1
+                                # confidence 用逐格安全概率（不是 decide.confidence
+                                # ——后者在 win_rate 是策略胜率，实测=1.0 会被
+                                # 误读成「该格 100% 安全」）。
+                                _p_cell = 1.0
+                                try:
+                                    _p_cell = float(prob.get((bx, by), 1.0))
+                                except (TypeError, ValueError):
+                                    pass
+                                self.pos_dict_list.append({
+                                    "pos": (bx, by),
+                                    "confidence": round(_p_cell, 5),
                                     "num": self.num,
                                     "is_mine": False,
+                                    "is_best": True,
+                                    # P0-1：只有「已证明安全」才能进批量点击。
+                                    # best 兜底格（_best_only）为 False。
+                                    "proven_safe": (bx, by) in _proven_safe,
+                                    "exp": f"C++ 三层决策 ({reason})",
+                                    "is_recommend": True,
+                                })
+                                self.appended_pos.add((bx, by))
+                                _added_this_round += 1
+                            for (bx, by) in _mine_batch:
+                                if (bx, by) in self.appended_pos:
+                                    continue
+                                self.num += 1
+                                self.pos_dict_list.append({
+                                    "pos": (bx, by),
+                                    "confidence": 0.0,
+                                    "num": self.num,
+                                    "is_mine": True,
                                     "is_best": False,
-                                    "exp": f"枚举得出",
+                                    "exp": f"C++ 三层决策 ({reason})",
                                     "is_recommend": False,
-                                }
+                                })
+                                self.appended_pos.add((bx, by))
+                                _added_this_round += 1
+                            _added_total += _added_this_round
+                            # 决策一产生就刷新一次：帮助页下方文字/棋盘立刻反映
+                            self._emit_live_heatmap(cell_value, phase="decision")
+                            # 终止条件：本轮无新增候选（盘面未变，继续只会重复）；
+                            # 或 decide 已无有效坐标（该格已开完/无建议）。
+                            if _added_this_round == 0 or not _batch:
+                                break
+                            # 帮助模式不点击 ⇒ 盘面不变。再 decide 一次以确认是否还有
+                            # 未收集的候选（例如 tied 被 64 上限截断时）。
+                            try:
+                                r = native.decide(
+                                    cell_value, self.a, w, h,
+                                    node_cap=HELP_NODE_CAP,
+                                    is_play=self.is_play,
+                                )
+                            except Exception as e:
+                                return self._decide_unavailable(
+                                    cell_value, exc=e,
+                                    where="帮助 decide 循环内 decide 异常")
+                            if not (r and r["x"] >= 1 and r["y"] >= 1):
+                                break
+                        self._emit_help_heatmap(cell_value)
+                        # 帮助模式决策成功也清零 count（自旧链 :1112 迁移）：
+                        # count 是模块内跨呼叫的失败计数，若只在自动模式清零，
+                        # 帮助模式的失败会泄漏到随后的自动模式 play()，被
+                        # `count >= 3` 误报成「请检查设置」。
+                        self.count = 0
+                        return cell_value
+
+                    # ---- 自动模式：decide 循环 ----
+                    _loop_max = 512  # 单次 number5_1 内 decide 上限（防御性）
+                    _iter = 0
+                    while True:
+                        _iter += 1
+                        # 协作式取消安全点（紧急热键 / GUI 停止按钮共用）。
+                        # decide 循环每轮会真实点击 + 重扫，若不在这里检查，
+                        # 用户按 ESC 后最长还要等 512 轮才退出 ⇒ 等于无法终止。
+                        if self._stop_requested():
+                            logger.info("收到停止请求，自动模式在 decide 循环内安全退出")
+                            self.count = 0
+                            return cell_value
+                        if _iter > _loop_max:
+                            logger.warning("decide 循环达上限 %d，跳出", _loop_max)
+                            break
+                        rx, ry = int(r["x"]), int(r["y"])
+                        reason = str(r["reason"])
+                        confidence = float(r.get("confidence", 0))
+                        prob = r.get("prob") or {}
+                        tied = [(int(c[0]), int(c[1])) for c in (r.get("tied") or [])]
+                        # 热力图（每轮更新，界面实时反映当前决策）
+                        _prob_hm = {}
+                        for k, v in prob.items():
+                            try:
+                                _prob_hm[(int(k[0]), int(k[1]))] = float(v)
+                            except (TypeError, ValueError, IndexError):
+                                continue
+                        self._last_heatmap = {
+                            "prob": _prob_hm,
+                            "best": (rx, ry),
+                            "best_conf": round(confidence, 5),
+                            "total": float(r.get("world_upper", 0) or 0),
+                        }
+                        # 决策一产生就刷新一次：UI 下方的当前建议/概率不再等待
+                        # 整个 number5_1 返回后才变化。
+                        self._emit_live_heatmap(cell_value, phase="decision")
+                        # 本轮要点的格子（certain_safe=批量，其余=单点）
+                        if reason == "certain_safe" and tied:
+                            _to_click = tied[:64]
+                        elif rx >= 1 and ry >= 1:
+                            _to_click = [(rx, ry)]
+                        else:
+                            break  # decide 放弃（无效坐标）→ 交回主循环推理
+                        _num9_before = int(np.sum(cell_value == 9))
+                        for (cx, cy) in _to_click:
+                            # 批量点击内部也要响应取消：certain_safe 一次最多
+                            # 点 64 格（每格 29ms ≈ 1.9s），按 ESC 后不应继续
+                            # 把整批点完。
+                            if self._stop_requested():
+                                logger.info("收到停止请求，批量点击中途安全退出")
+                                self.count = 0
+                                return cell_value
+                            if cell_value[cy, cx] != 9:
+                                continue  # 已开/已标记（certain_safe 批量可能含旧格）
+                            # C++/棋盘坐标统一为 1-based；点击像素由唯一 helper
+                            # 计算，避免批量 certain_safe 与单点路径出现偏移分歧。
+                            # 探针：记录该击的自评安全率（prob 里该格的「不是雷概率」，
+                            # 缺省时退回 decide 的 confidence）——事后用于校准与判死因。
+                            probe.click(
+                                cx, cy,
+                                conf=prob.get((cx, cy), confidence),
+                                reason=reason, source="decide",
+                                num9_before=_num9_before,
+                                batch=len(_to_click))
+                            self._click_decision_cell((cx, cy))
+                            # ⚠️ 点完**只点击、不探测**（用户裁决 2026-11-07）：
+                            # 这里曾逐点击 `_locate("./image/lose.bmp")` 判死并
+                            # `time.sleep(setting.sleep)`，现两者都删除——
+                            # ① 局末棋盘出现雷/失败弹窗时扫描本来就不准，属正常节奏；
+                            # ② 胜负判定统一由主循环 `utils/solver.py` 的
+                            #    「游戏胜利/游戏失败」弹窗检测接管（本切点未改）。
+                            # 点击节奏由 pyautogui.PAUSE(=setting.sleep) 自带。
+                        self._suppress_rescan_warning = True
+                        try:
+                            # 自动模式局末失败弹窗会让棋盘像素暂时不可识别；
+                            # 不弹出“请重新截图/校准”告警，交给主循环处理胜负。
+                            # 使用实例级短生命周期标记而非新增调用参数，保持
+                            # rescan_after_click 对旧替身/外部调用方的兼容性。
+                            cell_value = self.rescan_after_click(cell_value)
+                        except LowConfidenceScanError as e:
+                            # 扫描不确定（典型场景：局末失败弹窗盖住棋盘）**不是
+                            # 决策失败**：本轮作废、原样交回盘面，不计 count、不弹
+                            # 警告。否则 play() 的 `count >= 3` 会把「死了一局」
+                            # 误判成「设置错误」并停机——用户明确要求该错误不得
+                            # 影响自动循环继续执行。
+                            logger.warning(
+                                "decide 循环重扫不确定，本轮作废（不影响自动循环）：%s", e)
+                            return cell_value
+                        finally:
+                            self._suppress_rescan_warning = False
+                        # 点击后重扫得到最新事实棋盘；即使本轮没有进展，也要立即
+                        # 把新 cell_value 推给 UI，避免下方文字/棋盘停在旧帧。
+                        self._emit_live_heatmap(cell_value, phase="rescanned")
+                        # 无进展守卫：点击后 num9 未减少 → 防死循环，跳出
+                        _num9_after = int(np.sum(cell_value == 9))
+                        if _num9_after >= _num9_before:
+                            logger.debug("decide 循环无进展（num9 %d→%d），跳出",
+                                         _num9_before, _num9_after)
+                            break
+                        # 胜利守卫：无未开格了
+                        if _num9_after == 0:
+                            break
+                        # 继续 decide（盘面已更新；decide 异常 → 统一失败出口）。
+                        try:
+                            _t_decide = time.perf_counter()
+                            r = native.decide(
+                                cell_value, self.a, w, h,
+                                node_cap=HELP_NODE_CAP if _help_mode else 2_000_000,
+                                is_play=self.is_play,
                             )
-                            self.appended_pos.add(tuple(clicks[p]))
-
-        # 附带候选点击格概率字典（1-based 坐标 → 不是雷概率），供热力图渲染
-        _prob = {tuple(c): float(r) for c, r in zip(clicks, res)}
-        return pos, confidence, total, _prob
-
-    def _wr_memory_ok(self, clicks, clicks9, total):
-        """win_rate 的内存预算闸门：规模过大时直接降级，不进 win_rate。
-
-        ==================== 为什么需要这道闸门 ====================
-        `win_rate`（cpp/mscore.cpp 的 py_win_rate / wr_f）的成本结构是
-            nworlds × 2304B × n_candidates × 递归层数
-        （每个"世界"是整盘 (h+2)×(w+2)=576 int32 = 2304B；阶段2 对每个候选格
-        把每个世界整盘拷一次，递归每层再拷一次）。这是**乘积**结构：世界数
-        与候选格数一大，内存就呈 GB 级增长。
-
-        生产实测（12 局，默认阈值）：win_rate 只触发 8 次、n_cand 中位数 13、
-        世界数中位数 4、单次内存约 0.15MB —— **正常对局不会触发这道闸门**。
-        它只在异常/极端局面（设置错误、残局约束自相矛盾、外部强行放宽
-        wr_threshold）时兜底，避免把整机内存撑爆。
-
-        必须**在调用前**判断，而不是依赖 C++ 抛异常，原因有三：
-          ① C++ 抛异常后本文件会回退**纯 Python** 实现，那里没有上限、
-             同样吃内存 —— 只拦 C++ 等于没拦；
-          ② 异常抛在计算中途时已经分配过一部分内存，峰值仍可能顶爆；
-          ③ 频繁抛异常 + logger.warning 会刷屏并拖慢决策。
-
-        超限时返回 False，调用方走 process_bigger_situation（贪心最大安全率），
-        这是**有意的降级**：少一点前瞻精度，换整机不被打爆。
-        """
-        n_cand = 1 + len(clicks) + len(clicks9)
-        # 阶段2 峰值估算（与 cpp/mscore.cpp 的预算判断同一公式、同一上限）
-        stage2_bytes = float(total) * float(n_cand) * 2304.0
-        limit_bytes = 1536.0 * 1024.0 * 1024.0      # 1.5 GB
-        if stage2_bytes <= limit_bytes:
-            return True
-        # 同一 (total, n_cand) 组合只警告一次，避免每步刷屏
-        key = (int(total), int(n_cand))
-        if key not in self._wr_mem_warned:
-            self._wr_mem_warned.add(key)
-            logger.warning(
-                "win_rate 预计内存 %.0f MB 超限（total=%d，候选格=%d）→ "
-                "本局改用贪心概率分支（前瞻降级，不影响正确性）",
-                stage2_bytes / 1e6, total, n_cand)
-        return False
-
-    def win_rate(self, clicks, clicks9, res_list, cell_value: np.ndarray, ck, num10):
-        """精确前瞻搜索（"把每种未来都玩一遍"），返回逐候选格的胜率。
-
-        ==================== 入参（名字极易误解，逐条看）====================
-          clicks   —— **前沿**未开格（受邻域数字约束）
-          clicks9  —— **内部**未开格（只受剩余总雷数约束）。"9" 来自编码 9=未开
-          res_list —— **每组的全部解**（不是"结果列表"）：
-                      res_list[i] 形状 [该组解数 × 该组前沿格数]，元素 0/1
-                      ⚠️ res_list[i] 的列**只对应第 i 组自己的前沿格**，不是全局 clicks；
-                         跨组引用必须加组偏移（曾经的 bug 就出在这里）
-          ck       —— **每组的解数**（ck[i] == len(res_list[i])），
-                      total = ∏ck[i] = 世界总数。不是"检查"，也不是"每组格数"
-          num10    —— **已标记为雷的格数**（cell_value==10 的格数）
-          返回 (res, clicks_out, total, clicks2p)
-
-        ==================== 返回值（三个高频误解）====================
-          res       —— **逐候选格的胜率数组**，不是标量。要选格得自己 argmax
-          clicks_out—— **已按 clicks2p 降序重排**后的候选格！顺序与入参不同，
-                       按下标对齐入参 clicks 会错位；要匹配请按**坐标**
-          total     —— 世界总数
-          clicks2p  —— dict[(x,y)] → "该格不是雷"的概率（safety）。
-                       按**排序前**的原始插入序构建，与 clicks_out 也是按坐标匹配
-
-        ==================== 它不是"精确最优胜率" ====================
-        cpp/mscore.cpp 的 wr_f 有四处与真实扫雷规则不符（详见仓库
-        docs/变量名与算法细节.md 第 2.2 节），因此这是**启发式估值**，不是 V*。
-        需要真值时用 bench/arms_lookahead.py 的 ExactEngine（忠实 flood-fill）。
-
-        ==================== 降级语义 ====================
-        节点数超 node_cap 时抛 _WrNodeCapExceeded，由 number5_1 捕获后
-        **降级走 process_bigger_situation（贪心）**。绝不回退纯 Python
-        （那里同样无上限，退回等于没拦）。
-        """
-        # 优先 C++（mscore.win_rate），失败/不可用自动回退纯 Python
-        if native.available:
-            try:
-                _res, _clicks, _total, _clicks2p = native.mscore.win_rate(
-                    clicks, clicks9, native.as_groups(res_list), cell_value, ck,
-                    num10, self.a, self.w, self.h, self.is_play,
-                    self._pv_mapped_emit, _wr_node_cap())
-            except _WrNodeCapExceeded as e:
-                # ⚠️ 节点数超硬上限：这**不能**回退到纯 Python 实现——
-                # 纯 Python 的 f() 同样无上限，退过去等于没拦，正是此前
-                # 把内存顶爆的路径。正确做法是抛给 number5_1 让它走
-                # process_bigger_situation（贪心），即有意的精度降级。
-                #
-                # ⚠️ 计数只在这里做一次。下方 `except Exception` 把 C++ 的
-                # RuntimeError 转成本异常后会 `raise`，**又会被本分支捕获**；
-                # 若两个分支都计数，同一异常会被记 2 次
-                # （实测：cap=2e6 时每局降级数恒为 22 = 11×2，暴露了重复计数）。
-                self._wr_nodecap_hits += 1
-                _WR_NODECAP_TOTAL[0] += 1
-                logger.warning(
-                    "win_rate 节点数超上限（%s）→ 本步降级为贪心分支"
-                    "（前瞻精度降级，不崩溃、不影响正确性）", e)
-                raise
+                            _decide_ms = (time.perf_counter() - _t_decide) * 1000.0
+                            # 【记录点 2】decide 循环内的每轮：同上，tag=loop。
+                            decide_trace.record(
+                                cell_value, self.a, w, h, r, _decide_ms,
+                                node_cap=(HELP_NODE_CAP if _help_mode
+                                          else 2_000_000),
+                                is_play=self.is_play, tag="loop")
+                            probe.decision(r, _decide_ms, tag="loop",
+                                           help_mode=bool(_help_mode))
+                            # （原「循环内自适应升降档」已删除：wr_threshold 取消，
+                            #   见首轮 decide 处的说明。）
+                        except Exception as e:
+                            # 不能只 break 后落到「正常返回」——那样下一轮主循环
+                            # 会以为本轮决策成功，也不再产生安全重扫语义。
+                            return self._decide_unavailable(
+                                cell_value, exc=e, where="decide 循环内 decide 异常")
+                        if not (r and r["x"] >= 1 and r["y"] >= 1):
+                            return self._decide_unavailable(
+                                cell_value,
+                                where="decide 循环内返回无效坐标",
+                                detail=_decide_diag(r))
+                    # 自动模式 decide 循环正常结束（无进展/胜利/重扫不确定/达上限）：
+                    # `self.count = 0` 在此清零（自旧链 :1112 迁移）——只有真正
+                    # 走完一轮 decide 决策才算成功，否则 play() 的 `count >= 3`
+                    # 会把「识别失败」误报成「请检查设置」。
+                    self.count = 0
+                    return cell_value
+                # 首轮 decide 返回 None / 无效坐标（x<1 或 y<1）→ 统一失败出口。
+                # ⚠️ 必须显式 return：控制流继续下行会落到已删除的 Python 决策链
+                # 位置（历史「点一格两下/两个弹窗」根因即此类悬空控制流）。
+                return self._decide_unavailable(
+                    cell_value, where="decide 返回无效坐标",
+                    detail=_decide_diag(r))
             except Exception as e:
-                # C++ 的 node cap 异常以 RuntimeError 形式回来（pybind11 转换），
-                # 这里按消息识别并转成本模块的专用异常，使其走降级路径
-                # 而不是"回退纯 Python"。识别失败才按普通失败处理。
-                # 注意：此处**不计数**，计数统一在上面的 _WrNodeCapExceeded 分支做。
-                if "node cap exceeded" in str(e):
-                    raise _WrNodeCapExceeded(str(e)) from e
-                logger.warning("C++ win_rate 失败，回退纯 Python 实现：%s", e)
-                # 纯 Python 回退同样吃内存，但它只在“C++ 抛异常”时走到，
-                # 而调用前的 _wr_memory_ok 已按同一公式拦掉超限规模 ⇒
-                # 能到这里的规模必然在预算内，无需重复设限。
-                # 此处绝不能再抛异常：number5_1 外层会把任何异常当作
-                # “求解失败”→ 触发完整重扫，那不是降级而是更糟的副作用。
+                # 用户硬裁决：decide 失败 = 可观测错误 + 全盘安全重扫，**不回退**。
+                # 历史根因（旧注释 :706-709）：漏 import setting 的 NameError 曾被
+                # 裸 except 吞掉 → 静默跌回 Python 链重复点击。现统一走 helper。
+                # where 写「decide 分支」而非「decide 调用」是因为这个 try 覆盖整个
+                # 分支（含点击/重扫/热力图组装）——如实标注才不会把点击路径的
+                # 异常误归因成 C++ decide 的失败。
+                return self._decide_unavailable(
+                    cell_value, exc=e, where="decide 分支异常")
+        # ---- decide 不可用（旧 pyd / MSW_DISABLE_NATIVE=1 / 无 decide 导出）----
+        # 方案 A 明确：不可用也计入「决策不可用」，走同一 helper，不执行任何
+        # Python 枚举（否则等于保留一条静默回退通道）。
+        return self._decide_unavailable(cell_value, where="has_decide=False")
 
-        cell_value_list = []
-        for index_list in A(ck):
-            _cell_value = cell_value.copy()
-            r = np.array([])
-            for i in range(len(index_list)):
-                r = np.hstack([r, res_list[i][index_list[i]]])
-
-            _cell_value = cell_value.copy()
-            for i in np.argwhere(r == 1):
-                u, v = clicks[i[0]]
-                _cell_value[v, u] = 10
-
-            if self.a - num10 - sum(r) == 0:
-                cell_value_list.append(_cell_value)
-                continue
-            if self.a > num10 + sum(r) + len(clicks9):
-                continue
-
-            gl = get_list(self.a - num10 - sum(r), self.a - num10 - sum(r), len(clicks9))
-            next(gl)
-            for index_l in gl:
-                new_cell_value = _cell_value.copy()
-                for j in index_l:
-                    u, v = clicks9[j]
-                    new_cell_value[v, u] = 10
-                cell_value_list.append(new_cell_value)
-
-        depth_limit = 200 / len(clicks)
-
-        self.memory = {}
-
-        def hash_cell_value(l: np.ndarray):
-            __cell_value = np.where(l > 9, 9, l)
-            str_cell_value = __cell_value.tostring()
-            hashed_cell_value = hashlib.md5(str_cell_value).hexdigest()
-            return hashed_cell_value
-
-        def f(clicks: list, _cell_value_list, depth=1):
-            assert len(_cell_value_list) > 0
-            try:
-                return self.memory[hash_cell_value(_cell_value_list[0])]
-            except KeyError:
-                pass
-
-            if len(_cell_value_list) == 1:
-                return 1
-            if depth > depth_limit:  # 防止死循环
-                return 1
-
-            _np_cell_value_list = np.array(_cell_value_list)
-            total = len(_cell_value_list)
-
-            clicks2p = {}
-            for u, v in clicks:
-                clicks2p[(u, v)] = 1 - len(np.argwhere(_np_cell_value_list[:, v, u] == 10)) / total
-            clicks = sorted(clicks, key=lambda x: clicks2p[x], reverse=True)
-
-            _res = []
-            for i in range(len(clicks)):
-                if i > 1 and clicks2p[clicks[i]] < max(_res):  # 剪枝
-                    continue
-
-                win_p = 0
-                u, v = clicks[i]
-                new_cell_value_dict = defaultdict(list)
-                for _cell_value in _cell_value_list:
-                    if _cell_value[v, u] != 10:
-                        new_cell_value = _cell_value.copy()
-                        new_uv_value = self.cell_around(u, v, new_cell_value)[1]
-                        new_cell_value[v, u] = new_uv_value
-                        new_cell_value_dict[new_uv_value].append(new_cell_value)
-
-                for new_uv_value, new_cell_value_list in new_cell_value_dict.items():
-                    trans_prob = len(new_cell_value_list) / total
-                    new_clicks = clicks.copy()
-                    new_clicks.pop(i)
-                    win_r = f(new_clicks, new_cell_value_list, depth + 1)
-                    win_p += trans_prob * win_r
-                _res.append(win_p)
-
-            self.memory[hash_cell_value(_cell_value_list[0])] = max(_res)
-
-            return max(_res)
-
-        total = len(cell_value_list)
-        clicks += clicks9
-        res = []
-
-        np_cell_value_list = np.array(cell_value_list)
-        clicks2p = {}
-        for u, v in clicks:
-            clicks2p[(u, v)] = 1 - len(np.argwhere(np_cell_value_list[:, v, u] == 10)) / total
-        clicks = sorted(clicks, key=lambda x: clicks2p[x], reverse=True)
-
-        self._pv_mapped_emit(0)
-        for i in range(len(clicks)):
-            if i > 1 and clicks2p[clicks[i]] < max(res) and self.is_play:  # 剪枝
-                res.append(0)
-                continue
-
-            win_p = 0
-            u, v = clicks[i]
-            new_cell_value_dict = defaultdict(list)
-            for _cell_value in cell_value_list:
-                if _cell_value[v, u] != 10:
-                    new_cell_value = _cell_value.copy()
-                    new_uv_value = self.cell_around(u, v, new_cell_value)[1]
-                    new_cell_value[v, u] = new_uv_value
-                    new_cell_value_dict[new_uv_value].append(new_cell_value)
-
-            for new_uv_value, new_cell_value_list in new_cell_value_dict.items():
-                trans_prob = len(new_cell_value_list) / total
-                new_clicks = clicks.copy()
-                new_clicks.pop(i)
-                win_r = f(new_clicks, new_cell_value_list)
-                win_p += trans_prob * win_r
-
-            self._pv_mapped_emit(int((i + 1) / len(clicks) * 100))
-            res.append(win_p)
-
-        self.memory = {}
-
-        return res, clicks, len(cell_value_list), clicks2p
-
-    def open_num5x5(self, cell_value, pos):
-        """
-        计算5x5格子中已经打开的格子数
-        :param cell_value:
-        :param pos:
-        :return:
-        """
-        x, y = pos
-        value = cell_value.copy()
-        res = 0
-        for i in range(x - 2, x + 3):
-            for j in range(y - 2, y + 3):
-                if i < 1 or i > self.w or j < 1 or j > self.h:
-                    res += 1
-                    continue
-                if 0 <= value[j, i] <= 8:
-                    res += 1
-
-        return res
-
-    def part_solve_single(self, clicks, cell_value, num10, num9, cs, _try=True):
-        """
-        根据点击的坐标，计算出可能的值
-        :param _try:
-        :param clicks: 点击的坐标
-        :param cell_value: 格子中的值
-        :param num10: 10的个数
-        :param num9: 9的个数
-        :param cs: 雷的坐标
-        :return: 可能的值
-        """
-        # 优先 C++（mscore.part_solve_single），失败/不可用自动回退纯 Python；
-        # _try=True 路径依赖 try_solve（Python 侧逻辑），不加速
-        if not _try and native.available:
-            try:
-                _arr, _num = native.mscore.part_solve_single(
-                    clicks, cell_value, cs, num10, num9, self.a, self.w, self.h,
-                    self._pv_mapped_emit)
-                return list(_arr), int(_num), np.zeros(len(clicks))
-            except Exception as e:
-                logger.warning("C++ part_solve_single 失败，回退纯 Python 实现：%s", e)
-
-        canopen_res = np.zeros(len(clicks))
-        res_list = []
-        list_getter = get_list(self.a - num10 - num9, self.a - num10, len(clicks))
-        _total = next(list_getter)
-        num = 0
-        num_solve = 0
-        o_value = 0
-        self._pv_mapped_emit(0)
-        for index_list in list_getter:
-            # copy 防止改变原数组
-            value = cell_value.copy()
-            # 将尝试的坐标设为雷。
-            for loc in index_list:
-                value[clicks[loc][1], clicks[loc][0]] = 10
-
-            flag = 0  # 0 符合条件 -1 不符合条件
-            for i, j in cs:
-                if value[j, i] != self.cell_around(i, j, value)[1]:
-                    flag = -1
-                    break
-
-            res = np.zeros(len(clicks), dtype=np.int32)
-            if flag == 0:  # 符合条件
-                if _try:
-                    for loc in set(range(len(clicks))) - set(index_list):
-                        _value = cell_value.copy()
-                        num9 = 0
-                        num10 = 0
-                        i, j = clicks[loc]
-                        for u in range(i - 1, i + 2):
-                            for v in range(j - 1, j + 2):
-                                if value[v, u] == 9 and ((u, v) not in clicks):
-                                    num9 += 1
-                                elif value[v, u] == 10:
-                                    num10 += 1
-                        can_open = self.try_solve(i, j, _value, clicks, num9, num10)
-                        canopen_res[loc] += can_open
-
-                num_solve += 1
-                for loc in index_list:
-                    res[loc] += 1
-                res_list.append(res)
-
-            n_value = int((num / _total) * 100)
-            if n_value - o_value >= 1:
-                self._pv_mapped_emit(n_value)
-                o_value = n_value
-            num += 1
-
-        # 没有雷的情况
-        value = cell_value.copy()
-
-        flag = 0
-        for i, j in cs:
-            if value[j, i] != self.cell_around(i, j, value)[1]:  # 不符合条件的
-                flag = -1
-                break
-
-        if flag == 0:  # 符合条件
-            res_list.append(np.zeros(len(clicks), dtype=np.int32))
-
-        if num_solve != 0:
-            canopen_res /= num_solve
-
-        self._pv_mapped_emit(100)
-        return res_list, len(res_list), canopen_res
-
-    def part_solve(self, clicks, cell_value, num10, num9, cs, _try=False):
-        """
-        根据点击的坐标，计算出可能的值
-        :param _try:
-        :param clicks: 点击的坐标
-        :param cell_value: 格子中的值
-        :param num10: 10的个数
-        :param num9: 9的个数
-        :param cs: 雷的坐标
-        :return: 可能的值
-        """
-        # 优先 C++（mscore.part_solve），失败/不可用自动回退纯 Python；
-        # _try=True 路径依赖 try_solve（Python 侧逻辑），不加速
-        if not _try and native.available:
-            try:
-                _arr, _num = native.mscore.part_solve(
-                    clicks, cell_value, self.a, self.w, self.h,
-                    self._pv_mapped_emit)
-                return list(_arr), int(_num), np.zeros(len(clicks))
-            except Exception as e:
-                logger.warning("C++ part_solve 失败，回退纯 Python 实现：%s", e)
-
-        _cs = defaultdict(list)
-        for i, j in clicks:
-            for u in range(i - 1, i + 2):
-                for v in range(j - 1, j + 2):
-                    if 1 <= cell_value[v, u] <= 8:
-                        _cs[(i, j)].append((u, v))
-        _cs = dict(_cs)
-
-        clicks = list(clicks)
-        logger.debug("part_solve 待枚举格子数: %s", len(clicks))
-
-        def f(cell_value, state: list, clicks: list, res: list, completed=0, depth=1):
-            if len(clicks) == 1:
-                x, y = clicks[0]
-                value = cell_value.copy()
-
-                flag = 0  # 0 符合条件 -1 不符合条件
-                for i, j in _cs[(x, y)]:
-                    if value[j, i] != self.cell_around(i, j, value)[1]:
-                        flag = -1
-                        break
-
-                if flag == 0:
-                    _state = state.copy()
-                    _state.append(0)
-                    _state = np.array(_state)
-                    res.append(_state)
-
-                completed += 1 / 2 ** depth
-
-                value[y, x] = 10
-                num10 = len(np.argwhere(value == 10))
-                if num10 > self.a:
-                    return res, completed
-
-                flag = 0  # 0 符合条件 -1 不符合条件
-                for i, j in _cs[(x, y)]:
-                    if value[j, i] != self.cell_around(i, j, value)[1]:
-                        flag = -1
-                        break
-
-                if flag == 0:
-                    _state = state.copy()
-                    _state.append(1)
-                    _state = np.array(_state)
-                    res.append(_state)
-
-                completed += 1 / 2 ** depth
-
-                return res, completed
-
-            else:
-                x, y = clicks[0]
-                _clicks = clicks.copy()
-                _clicks.pop(0)
-                value = cell_value.copy()
-
-                value[y, x] = 11
-
-                flag = 0  # 0 符合条件 -1 不符合条件
-                for i, j in _cs[(x, y)]:
-                    _num9, _num10 = self.cell_around(i, j, value)
-                    if value[j, i] > _num9 + _num10 or value[j, i] < _num10:
-                        flag = -1
-                        break
-
-                if flag == 0:
-                    _state = state.copy()
-                    _state.append(0)
-                    res, completed = f(value.copy(), _state, _clicks, res, completed, depth + 1)
-                else:
-                    completed += 1 / 2 ** depth
-
-                self._pv_mapped_emit(int(completed * 100))
-
-                value[y, x] = 10
-                num10 = len(np.argwhere(value == 10))
-                if num10 > self.a:
-                    return res, completed
-
-                flag = 0  # 0 符合条件 -1 不符合条件
-                for i, j in _cs[(x, y)]:
-                    _num9, _num10 = self.cell_around(i, j, value)
-                    if value[j, i] > _num9 + _num10 or value[j, i] < _num10:
-                        flag = -1
-                        break
-
-                if flag == 0:
-                    _state = state.copy()
-                    _state.append(1)
-                    res, completed = f(value.copy(), _state, _clicks, res, completed, depth + 1)
-                else:
-                    completed += 1 / 2 ** depth
-                self._pv_mapped_emit(int(completed * 100))
-
-                return res, completed
-
-        canopen_res = np.zeros(len(clicks))
-        # clicks = sorted(clicks, key=lambda x: x[1] + x[0])
-        res_l, _ = f(cell_value, [], clicks, [])
-
-        if _try:
-            # 计算每个方格可以开的格子数
-            for index_list in res_l:
-                # copy 防止改变原数组
-                value = cell_value.copy()
-                # 将尝试的坐标设为雷。
-                for loc in index_list:
-                    value[clicks[loc][1], clicks[loc][0]] = 10
-
-                for loc in set(range(len(clicks))) - set(index_list):
-                    _value = cell_value.copy()
-                    num9 = 0
-                    num10 = 0
-                    i, j = clicks[loc]
-                    for u in range(i - 1, i + 2):
-                        for v in range(j - 1, j + 2):
-                            if value[v, u] == 9 and ((u, v) not in clicks):
-                                num9 += 1
-                            elif value[v, u] == 10:
-                                num10 += 1
-                    can_open = self.try_solve(i, j, _value, clicks, num9, num10)
-                    canopen_res[loc] += can_open
-
-        num_solve = len(res_l)
-        if num_solve != 0:
-            canopen_res /= num_solve
-
-        return res_l, num_solve, canopen_res
