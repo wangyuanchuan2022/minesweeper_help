@@ -79,111 +79,9 @@ namespace py = pybind11;
 // ---------------------------------------------------------------------------
 namespace {
 
-class MD5 {
-public:
-    MD5() { reset(); }
-    void reset() {
-        size_ = 0;
-        h_[0] = 0x67452301u; h_[1] = 0xefcdab89u;
-        h_[2] = 0x98badcfeu; h_[3] = 0x10325476u;
-        std::memset(buf_, 0, 64);
-    }
-    void update(const unsigned char* buf, size_t len) {
-        size_t used = size_ % 64;
-        size_ += len;
-        if (used) {
-            size_t need = 64 - used;
-            if (len < need) {
-                std::memcpy(&buf_[used], buf, len);
-                return;
-            }
-            std::memcpy(&buf_[used], buf, need);
-            transform(buf_);
-            buf += need;
-            len -= need;
-        }
-        while (len >= 64) {
-            transform(buf);
-            buf += 64;
-            len -= 64;
-        }
-        if (len) std::memcpy(buf_, buf, len);
-    }
-    // 16 字节二进制摘要
-    std::string final() {
-        uint64_t bits = (uint64_t)size_ * 8;  // 先记录消息长度（不含填充）
-        unsigned char pad[72];
-        std::memset(pad, 0, sizeof(pad));
-        pad[0] = 0x80;
-        size_t padlen = (size_ % 64 < 56) ? (56 - size_ % 64) : (120 - size_ % 64);
-        update(pad, padlen);
-        for (int i = 0; i < 8; i++) pad[i] = (unsigned char)(bits >> (8 * i));
-        update(pad, 8);
-        std::string out(16, '\0');
-        for (int i = 0; i < 4; i++)
-            for (int j = 0; j < 4; j++)
-                out[4 * i + j] = (char)((h_[i] >> (8 * j)) & 0xFF);
-        return out;
-    }
-
-private:
-    static uint32_t rol(uint32_t x, int c) { return (x << c) | (x >> (32 - c)); }
-    void transform(const unsigned char* chunk) {
-        uint32_t a = h_[0], b = h_[1], c = h_[2], d = h_[3], x[16];
-        for (int i = 0; i < 16; i++)
-            x[i] = (uint32_t)chunk[4 * i] | ((uint32_t)chunk[4 * i + 1] << 8) |
-                   ((uint32_t)chunk[4 * i + 2] << 16) | ((uint32_t)chunk[4 * i + 3] << 24);
-        for (int i = 0; i < 64; i++) {
-            uint32_t f;
-            int g;
-            if (i < 16) {
-                f = (b & c) | (~b & d);
-                g = i;
-            } else if (i < 32) {
-                f = (d & b) | (~d & c);
-                g = (5 * i + 1) % 16;
-            } else if (i < 48) {
-                f = b ^ c ^ d;
-                g = (3 * i + 5) % 16;
-            } else {
-                f = c ^ (b | ~d);
-                g = (7 * i) % 16;
-            }
-            uint32_t tmp = d;
-            d = c;
-            c = b;
-            b = b + rol(a + f + K_[i] + x[g], S_[i]);
-            a = tmp;
-        }
-        h_[0] += a;
-        h_[1] += b;
-        h_[2] += c;
-        h_[3] += d;
-    }
-    static const uint32_t K_[64];
-    static const int S_[64];
-    uint32_t h_[4];
-    unsigned char buf_[64];
-    size_t size_;
-};
-
-const uint32_t MD5::K_[64] = {
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a,
-    0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340,
-    0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8,
-    0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-    0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92,
-    0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
-const int MD5::S_[64] = {
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+// 2026-11-10 精简：MD5 类（RFC 1321，原 L82-186）已删除。它只服务于
+// 已移除的 md5 导出（Python 侧零调用、decide 两层决策链不依赖）。
+// 需要恢复时从 git 历史取回（删除前提交 621b0a2）。
 
 // ---------------------------------------------------------------------------
 // 通用工具
@@ -677,80 +575,8 @@ py::tuple py_part_solve(py::sequence clicks_seq,
 // ---------------------------------------------------------------------------
 // 2. part_solve_single（_try=False 路径）
 // ---------------------------------------------------------------------------
-py::tuple py_part_solve_single(
-        py::sequence clicks_seq,
-        py::array_t<int32_t, py::array::c_style | py::array::forcecast> cell_value,
-        py::sequence cs_seq, int64_t num10, int64_t num9, int a, int w, int h,
-        py::object progress_cb) {
-    auto clicks = parse_coords(clicks_seq);
-    auto cs = parse_coords(cs_seq);
-    if (cell_value.ndim() != 2 || cell_value.shape(0) != h + 2 || cell_value.shape(1) != w + 2) {
-        throw std::runtime_error("cell_value shape mismatch (expect (h+2, w+2))");
-    }
-    Board base(cell_value.data(), cell_value.data() + (size_t)(h + 2) * (w + 2));
-    const int W2 = w + 2;
-    const size_t n = clicks.size();
-    Progress prog(std::move(progress_cb));
-
-    // get_list(a - num10 - num9, a - num10, len(clicks)) 的尺寸范围（含钳制）
-    int64_t a1 = (int64_t)a - num10 - num9;
-    int64_t num1 = (int64_t)a - num10;
-    auto sizes = get_list_sizes(a1, num1, (int)n);
-    int64_t total_count = 0;
-    for (int s : sizes) total_count += (int64_t)C_num((int)n, s);
-
-    auto check_cs = [&](const Board& b) -> bool {
-        for (const auto& c : cs) {
-            int c9, c10;
-            cell_around(b, w, h, W2, c.first, c.second, c9, c10);
-            if (b[(size_t)c.second * W2 + c.first] != c10) return false;
-        }
-        return true;
-    };
-
-    std::vector<std::vector<int32_t>> rows;
-    Board board;
-    std::vector<int> combo;
-    int64_t num = 0, o_value = 0;
-
-    prog.emit(0);
-    {
-        py::gil_scoped_release unlock;  // 组合枚举期间释放 GIL（进度回调内部自行重取）
-        for (int s : sizes) {
-            ComboIter it((int)n, s);
-            while (it.next(combo)) {
-                board = base;
-                for (int loc : combo)
-                    board[(size_t)clicks[(size_t)loc].second * W2 + clicks[(size_t)loc].first] = 10;
-                if (check_cs(board)) {
-                    std::vector<int32_t> row(n, 0);
-                    for (int loc : combo) row[(size_t)loc] += 1;
-                    rows.push_back(std::move(row));
-                }
-                int n_value = (int)(((double)num / (double)total_count) * 100.0);
-                if (n_value - o_value >= 1) {
-                    prog.emit(n_value);
-                    o_value = n_value;
-                }
-                ++num;
-            }
-        }
-    }
-
-    // 无雷情况（在原始板面上校验，最后追加）
-    if (check_cs(base)) {
-        rows.emplace_back(n, 0);
-    }
-    prog.emit(100);
-
-    const size_t num_rows = rows.size();
-    py::array_t<int32_t> out({(py::ssize_t)num_rows, (py::ssize_t)n});
-    auto vo = out.mutable_unchecked<2>();
-    for (size_t k = 0; k < num_rows; ++k)
-        for (size_t c = 0; c < n; ++c)
-            vo((py::ssize_t)k, (py::ssize_t)c) = (k < rows.size() ? rows[k][c] : 0);
-    return py::make_tuple(out, py::int_((int64_t)num_rows));
-}
+// 2026-11-10 精简：py_part_solve_single 已删除（Python 侧零调用、
+// decide 两层决策链不依赖；它只是历史上 part_solve 的单组变体）。
 
 struct NodeCapExceeded : public std::exception {
     int64_t cap;
@@ -1685,17 +1511,8 @@ static MemEstimate estimate_mem_impl(int64_t worlds, int64_t candidates,
     return {bytes, budget, worlds, candidates, bytes <= budget};
 }
 
-static py::dict py_estimate_mem(int64_t worlds, int64_t candidates,
-                                int64_t budget) {
-    const auto e = estimate_mem_impl(worlds, candidates, budget);
-    py::dict out;
-    out["bytes"] = e.bytes;
-    out["budget"] = e.budget;
-    out["worlds"] = e.worlds;
-    out["candidates"] = e.candidates;
-    out["allowed"] = e.allowed;
-    return out;
-}
+// 2026-11-10 精简：py_estimate_mem 已删除（estimate_mem 导出移除后无调用者）。
+// estimate_mem_impl 保留：桥接块（AB_NATIVE_MERGED）仍引用它。
 
 static py::tuple py_split_frontier(
     py::array_t<int32_t, py::array::c_style | py::array::forcecast> board) {
@@ -1742,27 +1559,8 @@ static py::tuple py_split_frontier(
     return py::make_tuple(frontier, interior, num9, num10);
 }
 
-static py::dict py_decision_preflight(
-    py::array_t<int32_t, py::array::c_style | py::array::forcecast> board,
-    int64_t worlds, int64_t budget) {
-    py::tuple split = py_split_frontier(board);
-    py::list frontier = split[0].cast<py::list>();
-    py::list interior = split[1].cast<py::list>();
-    const int64_t candidates = 1 + static_cast<int64_t>(frontier.size()) +
-                               static_cast<int64_t>(interior.size());
-    const auto mem = estimate_mem_impl(worlds, candidates, budget);
-    py::dict out;
-    out["frontier"] = frontier;
-    out["interior"] = interior;
-    out["num9"] = split[2];
-    out["num10"] = split[3];
-    out["worlds"] = mem.worlds;
-    out["candidates"] = mem.candidates;
-    out["estimated_bytes"] = mem.bytes;
-    out["budget"] = mem.budget;
-    out["allowed"] = mem.allowed;
-    return out;
-}
+// 2026-11-10 精简：py_decision_preflight 已删除（decision_preflight 导出移除后无调用者）。
+// estimate_mem_impl 保留：桥接块（AB_NATIVE_MERGED）仍引用它。
 
 }  // namespace decision_layer
 
@@ -3197,12 +2995,12 @@ static py::dict py_decide(
 // ========================================================================
 #ifndef AB_NATIVE_MERGED
 PYBIND11_MODULE(mscore, m) {
-    m.doc() = "minesweeper_help native core (C++): part_solve / part_solve_single / "
-              "win_rate / pbs_compute — 与 Python 实现语义完全一致的加速实现";
-    m.def("estimate_mem", &decision_layer::py_estimate_mem,
-          py::arg("worlds"), py::arg("candidates"),
-          py::arg("budget") = decision_layer::DEFAULT_MEM_BUDGET,
-          "Conservative win_rate stage-2 memory preflight.");
+    // 2026-11-10 精简：本模块只保留 decide 两层决策所需的最小导出面。
+    //   decide          唯一决策入口（OPTIMAL / pbs+PSEQ）
+    //   transitions_for 帮助页 7x7 状态转移（复用 decide 缓存）
+    //   split_frontier  前沿/内部格切分（decide 内部 + decide_trace 诊断）
+    m.doc() = "minesweeper_help native core (C++): 唯一决策入口 decide "
+              "(OPTIMAL / pbs+PSEQ) + transitions_for + split_frontier";
     m.def("split_frontier", &decision_layer::py_split_frontier,
           py::arg("cell_value"),
           "Split closed cells into constrained frontier and unconstrained interior.");
@@ -3226,50 +3024,11 @@ PYBIND11_MODULE(mscore, m) {
     // decide() is intentionally NOT exported in production builds: full
     // number5_1 semantic parity must be verified first.
 #endif
-    m.def("decision_preflight", &decision_layer::py_decision_preflight,
-          py::arg("cell_value"), py::arg("worlds"),
-          py::arg("budget") = decision_layer::DEFAULT_MEM_BUDGET,
-          "Run frontier split and conservative memory gate in one native call.");
-    m.def("packed_board_storage", [](int64_t cells) {
-        if (cells < 0 || cells > PACK_MAX_CELLS) {
-            throw std::invalid_argument("cells outside packed Board capacity");
-        }
-        const int64_t words = (cells + PACK_PER_WORD - 1) / PACK_PER_WORD;
-        py::dict out;
-        out["cells"] = cells;
-        out["bits_per_cell"] = PACK_BITS;
-        out["payload_bytes"] = (cells * PACK_BITS + 7) / 8;
-        out["active_words"] = words;
-        out["object_storage_bytes"] = static_cast<int64_t>(sizeof(Board));
-        out["capacity_cells"] = PACK_MAX_CELLS;
-        return out;
-    }, py::arg("cells"),
-       "Report packed Board payload and fixed-object storage; diagnostic only.");
-    m.def("part_solve", &py_part_solve, py::arg("clicks"), py::arg("cell_value"), py::arg("a"),
-          py::arg("w"), py::arg("h"), py::arg("progress"),
-          "part_solve 内核（_try=False）：返回 (解矩阵[num×n], num_solve)");
-    m.def("part_solve_single", &py_part_solve_single, py::arg("clicks"), py::arg("cell_value"),
-          py::arg("cs"), py::arg("num10"), py::arg("num9"), py::arg("a"), py::arg("w"),
-          py::arg("h"), py::arg("progress"),
-          "part_solve_single 内核（_try=False）：返回 (解矩阵[num×n], num)");
-    m.def("pbs_compute", &py_pbs_compute, py::arg("total"), py::arg("num10"), py::arg("clicks"),
-          py::arg("clicks9"), py::arg("res_list"), py::arg("ck"), py::arg("a"), py::arg("progress"),
-          py::arg("visible"),
-          "process_bigger_situation 纯计算部分：返回 (res, mine_num, total)");
-    m.def("md5",
-          [](py::bytes data) {
-              std::string s = data;  // 拷贝需持有 GIL
-              std::string out;
-              {
-                  py::gil_scoped_release unlock;  // 大输入摘要期间释放 GIL
-                  MD5 md5;
-                  md5.update(reinterpret_cast<const unsigned char*>(s.data()), s.size());
-                  out = md5.final();
-              }
-              return py::bytes(out);
-          },
-          py::arg("data"),
-          "MD5 摘要（16 字节二进制），与 hashlib.md5 一致（诊断/测试用）");
+    // 2026-11-10 精简：以下导出已删除（Python 侧零调用）：
+    //   estimate_mem / decision_preflight / packed_board_storage / md5 /
+    //   part_solve / part_solve_single / pbs_compute
+    // 注意：py_part_solve / py_pbs_compute 的**函数本体仍保留**——decide 两层
+    // 决策内部复用它们（decide_impl 内 L~1809 / L~2249 调用），只是不再对外导出。
 }
 #endif  // AB_NATIVE_MERGED（B1 合并编译保护宏，见模块入口处说明）
 

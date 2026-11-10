@@ -55,22 +55,10 @@ else:
         _load_error = e
 
 
-def as_groups(res_list):
-    """将 res_list 规整为 C++ 可接受的 int32 连续 2D 矩阵列表。
-
-    兼容多种历史形态：C++ part_solve 返回的 2D 解矩阵、纯 Python 实现返回的
-    「1D 数组列表」（可能被 self.checked 缓存）、混合回退产物。
-    """
-    if mscore is None:
-        return res_list
-    return [np.ascontiguousarray(g, dtype=np.int32) for g in res_list]
-
-
-def estimate_mem(worlds, candidates, budget=1536 * 1024 * 1024):
-    """调用 C++ 决策层的保守内存预检；不可用时返回 None。"""
-    if mscore is None or not hasattr(mscore, "estimate_mem"):
-        return None
-    return mscore.estimate_mem(int(worlds), int(candidates), int(budget))
+# 2026-11-10 精简：as_groups / estimate_mem / decision_preflight /
+# packed_board_storage 四个包装已删除（生产零调用；对应 C++ 导出
+# estimate_mem / decision_preflight / packed_board_storage 已一并移除）。
+# 本模块只保留 decide 两层决策链真正需要的包装。
 
 
 def split_frontier(cell_value):
@@ -78,22 +66,6 @@ def split_frontier(cell_value):
     if mscore is None or not hasattr(mscore, "split_frontier"):
         return None
     return mscore.split_frontier(np.ascontiguousarray(cell_value, dtype=np.int32))
-
-
-def decision_preflight(cell_value, worlds, budget=1536 * 1024 * 1024):
-    """原子执行前沿切分与内存闸门，避免调用方漏过预检。"""
-    if mscore is None or not hasattr(mscore, "decision_preflight"):
-        return None
-    return mscore.decision_preflight(
-        np.ascontiguousarray(cell_value, dtype=np.int32), int(worlds), int(budget)
-    )
-
-
-def packed_board_storage(cells):
-    """返回 C++ 4-bit Board 的 payload/对象容量诊断。"""
-    if mscore is None or not hasattr(mscore, "packed_board_storage"):
-        return None
-    return mscore.packed_board_storage(int(cells))
 
 
 def decide(cell_value, a, w, h, wr_threshold=None, node_cap=None, is_play=True):

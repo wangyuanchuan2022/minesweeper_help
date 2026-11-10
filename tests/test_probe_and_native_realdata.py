@@ -218,21 +218,12 @@ class TestE2EProbeFullLifecycle(unittest.TestCase):
 
 
 class TestNativeWrappers(unittest.TestCase):
-    """utils.native 全部分支：真实 pyd 导出面 + 受控不可用 mock。"""
+    """utils.native 全部分支：真实 pyd 导出面 + 受控不可用 mock。
 
-    def test_as_groups_with_none_mscore(self):
-        import utils.native as n
-        with mock.patch.object(n, "mscore", None):
-            self.assertEqual(n.as_groups([[1, 2]]), [[1, 2]])
-
-    def test_as_groups_with_contiguous_conversion(self):
-        import numpy as np
-        import utils.native as n
-        fake = mock.MagicMock()
-        with mock.patch.object(n, "mscore", fake):
-            out = n.as_groups([np.array([[1, 2]], dtype=np.int64)])
-            self.assertEqual(out[0].dtype, np.int32)
-            self.assertTrue(out[0].flags["C_CONTIGUOUS"])
+    2026-11-10 精简：as_groups / estimate_mem / decision_preflight /
+    packed_board_storage 已随对应 C++ 导出一并删除，其用例已移除
+    （见 test_removed_wrappers_are_gone 回归锁）。
+    """
 
     def test_decide_no_mscore_returns_none(self):
         import utils.native as n
@@ -288,23 +279,23 @@ class TestNativeWrappers(unittest.TestCase):
         with mock.patch.object(n, "mscore", None):
             self.assertIsNone(n.transitions_for([[9]], 99, 30, 16, 1, 1))
 
-    def test_diagnostic_wrappers(self):
+    def test_split_frontier_wrapper(self):
+        """split_frontier 是 decide 链与 decide_trace 仍依赖的包装（保留）。"""
         import utils.native as n
         fake = mock.MagicMock()
-        fake.estimate_mem.return_value = {"allowed": True}
         fake.split_frontier.return_value = [[1, 2]]
-        fake.decision_preflight.return_value = {"allowed": True}
-        fake.packed_board_storage.return_value = {"cells": 480}
         with mock.patch.object(n, "mscore", fake):
-            self.assertTrue(n.estimate_mem(10, 20)["allowed"])
             self.assertEqual(n.split_frontier([[9]]), [[1, 2]])
-            self.assertTrue(n.decision_preflight([[9]], 10)["allowed"])
-            self.assertEqual(n.packed_board_storage(480)["cells"], 480)
         with mock.patch.object(n, "mscore", None):
-            self.assertIsNone(n.estimate_mem(10, 20))
             self.assertIsNone(n.split_frontier([[9]]))
-            self.assertIsNone(n.decision_preflight([[9]], 10))
-            self.assertIsNone(n.packed_board_storage(480))
+
+    def test_removed_wrappers_are_gone(self):
+        """2026-11-10 精简：四个零调用包装必须已删除（回归锁）。"""
+        import utils.native as n
+        for name in ("as_groups", "estimate_mem", "decision_preflight",
+                     "packed_board_storage"):
+            self.assertFalse(hasattr(n, name),
+                             "%s 应已从 native 删除" % name)
 
     def test_tuned_env_switch(self):
         import utils.native as n
